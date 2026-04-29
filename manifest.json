@@ -1,0 +1,35 @@
+{
+  "name": "openkb-codex-bootstrap",
+  "version": "0.3.3",
+  "purpose": "Codex bootstrap specification for OpenKB",
+  "highest_priority_documents": [
+    "AGENTS.md",
+    "docs/18-decision-overrides-v0.3.zh-CN.md",
+    "docs/21-v0.3.2-clarifications.zh-CN.md",
+    "docs/22-v0.3.3-clarifications.zh-CN.md",
+    "docs/04-editor-spec.zh-CN.md",
+    "docs/05-permission-spec.zh-CN.md",
+    "docs/09-search-rag-milvus-native.zh-CN.md"
+  ],
+  "resolved_findings": [
+    "docs/00-index and prompts/01 prioritize docs/18 over docs/16",
+    "prompts/01 explicitly includes docs/18, docs/21, and docs/22",
+    "share_links.permission is constrained to view only in v0.x",
+    "folders are represented by documents.type = folder, not a separate folders table",
+    "workspace membership roles and content collaborator roles are separated",
+    "Milvus primary key is id; chunk_id is a regular field",
+    "auth_settings table is fully specified",
+    "MCP OAuth/PAT tables and Dify scoped API key tables are specified",
+    "embedding/rerank fallback provider secrets are forbidden in OpenKB DB for v0.x"
+  ],
+  "non_negotiable_rules": [
+    "Markdown follows Milkdown enabled features exactly",
+    "Permissions follow Yuque-style product logic only in v0.x",
+    "Only system_admin/tenant_admin can access Milvus/model/index configuration",
+    "Knowledge base owners cannot configure models",
+    "Embedding/rerank use Milvus-native Functions whenever compatible",
+    "Embedding replacement uses new collection + rebuild + alias switch",
+    "PostgreSQL remains content and permission truth",
+    "MCP is user-bound; Dify is app-key-bound"
+  ]
+}

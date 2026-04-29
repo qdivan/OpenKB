@@ -1,0 +1,520 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email             String    @unique
+  password_hash     String?
+  display_name      String
+  status            String
+  email_verified_at DateTime? @db.Timestamptz(6)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("users")
+}
+
+model Tenant {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  slug       String   @unique
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("tenants")
+}
+
+model TenantMembership {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  user_id    String   @db.Uuid
+  role       String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenant_id, user_id])
+  @@index([user_id])
+  @@map("tenant_memberships")
+}
+
+model AuthSession {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id     String    @db.Uuid
+  user_id       String    @db.Uuid
+  token_hash    String    @unique
+  expires_at    DateTime  @db.Timestamptz(6)
+  revoked_at    DateTime? @db.Timestamptz(6)
+  last_seen_at  DateTime? @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([user_id])
+  @@index([expires_at])
+  @@map("auth_sessions")
+}
+
+model AuthToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id   String    @db.Uuid
+  user_id     String    @db.Uuid
+  purpose     String
+  token_hash  String    @unique
+  expires_at  DateTime  @db.Timestamptz(6)
+  consumed_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([user_id])
+  @@index([purpose])
+  @@map("auth_tokens")
+}
+
+model AuthEmailOutbox {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id   String?   @db.Uuid
+  user_id     String?   @db.Uuid
+  to_email    String
+  template    String
+  subject     String
+  link_url    String?
+  payload     Json      @default("{}")
+  status      String    @default("pending")
+  sent_at     DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([user_id])
+  @@index([to_email])
+  @@map("auth_email_outbox")
+}
+
+model AuthSetting {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                  String?  @db.Uuid
+  registration_enabled       Boolean  @default(true)
+  email_verification_required Boolean  @default(true)
+  default_signup_status      String   @default("active")
+  invited_user_auto_active   Boolean  @default(true)
+  allowed_email_domains      String[]
+  invite_required            Boolean  @default(false)
+  first_user_becomes_admin   Boolean  @default(true)
+  created_at                 DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@map("auth_settings")
+}
+
+model Group {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  name       String
+  created_by String   @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenant_id, name])
+  @@map("groups")
+}
+
+model GroupMember {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  group_id   String   @db.Uuid
+  user_id    String   @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([group_id, user_id])
+  @@index([tenant_id])
+  @@index([user_id])
+  @@map("group_members")
+}
+
+model Workspace {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  name       String
+  slug       String
+  created_by String   @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenant_id, slug])
+  @@index([created_by])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String   @db.Uuid
+  workspace_id String   @db.Uuid
+  user_id      String   @db.Uuid
+  role         String
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([workspace_id, user_id])
+  @@index([tenant_id])
+  @@index([user_id])
+  @@map("workspace_members")
+}
+
+model KnowledgeBase {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String   @db.Uuid
+  workspace_id String   @db.Uuid
+  title        String
+  slug         String
+  visibility   String
+  status       String
+  created_by   String   @db.Uuid
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([workspace_id, slug])
+  @@index([tenant_id])
+  @@index([created_by])
+  @@map("knowledge_bases")
+}
+
+model Document {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  parent_id         String?  @db.Uuid
+  type              String
+  title             String
+  slug              String
+  status            String
+  permission_mode   String   @default("inherit")
+  visibility        String?
+  current_version_id String? @db.Uuid
+  sort_order        Int      @default(0)
+  created_by        String   @db.Uuid
+  updated_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([parent_id])
+  @@map("documents")
+}
+
+model DocumentAsset {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id   String   @db.Uuid
+  document_id String?  @db.Uuid
+  object_key  String
+  mime_type   String
+  size_bytes  BigInt
+  created_by  String   @db.Uuid
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([document_id])
+  @@map("document_assets")
+}
+
+model DocumentVersion {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id      String   @db.Uuid
+  document_id    String   @db.Uuid
+  version_no     Int
+  markdown       String
+  markdown_hash  String
+  source_type    String
+  source_file_id String?  @db.Uuid
+  created_by     String   @db.Uuid
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([document_id, version_no])
+  @@index([tenant_id])
+  @@index([source_file_id])
+  @@map("document_versions")
+}
+
+model Collaborator {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String   @db.Uuid
+  object_type  String
+  object_id    String   @db.Uuid
+  subject_type String
+  subject_id   String   @db.Uuid
+  role         String
+  source       String
+  created_by   String?  @db.Uuid
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([object_type, object_id, subject_type, subject_id])
+  @@index([tenant_id])
+  @@index([subject_type, subject_id])
+  @@map("collaborators")
+}
+
+model Invitation {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id       String   @db.Uuid
+  object_type     String
+  object_id       String   @db.Uuid
+  email           String?
+  invited_user_id String?  @db.Uuid
+  role            String
+  token_hash      String
+  status          String
+  require_approval Boolean @default(false)
+  approved_by     String? @db.Uuid
+  invited_by      String  @db.Uuid
+  expires_at      DateTime? @db.Timestamptz(6)
+  max_uses        Int?
+  used_count      Int     @default(0)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([token_hash])
+  @@index([object_type, object_id])
+  @@map("invitations")
+}
+
+model ShareLink {
+  id                            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                     String    @db.Uuid
+  object_type                   String
+  object_id                     String    @db.Uuid
+  token_hash                    String
+  permission                    String    @default("view")
+  password_hash                 String?
+  require_login                 Boolean   @default(false)
+  restrict_to_workspace_members Boolean   @default(false)
+  expires_at                    DateTime? @db.Timestamptz(6)
+  revoked_at                    DateTime? @db.Timestamptz(6)
+  created_by                    String    @db.Uuid
+  created_at                    DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([token_hash])
+  @@index([object_type, object_id])
+  @@map("share_links")
+}
+
+model ImportJob {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id          String   @db.Uuid
+  workspace_id       String   @db.Uuid
+  knowledge_base_id  String   @db.Uuid
+  source_asset_id    String   @db.Uuid
+  status             String
+  converter          String
+  error              String?
+  created_by         String   @db.Uuid
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@map("import_jobs")
+}
+
+model DocumentChunk {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  document_id       String   @db.Uuid
+  version_id        String   @db.Uuid
+  ordinal           Int
+  heading_path      String[] @default([])
+  content_text      String
+  content_markdown  String
+  token_count       Int?
+  metadata          Json     @default("{}")
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([version_id, ordinal])
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([document_id])
+  @@map("document_chunks")
+}
+
+model MilvusIndexProfile {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id               String?   @db.Uuid
+  alias                   String
+  collection_name         String
+  schema_version          String
+  vector_dim              Int
+  embedding_function_name String
+  bm25_function_name      String?
+  rerank_function_name    String?
+  status                  String
+  function_metadata       Json      @default("{}")
+  created_by              String    @db.Uuid
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  activated_at            DateTime? @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([alias])
+  @@map("milvus_index_profiles")
+}
+
+model IndexRebuildJob {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String?   @db.Uuid
+  target_collection String
+  target_alias      String
+  status            String
+  started_by        String    @db.Uuid
+  started_at        DateTime  @default(now()) @db.Timestamptz(6)
+  finished_at       DateTime? @db.Timestamptz(6)
+  error             String?
+
+  @@index([tenant_id])
+  @@index([status])
+  @@map("index_rebuild_jobs")
+}
+
+model McpOauthClient {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id      String   @db.Uuid
+  client_id      String   @unique
+  client_name    String
+  redirect_uris  String[] @default([])
+  allowed_scopes String[] @default([])
+  status         String
+  created_by     String   @db.Uuid
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@map("mcp_oauth_clients")
+}
+
+model McpOauthGrant {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String    @db.Uuid
+  user_id    String    @db.Uuid
+  client_id  String    @db.Uuid
+  scopes     String[]  @default([])
+  status     String
+  expires_at DateTime? @db.Timestamptz(6)
+  revoked_at DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([user_id])
+  @@index([client_id])
+  @@map("mcp_oauth_grants")
+}
+
+model McpOauthAuthorizationCode {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String    @db.Uuid
+  grant_id     String    @db.Uuid
+  code_hash    String
+  redirect_uri String
+  scopes       String[]  @default([])
+  expires_at   DateTime  @db.Timestamptz(6)
+  consumed_at  DateTime? @db.Timestamptz(6)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([grant_id])
+  @@index([code_hash])
+  @@map("mcp_oauth_authorization_codes")
+}
+
+model McpOauthRefreshToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String    @db.Uuid
+  grant_id   String    @db.Uuid
+  token_hash String
+  expires_at DateTime  @db.Timestamptz(6)
+  revoked_at DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([grant_id])
+  @@index([token_hash])
+  @@map("mcp_oauth_refresh_tokens")
+}
+
+model McpPersonalAccessToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String    @db.Uuid
+  user_id      String    @db.Uuid
+  name         String
+  token_hash   String
+  scopes       String[]  @default([])
+  status       String
+  expires_at   DateTime? @db.Timestamptz(6)
+  last_used_at DateTime? @db.Timestamptz(6)
+  revoked_at   DateTime? @db.Timestamptz(6)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([user_id])
+  @@index([token_hash])
+  @@map("mcp_personal_access_tokens")
+}
+
+model DifyApiKey {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                  String    @db.Uuid
+  name                       String
+  key_hash                   String
+  status                     String
+  allowed_knowledge_base_ids String[]  @default([]) @db.Uuid
+  allowed_metadata_filters   Json      @default("{}")
+  retrieval_top_k_limit      Int       @default(10)
+  expires_at                 DateTime? @db.Timestamptz(6)
+  last_used_at               DateTime? @db.Timestamptz(6)
+  created_by                 String    @db.Uuid
+  created_at                 DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([key_hash])
+  @@map("dify_api_keys")
+}
+
+model DifyKnowledgeMapping {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id          String   @db.Uuid
+  dify_knowledge_id  String
+  knowledge_base_id  String   @db.Uuid
+  status             String
+  created_by         String   @db.Uuid
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenant_id, dify_knowledge_id])
+  @@index([knowledge_base_id])
+  @@map("dify_knowledge_mappings")
+}
+
+model AuditLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id     String?  @db.Uuid
+  actor_user_id String?  @db.Uuid
+  actor_type    String
+  action        String
+  object_type   String?
+  object_id     String?  @db.Uuid
+  metadata      Json     @default("{}")
+  ip            String?
+  user_agent    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([actor_user_id])
+  @@index([object_type, object_id])
+  @@map("audit_logs")
+}

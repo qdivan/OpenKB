@@ -1,0 +1,22 @@
+{
+  "name": "@openkb/permissions",
+  "private": true,
+  "version": "0.3.3",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "permissions:test": "vitest run --config vitest.permissions.config.ts",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openkb/db": "workspace:*"
+  }
+}

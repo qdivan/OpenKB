@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build outputs and caches
+.next/
+.turbo/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+
+# Local runtime artifacts
+.playwright-cli/
+output/playwright/
+playwright-report/
+test-results/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
