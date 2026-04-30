@@ -35,6 +35,8 @@ Codex 开始任何代码工作前，必须按下面顺序阅读。
 - `docs/13-deployment.zh-CN.md`：Docker Compose 和 K8s。
 - `docs/14-ui-routes.zh-CN.md`：UI 路由和页面。
 - `docs/15-roadmap-and-codex-tasks.zh-CN.md`：开发路线。
+- `docs/23-unfinished-work.zh-CN.md`：Phase 10 后仍未完成的工作和 Phase 11 边界。
+- `docs/24-agent-handoff-phase-10.zh-CN.md`：新机器 / 新 agent 交接说明。
 - `docs/18-decision-overrides-v0.3.zh-CN.md`：v0.3 最高优先级决策覆盖清单。
 - `docs/21-v0.3.2-clarifications.zh-CN.md`：Codex 首轮发现点的澄清和修正。
 - `docs/22-v0.3.3-clarifications.zh-CN.md`：Codex 第二轮发现点的澄清和修正。
@@ -42,5 +44,7 @@ Codex 开始任何代码工作前，必须按下面顺序阅读。
 ## 辅助文档
 
 - `docs/17-glossary.zh-CN.md`：术语表。
+- `docs/23-unfinished-work.zh-CN.md`：未完成事项。
+- `docs/24-agent-handoff-phase-10.zh-CN.md`：Phase 10 交接文档。
 - `docs/99-references.md`：参考资料。
 - `prompts/`：给 Codex 的分阶段提示词。

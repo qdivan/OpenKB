@@ -2,7 +2,7 @@
 
 OpenKB 是一个 Markdown-first、语雀式权限与编辑体验、面向私有化部署的开源知识库系统。项目目标是把团队知识库、用户级权限、文件导入、Milvus 检索索引、MCP Server 和 Dify 第三方知识库适配统一在一套可自托管架构里。
 
-当前代码已推进到 Phase 10：Dify External Knowledge Adapter。仓库仍处于早期开发阶段，适合本地开发、架构验证和后续功能迭代。
+当前代码已完成 Phase 10：Dify External Knowledge Adapter。Phase 11（Docker Compose / Helm 部署闭环）计划在有原生 Docker 的新机器上继续开发。仓库仍处于早期开发阶段，适合本地开发、架构验证和后续功能迭代。
 
 ## 已实现
 
@@ -26,7 +26,7 @@ OpenKB 是一个 Markdown-first、语雀式权限与编辑体验、面向私有�
 apps/
   web/            Next.js Web 工作台
   api/            NestJS + Fastify API
-  mcp-server/     MCP Server 占位
+  mcp-server/     MCP Streamable HTTP Server
   dify-adapter/   Dify External Knowledge Adapter
 workers/
   import-worker/
@@ -135,6 +135,15 @@ pnpm dify:key:create
 默认本地链路是 CPU-only：Milvus 使用 BM25/text-only，`.env.example` 中 `MILVUS_ENABLE_TEXT_EMBEDDING=false`、`MILVUS_ENABLE_RERANK=false`。没有 NVIDIA GPU / `nvidia-smi` 的机器不要启用 TEXTEMBEDDING、RERANK、MinerU GPU worker、Qwen Embedding TEI 或 Qwen Reranker vLLM 服务。
 
 Qwen Embedding、Reranker、MinerU 属于可选外部服务；OpenKB 默认测试脚本不会启动它们，也不会保存 embedding/rerank provider API key。宿主机已有的 Dify、SkillHub 或其他 Docker 容器不属于 OpenKB 测试 compose，OpenKB 脚本只管理自己的 test compose 服务。
+
+## 交接入口
+
+如果在另一台机器或由新的 agent 继续开发，请先阅读：
+
+- `docs/23-unfinished-work.zh-CN.md`：Phase 10 之后仍未完成的工作和边界。
+- `docs/24-agent-handoff-phase-10.zh-CN.md`：当前仓库状态、验证命令和 Phase 11 建议起点。
+
+新机器如果有原生 Docker，Phase 11 可以优先完成生产 Docker Compose / Helm，并在新机器上验证完整 compose 启动、迁移、dev seed、导入、索引、搜索、MCP 和 Dify 链路。
 
 ## 核心约束
 

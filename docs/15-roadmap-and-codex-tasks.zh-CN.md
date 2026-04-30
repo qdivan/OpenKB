@@ -146,3 +146,5 @@
 - Helm chart。
 - Milvus standalone/external。
 - MinIO/Postgres/Redis。
+
+Phase 11 将在有原生 Docker 的新机器上继续，目标是把 Phase 1-10 已实现能力做成可部署闭环；不要在 Phase 11 中扩散到生产 SMTP、完整 MCP OAuth、复杂 OCR、dense/hybrid/rerank、实时协同或 admin UI 等后续产品增强。
