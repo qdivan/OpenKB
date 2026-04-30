@@ -1,0 +1,79 @@
+{{- if and .Values.s3.minio.enabled (not .Values.s3.external) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-minio-assets
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-assets
+spec:
+  ports:
+    - name: api
+      port: {{ .Values.s3.minio.service.port }}
+      targetPort: api
+    - name: console
+      port: {{ .Values.s3.minio.service.consolePort }}
+      targetPort: console
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-assets
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "openkb.fullname" . }}-minio-assets
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-assets
+spec:
+  serviceName: {{ include "openkb.fullname" . }}-minio-assets
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: minio-assets
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio-assets
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.s3.minio.image | quote }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openkb.secretName" . }}
+                  key: S3_ACCESS_KEY_ID
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openkb.secretName" . }}
+                  key: S3_SECRET_ACCESS_KEY
+          readinessProbe:
+            exec:
+              command: ["mc", "ready", "local"]
+          livenessProbe:
+            exec:
+              command: ["mc", "ready", "local"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.s3.minio.storage.size | quote }}
+{{- end }}
+

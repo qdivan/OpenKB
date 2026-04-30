@@ -1,0 +1,305 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openkb.fullname" . }}-api
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: api
+          image: {{ include "openkb.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-lc"]
+          args: ["pnpm --filter @openkb/api start"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.api.port | quote }}
+            - name: UPLOAD_MAX_BYTES
+              value: {{ .Values.api.uploadMaxBytes | quote }}
+            {{ if .Values.milvus.tokenSecret }}
+            - name: MILVUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.milvus.tokenSecret }}
+                  key: {{ .Values.milvus.tokenKey }}
+            {{ end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "openkb.configName" . }}
+            - secretRef:
+                name: {{ include "openkb.secretName" . }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+{{- end }}
+---
+{{- if .Values.web.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openkb.fullname" . }}-web
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: web
+          image: {{ include "openkb.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-lc"]
+          args: ["pnpm --filter @openkb/web exec next start -p {{ .Values.web.port }} -H 0.0.0.0"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.web.port | quote }}
+            {{ if .Values.milvus.tokenSecret }}
+            - name: MILVUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.milvus.tokenSecret }}
+                  key: {{ .Values.milvus.tokenKey }}
+            {{ end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "openkb.configName" . }}
+            - secretRef:
+                name: {{ include "openkb.secretName" . }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+{{- end }}
+---
+{{- if .Values.mcp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openkb.fullname" . }}-mcp-server
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-server
+spec:
+  replicas: {{ .Values.mcp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mcp-server
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mcp-server
+    spec:
+      containers:
+        - name: mcp-server
+          image: {{ include "openkb.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-lc"]
+          args: ["pnpm --filter @openkb/mcp-server start"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.mcp.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.mcp.port | quote }}
+            {{ if .Values.milvus.tokenSecret }}
+            - name: MILVUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.milvus.tokenSecret }}
+                  key: {{ .Values.milvus.tokenKey }}
+            {{ end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "openkb.configName" . }}
+            - secretRef:
+                name: {{ include "openkb.secretName" . }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+{{- end }}
+---
+{{- if .Values.difyAdapter.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openkb.fullname" . }}-dify-adapter
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dify-adapter
+spec:
+  replicas: {{ .Values.difyAdapter.replicas }}
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dify-adapter
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dify-adapter
+    spec:
+      containers:
+        - name: dify-adapter
+          image: {{ include "openkb.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-lc"]
+          args: ["pnpm --filter @openkb/dify-adapter start"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.difyAdapter.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.difyAdapter.port | quote }}
+            {{ if .Values.milvus.tokenSecret }}
+            - name: MILVUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.milvus.tokenSecret }}
+                  key: {{ .Values.milvus.tokenKey }}
+            {{ end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "openkb.configName" . }}
+            - secretRef:
+                name: {{ include "openkb.secretName" . }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+{{- end }}
+---
+{{- if .Values.workers.import.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openkb.fullname" . }}-import-worker
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: import-worker
+spec:
+  replicas: {{ .Values.workers.import.replicas }}
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: import-worker
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: import-worker
+    spec:
+      containers:
+        - name: import-worker
+          image: {{ include "openkb.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-lc"]
+          args: ["pnpm import:worker"]
+          env:
+            - name: IMPORT_WORKER_POLL_MS
+              value: {{ .Values.workers.import.pollMs | quote }}
+            {{ if .Values.milvus.tokenSecret }}
+            - name: MILVUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.milvus.tokenSecret }}
+                  key: {{ .Values.milvus.tokenKey }}
+            {{ end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "openkb.configName" . }}
+            - secretRef:
+                name: {{ include "openkb.secretName" . }}
+{{- end }}
+---
+{{- if .Values.workers.index.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openkb.fullname" . }}-index-worker
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: index-worker
+spec:
+  replicas: {{ .Values.workers.index.replicas }}
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: index-worker
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: index-worker
+    spec:
+      containers:
+        - name: index-worker
+          image: {{ include "openkb.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-lc"]
+          args: ["pnpm index:worker"]
+          env:
+            - name: INDEX_WORKER_POLL_MS
+              value: {{ .Values.workers.index.pollMs | quote }}
+            - name: INDEX_WORKER_BATCH_SIZE
+              value: {{ .Values.workers.index.batchSize | quote }}
+            {{ if .Values.milvus.tokenSecret }}
+            - name: MILVUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.milvus.tokenSecret }}
+                  key: {{ .Values.milvus.tokenKey }}
+            {{ end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "openkb.configName" . }}
+            - secretRef:
+                name: {{ include "openkb.secretName" . }}
+{{- end }}

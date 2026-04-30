@@ -1,4 +1,4 @@
-import type { CorsOptions } from "@nestjs/common/interfaces/external/cors-options.interface";
+import type { FastifyCorsOptions } from "@fastify/cors";
 
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:3000",
@@ -7,9 +7,9 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://127.0.0.1:3001"
 ] as const;
 
-export function createCorsOptions(env: NodeJS.ProcessEnv = process.env): CorsOptions {
+export function createCorsOptions(env: NodeJS.ProcessEnv = process.env): FastifyCorsOptions {
   const allowedOrigins = new Set([
-    ...DEFAULT_ALLOWED_ORIGINS,
+    ...(shouldAllowLocalOrigins(env) ? DEFAULT_ALLOWED_ORIGINS : []),
     ...splitOrigins(env.CORS_ORIGINS),
     ...splitOrigins(env.WEB_BASE_URL),
     ...splitOrigins(env.APP_BASE_URL)
@@ -30,6 +30,14 @@ export function createCorsOptions(env: NodeJS.ProcessEnv = process.env): CorsOpt
   };
 }
 
+function shouldAllowLocalOrigins(env: NodeJS.ProcessEnv): boolean {
+  const explicit = parseOptionalBoolean(env.OPENKB_ALLOW_LOCAL_CORS);
+  if (explicit !== null) {
+    return explicit;
+  }
+  return env.NODE_ENV !== "production";
+}
+
 function splitOrigins(value: string | undefined): string[] {
   return value
     ? value
@@ -37,4 +45,18 @@ function splitOrigins(value: string | undefined): string[] {
         .map((origin) => origin.trim().replace(/\/$/, ""))
         .filter(Boolean)
     : [];
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized === "auto") {
+    return null;
+  }
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return null;
 }

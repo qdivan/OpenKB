@@ -463,7 +463,7 @@ export class AuthService {
       `Expires=${expiresAt.toUTCString()}`
     ];
 
-    if (this.env.NODE_ENV === "production") {
+    if (this.shouldUseSecureCookie()) {
       parts.push("Secure");
     }
 
@@ -476,6 +476,20 @@ export class AuthService {
 
   cookieName(): string {
     return this.env.AUTH_COOKIE_NAME || AUTH_COOKIE_NAME;
+  }
+
+  private shouldUseSecureCookie(): boolean {
+    const explicit = parseOptionalBoolean(this.env.AUTH_COOKIE_SECURE);
+    if (explicit !== null) {
+      return explicit;
+    }
+
+    const baseUrl = this.env.WEB_BASE_URL || this.env.APP_BASE_URL;
+    if (baseUrl) {
+      return isHttpsUrl(baseUrl);
+    }
+
+    return this.env.NODE_ENV === "production";
   }
 
   private async requireAdmin(sessionToken: string): Promise<AuthenticatedUser> {
@@ -818,6 +832,28 @@ function assertEmailDomainAllowed(email: string, domains: string[]) {
   const domain = email.split("@")[1]?.toLowerCase();
   if (!domain || !domains.map((item) => item.toLowerCase()).includes(domain)) {
     throw new AuthError("EMAIL_DOMAIN_NOT_ALLOWED", "Email domain is not allowed.", 403);
+  }
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized === "auto") {
+    return null;
+  }
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
   }
 }
 

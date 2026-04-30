@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openkb.configName" . }}
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+data:
+  APP_BASE_URL: {{ .Values.web.baseUrl | quote }}
+  WEB_BASE_URL: {{ .Values.web.baseUrl | quote }}
+  NEXT_PUBLIC_API_BASE_URL: {{ .Values.web.apiBaseUrl | quote }}
+  CORS_ORIGINS: {{ .Values.web.baseUrl | quote }}
+  OPENKB_ALLOW_LOCAL_CORS: {{ .Values.api.allowLocalCors | quote }}
+  AUTH_COOKIE_NAME: {{ .Values.auth.cookieName | quote }}
+  AUTH_COOKIE_SECURE: {{ .Values.auth.cookieSecure | quote }}
+  SESSION_TTL_DAYS: {{ .Values.auth.sessionTtlDays | quote }}
+  EMAIL_VERIFICATION_TTL_HOURS: {{ .Values.auth.emailVerificationTtlHours | quote }}
+  PASSWORD_RESET_TTL_HOURS: {{ .Values.auth.passwordResetTtlHours | quote }}
+  TRUST_PROXY_HEADERS: {{ .Values.api.trustProxyHeaders | quote }}
+  API_RATE_LIMIT_MAX: {{ .Values.api.rateLimit.max | quote }}
+  API_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.api.rateLimit.windowSeconds | quote }}
+  AUTH_RATE_LIMIT_MAX: {{ .Values.api.authRateLimit.max | quote }}
+  AUTH_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.api.authRateLimit.windowSeconds | quote }}
+  DEFAULT_TENANT_NAME: {{ .Values.seed.defaultTenantName | quote }}
+  DEFAULT_TENANT_SLUG: {{ .Values.seed.defaultTenantSlug | quote }}
+  ADMIN_EMAIL: {{ .Values.seed.adminEmail | quote }}
+  ADMIN_DISPLAY_NAME: {{ .Values.seed.adminDisplayName | quote }}
+  REDIS_URL: {{ include "openkb.redisUrl" . | quote }}
+  S3_ENDPOINT: {{ include "openkb.s3Endpoint" . | quote }}
+  S3_REGION: {{ .Values.s3.region | quote }}
+  S3_BUCKET: {{ .Values.s3.bucket | quote }}
+  S3_FORCE_PATH_STYLE: {{ .Values.s3.forcePathStyle | quote }}
+  S3_PRESIGN_TTL_SECONDS: "900"
+  MILVUS_URI: {{ include "openkb.milvusUri" . | quote }}
+  MILVUS_DATABASE: {{ .Values.milvus.database | quote }}
+  MILVUS_ACTIVE_ALIAS: {{ .Values.milvus.activeAlias | quote }}
+  MILVUS_COLLECTION_PREFIX: {{ .Values.milvus.collectionPrefix | quote }}
+  MILVUS_ENABLE_BM25: {{ .Values.milvus.enableBm25 | quote }}
+  MILVUS_ENABLE_TEXT_EMBEDDING: {{ .Values.milvus.enableTextEmbedding | quote }}
+  MILVUS_ENABLE_RERANK: {{ .Values.milvus.enableRerank | quote }}
+  MCP_SERVER_BASE_URL: {{ .Values.mcp.baseUrl | quote }}
+  MCP_PAT_PREFIX: "kbpat_"
+  MCP_DEFAULT_SCOPES: "kb:read,kb:search,doc:read"
+  MCP_MAX_TOP_K: "20"
+  MCP_MAX_DOCUMENT_CHARS: "60000"
+  MCP_PAT_USER_EMAIL: {{ .Values.seed.adminEmail | quote }}
+  MCP_PAT_NAME: "Local MCP PAT"
+  MCP_PAT_SCOPES: "kb:read,kb:search,doc:read"
+  MCP_PAT_EXPIRES_DAYS: "30"
+  DIFY_API_KEY_PREFIX: "dify_"
+  DIFY_API_KEY_NAME: "Local Dify Key"
+  DIFY_KEY_CREATED_BY_EMAIL: {{ .Values.seed.adminEmail | quote }}
+  DIFY_KNOWLEDGE_ID: "openkb-demo"
+  DIFY_KNOWLEDGE_BASE_ID: ""
+  DIFY_TOP_K_LIMIT: "10"
+  DIFY_KEY_EXPIRES_DAYS: "30"
+  DIFY_MAX_TOP_K: "20"
+  DIFY_REQUEST_MAX_BYTES: {{ .Values.difyAdapter.requestMaxBytes | quote }}
+  DIFY_RESULT_BASE_URL: {{ .Values.difyAdapter.resultBaseUrl | quote }}

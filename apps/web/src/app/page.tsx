@@ -1,8 +1,8 @@
 const services = [
-  ["Web", "Next.js scaffold"],
-  ["API", "NestJS Fastify health endpoint"],
-  ["MCP", "Streamable HTTP placeholder"],
-  ["Dify", "External Knowledge adapter placeholder"]
+  ["Web", "Next.js knowledge base workbench"],
+  ["API", "NestJS Fastify content and search API"],
+  ["MCP", "User-bound Streamable HTTP server"],
+  ["Dify", "External Knowledge adapter"]
 ] as const;
 
 export default function Home() {
@@ -11,7 +11,7 @@ export default function Home() {
       <section className="mx-auto flex max-w-6xl flex-col gap-8">
         <header className="border-b border-zinc-200 pb-6">
           <p className="text-sm font-medium uppercase tracking-wide text-teal-700">
-            Phase 1 Scaffold
+            Phase 11 Deployment
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-normal">OpenKB</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-600">

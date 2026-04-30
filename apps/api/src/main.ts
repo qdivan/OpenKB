@@ -6,11 +6,13 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 
 import { AppModule } from "./app.module";
 import { createCorsOptions } from "./cors";
+import { registerApiSecurity } from "./security";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
   const port = Number(process.env.PORT ?? 4000);
 
+  registerApiSecurity(app);
   app.enableCors(createCorsOptions());
   await app.register(multipart, {
     limits: {

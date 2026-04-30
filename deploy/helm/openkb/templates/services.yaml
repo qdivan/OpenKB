@@ -1,0 +1,76 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-api
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+{{- end }}
+---
+{{- if .Values.web.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-web
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.web.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.web.service.port }}
+      targetPort: http
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+{{- end }}
+---
+{{- if .Values.mcp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-mcp-server
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-server
+spec:
+  type: {{ .Values.mcp.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.mcp.service.port }}
+      targetPort: http
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-server
+{{- end }}
+---
+{{- if .Values.difyAdapter.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-dify-adapter
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dify-adapter
+spec:
+  type: {{ .Values.difyAdapter.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.difyAdapter.service.port }}
+      targetPort: http
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dify-adapter
+{{- end }}
+

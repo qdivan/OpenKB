@@ -1,0 +1,11 @@
+{{- if or .Values.optionalModels.qwenEmbeddingTei.enabled .Values.optionalModels.qwenRerankerVllm.enabled .Values.optionalModels.mineruGpuWorker.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openkb.fullname" . }}-optional-models
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+data:
+  note: "Optional model services must be added by an operator-specific values overlay. OpenKB does not store embedding or rerank provider secrets."
+{{- end }}
+

@@ -1,0 +1,234 @@
+{{- if eq .Values.milvus.mode "standalone" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-milvus-etcd
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-etcd
+spec:
+  ports:
+    - name: client
+      port: 2379
+      targetPort: client
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-etcd
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "openkb.fullname" . }}-milvus-etcd
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-etcd
+spec:
+  serviceName: {{ include "openkb.fullname" . }}-milvus-etcd
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: milvus-etcd
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: milvus-etcd
+    spec:
+      containers:
+        - name: etcd
+          image: {{ .Values.milvus.etcd.image | quote }}
+          command: ["etcd"]
+          args:
+            - --data-dir=/etcd
+            - --advertise-client-urls=http://127.0.0.1:2379
+            - --listen-client-urls=http://0.0.0.0:2379
+            - --initial-advertise-peer-urls=http://127.0.0.1:2380
+            - --listen-peer-urls=http://0.0.0.0:2380
+            - --initial-cluster=default=http://127.0.0.1:2380
+            - --auto-compaction-mode=revision
+            - --auto-compaction-retention=1000
+            - --quota-backend-bytes=4294967296
+          ports:
+            - name: client
+              containerPort: 2379
+          readinessProbe:
+            exec:
+              command: ["etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+          livenessProbe:
+            exec:
+              command: ["etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+          volumeMounts:
+            - name: data
+              mountPath: /etcd
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.milvus.etcd.storage.size | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-milvus-minio
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-minio
+spec:
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-minio
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "openkb.fullname" . }}-milvus-minio
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-minio
+spec:
+  serviceName: {{ include "openkb.fullname" . }}-milvus-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: milvus-minio
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: milvus-minio
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.milvus.minio.image | quote }}
+          args: ["server", "/data"]
+          ports:
+            - name: api
+              containerPort: 9000
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openkb.secretName" . }}
+                  key: MILVUS_MINIO_ACCESS_KEY_ID
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openkb.secretName" . }}
+                  key: MILVUS_MINIO_SECRET_ACCESS_KEY
+          readinessProbe:
+            exec:
+              command: ["mc", "ready", "local"]
+          livenessProbe:
+            exec:
+              command: ["mc", "ready", "local"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.milvus.minio.storage.size | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openkb.fullname" . }}-milvus-standalone
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-standalone
+spec:
+  ports:
+    - name: grpc
+      port: 19530
+      targetPort: grpc
+    - name: health
+      port: 9091
+      targetPort: health
+  selector:
+    {{- include "openkb.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-standalone
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "openkb.fullname" . }}-milvus-standalone
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus-standalone
+spec:
+  serviceName: {{ include "openkb.fullname" . }}-milvus-standalone
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openkb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: milvus-standalone
+  template:
+    metadata:
+      labels:
+        {{- include "openkb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: milvus-standalone
+    spec:
+      containers:
+        - name: milvus
+          image: {{ .Values.milvus.standalone.image | quote }}
+          command: ["milvus", "run", "standalone"]
+          ports:
+            - name: grpc
+              containerPort: 19530
+            - name: health
+              containerPort: 9091
+          env:
+            - name: ETCD_ENDPOINTS
+              value: {{ printf "%s-milvus-etcd:2379" (include "openkb.fullname" .) | quote }}
+            - name: MINIO_ADDRESS
+              value: {{ printf "%s-milvus-minio:9000" (include "openkb.fullname" .) | quote }}
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openkb.secretName" . }}
+                  key: MILVUS_MINIO_ACCESS_KEY_ID
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openkb.secretName" . }}
+                  key: MILVUS_MINIO_SECRET_ACCESS_KEY
+            - name: COMMON_STORAGETYPE
+              value: remote
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/milvus
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.milvus.standalone.storage.size | quote }}
+{{- end }}
+

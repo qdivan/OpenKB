@@ -11,3 +11,4 @@ docs
 prompts
 pnpm-lock.yaml
 OPENKB_MASTER_SPEC.md
+deploy/helm/openkb/templates

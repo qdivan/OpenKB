@@ -15,6 +15,13 @@ type OpenKBIncomingMessage = IncomingMessage & {
   auth?: AuthInfo;
 };
 
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()"
+} as const;
+
 export type OpenKBMcpHttpServerOptions = {
   env?: NodeJS.ProcessEnv;
   auth?: McpAuthService;
@@ -447,6 +454,6 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   if (response.headersSent) {
     return;
   }
-  response.writeHead(statusCode, { "content-type": "application/json" });
+  response.writeHead(statusCode, { "content-type": "application/json", ...SECURITY_HEADERS });
   response.end(JSON.stringify(payload));
 }

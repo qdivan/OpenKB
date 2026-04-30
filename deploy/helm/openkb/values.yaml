@@ -1,0 +1,152 @@
+image:
+  repository: openkb
+  tag: phase-11
+  pullPolicy: IfNotPresent
+
+web:
+  enabled: true
+  replicas: 1
+  port: 3000
+  baseUrl: http://localhost:3000
+  apiBaseUrl: http://localhost:4000
+  service:
+    type: ClusterIP
+    port: 3000
+
+api:
+  enabled: true
+  replicas: 1
+  port: 4000
+  uploadMaxBytes: 26214400
+  allowLocalCors: "false"
+  trustProxyHeaders: "false"
+  rateLimit:
+    max: "600"
+    windowSeconds: "60"
+  authRateLimit:
+    max: "20"
+    windowSeconds: "300"
+  service:
+    type: ClusterIP
+    port: 4000
+
+mcp:
+  enabled: true
+  replicas: 1
+  port: 4100
+  baseUrl: http://localhost:4100
+  service:
+    type: ClusterIP
+    port: 4100
+
+difyAdapter:
+  enabled: true
+  replicas: 1
+  port: 4200
+  requestMaxBytes: 1048576
+  resultBaseUrl: http://localhost:3000
+  service:
+    type: ClusterIP
+    port: 4200
+
+workers:
+  import:
+    enabled: true
+    replicas: 1
+    pollMs: 2000
+  index:
+    enabled: true
+    replicas: 1
+    pollMs: 2000
+    batchSize: 100
+
+postgres:
+  enabled: true
+  external: false
+  host: ""
+  port: 5432
+  database: openkb
+  username: openkb
+  databaseUrl: ""
+  image: postgres:16-alpine
+  storage:
+    size: 10Gi
+
+redis:
+  enabled: true
+  external: false
+  host: ""
+  port: 6379
+  image: redis:7-alpine
+  storage:
+    size: 2Gi
+
+s3:
+  external: false
+  endpoint: ""
+  region: us-east-1
+  bucket: openkb-assets
+  forcePathStyle: "true"
+  minio:
+    enabled: true
+    image: m.daocloud.io/docker.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
+    storage:
+      size: 20Gi
+    service:
+      port: 9000
+      consolePort: 9001
+
+milvus:
+  mode: standalone
+  uri: ""
+  tokenSecret: ""
+  tokenKey: MILVUS_TOKEN
+  database: ""
+  activeAlias: openkb_chunks_active
+  collectionPrefix: openkb_chunks
+  enableBm25: "true"
+  enableTextEmbedding: "false"
+  enableRerank: "false"
+  standalone:
+    image: m.daocloud.io/docker.io/milvusdb/milvus:v2.6.10
+    storage:
+      size: 20Gi
+  etcd:
+    image: m.daocloud.io/quay.io/coreos/etcd:v3.5.25
+    storage:
+      size: 2Gi
+  minio:
+    image: m.daocloud.io/docker.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
+    storage:
+      size: 20Gi
+
+secrets:
+  existingSecret: ""
+  postgresPassword: openkb
+  s3AccessKeyId: openkb
+  s3SecretAccessKey: openkb-secret
+  milvusMinioAccessKeyId: openkb
+  milvusMinioSecretAccessKey: openkb-secret
+  milvusToken: ""
+  adminPassword: OpenKB-dev-123456
+
+auth:
+  cookieName: openkb_session
+  cookieSecure: auto
+  sessionTtlDays: "30"
+  emailVerificationTtlHours: "24"
+  passwordResetTtlHours: "2"
+
+seed:
+  adminEmail: admin@openkb.local
+  adminDisplayName: OpenKB Admin
+  defaultTenantName: Default Tenant
+  defaultTenantSlug: default
+
+optionalModels:
+  qwenEmbeddingTei:
+    enabled: false
+  qwenRerankerVllm:
+    enabled: false
+  mineruGpuWorker:
+    enabled: false

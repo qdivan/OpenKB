@@ -1,0 +1,326 @@
+name: openkb
+
+x-openkb-build: &openkb-build
+  context: ../..
+  dockerfile: Dockerfile
+  args:
+    NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
+
+x-openkb-env: &openkb-env
+  DATABASE_URL: postgresql://openkb:${POSTGRES_PASSWORD:-openkb}@postgres:5432/${POSTGRES_DB:-openkb}?schema=public
+  REDIS_URL: redis://redis:6379
+  APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+  WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+  NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+  OPENKB_ALLOW_LOCAL_CORS: ${OPENKB_ALLOW_LOCAL_CORS:-true}
+  AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-openkb_session}
+  AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-auto}
+  SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+  EMAIL_VERIFICATION_TTL_HOURS: ${EMAIL_VERIFICATION_TTL_HOURS:-24}
+  PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-2}
+  TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+  API_RATE_LIMIT_MAX: ${API_RATE_LIMIT_MAX:-600}
+  API_RATE_LIMIT_WINDOW_SECONDS: ${API_RATE_LIMIT_WINDOW_SECONDS:-60}
+  AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-20}
+  AUTH_RATE_LIMIT_WINDOW_SECONDS: ${AUTH_RATE_LIMIT_WINDOW_SECONDS:-300}
+  DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-Default Tenant}
+  DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-default}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@openkb.local}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-OpenKB-dev-123456}
+  ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME:-OpenKB Admin}
+  S3_ENDPOINT: http://minio-assets:9000
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-openkb-assets}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-openkb}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-openkb-secret}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+  S3_PRESIGN_TTL_SECONDS: ${S3_PRESIGN_TTL_SECONDS:-900}
+  MILVUS_URI: milvus-standalone:19530
+  MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+  MILVUS_DATABASE: ${MILVUS_DATABASE:-}
+  MILVUS_ACTIVE_ALIAS: ${MILVUS_ACTIVE_ALIAS:-openkb_chunks_active}
+  MILVUS_COLLECTION_PREFIX: ${MILVUS_COLLECTION_PREFIX:-openkb_chunks}
+  MILVUS_ENABLE_BM25: ${MILVUS_ENABLE_BM25:-true}
+  MILVUS_ENABLE_TEXT_EMBEDDING: ${MILVUS_ENABLE_TEXT_EMBEDDING:-false}
+  MILVUS_ENABLE_RERANK: ${MILVUS_ENABLE_RERANK:-false}
+  MCP_SERVER_BASE_URL: ${MCP_SERVER_BASE_URL:-http://localhost:4100}
+  MCP_PAT_PREFIX: ${MCP_PAT_PREFIX:-kbpat_}
+  MCP_DEFAULT_SCOPES: ${MCP_DEFAULT_SCOPES:-kb:read,kb:search,doc:read}
+  MCP_MAX_TOP_K: ${MCP_MAX_TOP_K:-20}
+  MCP_MAX_DOCUMENT_CHARS: ${MCP_MAX_DOCUMENT_CHARS:-60000}
+  MCP_PAT_USER_EMAIL: ${MCP_PAT_USER_EMAIL:-admin@openkb.local}
+  MCP_PAT_NAME: ${MCP_PAT_NAME:-Local MCP PAT}
+  MCP_PAT_SCOPES: ${MCP_PAT_SCOPES:-kb:read,kb:search,doc:read}
+  MCP_PAT_EXPIRES_DAYS: ${MCP_PAT_EXPIRES_DAYS:-30}
+  DIFY_API_KEY_PREFIX: ${DIFY_API_KEY_PREFIX:-dify_}
+  DIFY_API_KEY_NAME: ${DIFY_API_KEY_NAME:-Local Dify Key}
+  DIFY_KEY_CREATED_BY_EMAIL: ${DIFY_KEY_CREATED_BY_EMAIL:-admin@openkb.local}
+  DIFY_KNOWLEDGE_ID: ${DIFY_KNOWLEDGE_ID:-openkb-demo}
+  DIFY_KNOWLEDGE_BASE_ID: ${DIFY_KNOWLEDGE_BASE_ID:-}
+  DIFY_TOP_K_LIMIT: ${DIFY_TOP_K_LIMIT:-10}
+  DIFY_KEY_EXPIRES_DAYS: ${DIFY_KEY_EXPIRES_DAYS:-30}
+  DIFY_MAX_TOP_K: ${DIFY_MAX_TOP_K:-20}
+  DIFY_REQUEST_MAX_BYTES: ${DIFY_REQUEST_MAX_BYTES:-1048576}
+  DIFY_RESULT_BASE_URL: ${DIFY_RESULT_BASE_URL:-http://localhost:3000}
+
+x-openkb-depends: &openkb-depends
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  minio-assets:
+    condition: service_healthy
+  milvus-standalone:
+    condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-openkb}
+      POSTGRES_USER: openkb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openkb}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openkb -d ${POSTGRES_DB:-openkb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - openkb-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - openkb-redis-data:/data
+    restart: unless-stopped
+
+  minio-assets:
+    image: m.daocloud.io/docker.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-openkb}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-openkb-secret}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - openkb-minio-assets-data:/data
+    restart: unless-stopped
+
+  milvus-etcd:
+    image: m.daocloud.io/quay.io/coreos/etcd:v3.5.25
+    command:
+      - etcd
+      - --data-dir=/etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --initial-advertise-peer-urls=http://127.0.0.1:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-cluster=default=http://127.0.0.1:2380
+      - --auto-compaction-mode=revision
+      - --auto-compaction-retention=1000
+      - --quota-backend-bytes=4294967296
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - openkb-milvus-etcd-data:/etcd
+    restart: unless-stopped
+
+  milvus-minio:
+    image: m.daocloud.io/docker.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MILVUS_MINIO_ACCESS_KEY_ID:-openkb}
+      MINIO_ROOT_PASSWORD: ${MILVUS_MINIO_SECRET_ACCESS_KEY:-openkb-secret}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - openkb-milvus-minio-data:/data
+    restart: unless-stopped
+
+  milvus-standalone:
+    image: m.daocloud.io/docker.io/milvusdb/milvus:v2.6.10
+    command: ["milvus", "run", "standalone"]
+    depends_on:
+      milvus-etcd:
+        condition: service_healthy
+      milvus-minio:
+        condition: service_healthy
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY_ID: ${MILVUS_MINIO_ACCESS_KEY_ID:-openkb}
+      MINIO_SECRET_ACCESS_KEY: ${MILVUS_MINIO_SECRET_ACCESS_KEY:-openkb-secret}
+      COMMON_STORAGETYPE: remote
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_HEALTH_PORT:-9091}:9091"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:9091/healthz || wget -q -O- http://127.0.0.1:9091/healthz >/dev/null"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    volumes:
+      - openkb-milvus-data:/var/lib/milvus
+    restart: unless-stopped
+
+  api:
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm --filter @openkb/api start
+    environment:
+      <<: *openkb-env
+      PORT: "4000"
+    depends_on: *openkb-depends
+    ports:
+      - "${API_PORT:-4000}:4000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "require(''node:http'').get(''http://127.0.0.1:4000/health'', r => process.exit(r.statusCode < 500 ? 0 : 1)).on(''error'', () => process.exit(1))"'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  web:
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm --filter @openkb/web exec next start -p 3000 -H 0.0.0.0
+    environment:
+      <<: *openkb-env
+      PORT: "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "require(''node:http'').get(''http://127.0.0.1:3000/'', r => process.exit(r.statusCode < 500 ? 0 : 1)).on(''error'', () => process.exit(1))"'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  mcp-server:
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm --filter @openkb/mcp-server start
+    environment:
+      <<: *openkb-env
+      PORT: "4100"
+    depends_on: *openkb-depends
+    ports:
+      - "${MCP_PORT:-4100}:4100"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "require(''node:http'').get(''http://127.0.0.1:4100/health'', r => process.exit(r.statusCode < 500 ? 0 : 1)).on(''error'', () => process.exit(1))"'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  dify-adapter:
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm --filter @openkb/dify-adapter start
+    environment:
+      <<: *openkb-env
+      PORT: "4200"
+    depends_on: *openkb-depends
+    ports:
+      - "${DIFY_ADAPTER_PORT:-4200}:4200"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "require(''node:http'').get(''http://127.0.0.1:4200/health'', r => process.exit(r.statusCode < 500 ? 0 : 1)).on(''error'', () => process.exit(1))"'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  import-worker:
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm import:worker
+    environment:
+      <<: *openkb-env
+      IMPORT_WORKER_POLL_MS: ${IMPORT_WORKER_POLL_MS:-2000}
+    depends_on: *openkb-depends
+    restart: unless-stopped
+
+  index-worker:
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm index:worker
+    environment:
+      <<: *openkb-env
+      INDEX_WORKER_POLL_MS: ${INDEX_WORKER_POLL_MS:-2000}
+      INDEX_WORKER_BATCH_SIZE: ${INDEX_WORKER_BATCH_SIZE:-100}
+    depends_on: *openkb-depends
+    restart: unless-stopped
+
+  migrate:
+    profiles: ["init"]
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm db:migrate
+    environment: *openkb-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed-dev:
+    profiles: ["init"]
+    build: *openkb-build
+    image: openkb:phase-11
+    command: pnpm dev:seed
+    environment: *openkb-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  openkb-postgres-data:
+  openkb-redis-data:
+  openkb-minio-assets-data:
+  openkb-milvus-etcd-data:
+  openkb-milvus-minio-data:
+  openkb-milvus-data:
