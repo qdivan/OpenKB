@@ -1,0 +1,55 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">OpenKB workbench preview</title>
+  <desc id="desc">A clean preview of the OpenKB workspace with document tree, editor and outline.</desc>
+  <rect width="1280" height="720" rx="28" fill="#F8FAFC"/>
+  <rect x="36" y="36" width="1208" height="648" rx="24" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <rect x="36" y="36" width="184" height="648" rx="24" fill="#F1F5F9"/>
+  <rect x="220" y="36" width="230" height="648" fill="#F8FAFC" stroke="#E2E8F0"/>
+  <rect x="1036" y="36" width="208" height="648" rx="24" fill="#F8FAFC" stroke="#E2E8F0"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="64" y="70" width="42" height="42" rx="12" fill="#059669"/>
+    <text x="72" y="98" fill="white" font-size="18" font-weight="800">OK</text>
+    <text x="118" y="88" fill="#0F172A" font-size="18" font-weight="800">OpenKB</text>
+    <text x="118" y="110" fill="#64748B" font-size="13">workspace</text>
+    <text x="64" y="166" fill="#64748B" font-size="12" font-weight="800">WORKSPACES</text>
+    <rect x="58" y="184" width="136" height="38" rx="10" fill="#E0F2FE"/>
+    <text x="82" y="208" fill="#0369A1" font-size="14" font-weight="700">Default Space</text>
+    <text x="64" y="270" fill="#64748B" font-size="12" font-weight="800">KNOWLEDGE BASES</text>
+    <rect x="58" y="288" width="136" height="38" rx="10" fill="#DCFCE7"/>
+    <text x="82" y="312" fill="#166534" font-size="14" font-weight="700">Product Docs</text>
+    <text x="250" y="88" fill="#0F172A" font-size="18" font-weight="800">Documents</text>
+    <text x="250" y="110" fill="#64748B" font-size="13">3 items</text>
+    <rect x="250" y="146" width="164" height="38" rx="10" fill="#F1F5F9"/>
+    <text x="278" y="170" fill="#334155" font-size="14">Getting Started</text>
+    <rect x="250" y="196" width="164" height="38" rx="10" fill="#E0F2FE"/>
+    <text x="278" y="220" fill="#0369A1" font-size="14" font-weight="700">Welcome</text>
+    <rect x="250" y="246" width="164" height="38" rx="10" fill="#F1F5F9"/>
+    <text x="278" y="270" fill="#334155" font-size="14">Deploy Notes</text>
+    <text x="250" y="340" fill="#64748B" font-size="12" font-weight="800">IMPORTS</text>
+    <rect x="250" y="358" width="164" height="48" rx="12" fill="#ECFDF5" stroke="#BBF7D0"/>
+    <circle cx="274" cy="382" r="8" fill="#10B981"/>
+    <text x="292" y="378" fill="#166534" font-size="13" font-weight="700">import.md</text>
+    <text x="292" y="396" fill="#64748B" font-size="11">succeeded</text>
+    <text x="488" y="104" fill="#0F172A" font-size="30" font-weight="850">Welcome to OpenKB</text>
+    <rect x="488" y="138" width="58" height="34" rx="10" fill="#111827"/>
+    <text x="506" y="160" fill="#FFFFFF" font-size="13" font-weight="800">Edit</text>
+    <rect x="558" y="138" width="68" height="34" rx="10" fill="#F1F5F9"/>
+    <text x="577" y="160" fill="#334155" font-size="13" font-weight="700">Read</text>
+    <rect x="638" y="138" width="82" height="34" rx="10" fill="#F1F5F9"/>
+    <text x="657" y="160" fill="#334155" font-size="13" font-weight="700">Source</text>
+    <rect x="488" y="202" width="504" height="398" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <text x="526" y="270" fill="#0F172A" font-size="30" font-weight="850">Write once, search everywhere.</text>
+    <rect x="526" y="316" width="388" height="14" rx="7" fill="#CBD5E1"/>
+    <rect x="526" y="350" width="314" height="14" rx="7" fill="#CBD5E1"/>
+    <rect x="526" y="410" width="402" height="86" rx="16" fill="#F0FDF4" stroke="#BBF7D0"/>
+    <text x="552" y="446" fill="#166534" font-size="17" font-weight="800">PostgreSQL keeps permission truth</text>
+    <text x="552" y="474" fill="#475569" font-size="14">Milvus is only the retrieval index.</text>
+    <text x="1072" y="88" fill="#0F172A" font-size="18" font-weight="800">Outline</text>
+    <rect x="1070" y="126" width="132" height="34" rx="10" fill="#E0F2FE"/>
+    <text x="1090" y="148" fill="#0369A1" font-size="13" font-weight="700">Welcome</text>
+    <rect x="1070" y="182" width="132" height="34" rx="10" fill="#F1F5F9"/>
+    <text x="1090" y="204" fill="#334155" font-size="13">Permissions</text>
+    <rect x="1070" y="238" width="132" height="34" rx="10" fill="#F1F5F9"/>
+    <text x="1090" y="260" fill="#334155" font-size="13">Retrieval</text>
+  </g>
+</svg>

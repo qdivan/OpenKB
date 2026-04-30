@@ -1,67 +1,66 @@
-# OpenKB
+<p align="center">
+  <img src="docs/assets/openkb-logo.png" width="96" alt="OpenKB logo" />
+</p>
 
-OpenKB 是一个 Markdown-first、语雀式权限与编辑体验、面向私有化部署的开源知识库系统。它把团队知识库、用户级权限、文件导入、Milvus 检索索引、MCP Server 和 Dify External Knowledge Adapter 放在一套可自托管架构里。
+<h1 align="center">OpenKB</h1>
 
-当前仓库处于 v0.3.x / Phase 11：最小部署闭环已经完成，适合本地开发、公网测试平台、私有化试跑和后续产品迭代；还不是完整生产 GA 版本。
+<p align="center">
+  <strong>像语雀一样写文档，把知识库握在自己手里。</strong>
+</p>
 
-## 快速入口
+<p align="center">
+  Markdown 优先 · 私有化部署 · 权限清晰 · 接入 MCP 与 Dify
+</p>
 
-| 入口                                                                                                 | 说明                           |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------ |
-| [docs/00-index.zh-CN.md](docs/00-index.zh-CN.md)                                                     | 需求与设计文档索引             |
-| [docs/13-deployment.zh-CN.md](docs/13-deployment.zh-CN.md)                                           | Docker Compose / Helm 部署说明 |
-| [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)                   | 当前代码与 docs 的差异核对     |
-| [docs/24-public-test-platform-deployment.zh-CN.md](docs/24-public-test-platform-deployment.zh-CN.md) | 公网测试平台安全部署文档       |
-| [deploy/docker-compose/README.md](deploy/docker-compose/README.md)                                   | 原生 Docker Compose 启动路径   |
-| [deploy/helm/README.md](deploy/helm/README.md)                                                       | Helm chart 使用说明            |
+<p align="center">
+  <a href="docs/25-local-quickstart.zh-CN.md">本地快速开始</a>
+  ·
+  <a href="docs/24-public-test-platform-deployment.zh-CN.md">公网测试部署</a>
+  ·
+  <a href="docs/00-index.zh-CN.md">完整文档</a>
+  ·
+  <a href="docs/23-docs-code-gap-analysis.zh-CN.md">实现进度</a>
+</p>
 
-## 核心能力
+<p align="center">
+  <img alt="Phase" src="https://img.shields.io/badge/phase-v0.3.x-10B981" />
+  <img alt="Docker Compose" src="https://img.shields.io/badge/deploy-Docker%20Compose-2563EB" />
+  <img alt="Helm" src="https://img.shields.io/badge/k8s-Helm-0F766E" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-user--bound-7C3AED" />
+  <img alt="Dify" src="https://img.shields.io/badge/Dify-external%20knowledge-111827" />
+</p>
 
-- 语雀式 workspace / knowledge base / folder / document 数据模型。
-- 邮箱注册、邮箱验证、登录、登出、密码重置、管理员激活/禁用用户。
-- PostgreSQL 权限真相：workspace role 与 content collaborator role 分离，admin 不默认读取私有内容。
-- Yuque-like Web 工作台：左侧文档树、中心文档编辑器、右侧 outline。
-- Milkdown Markdown 编辑：Read / Edit / Source 模式、自动保存、版本冲突提示、feature registry。
-- MinIO/S3 文件上传与导入：当前支持 Markdown / Text / HTML / CSV，复杂 Office/PDF/OCR adapter 留给后续阶段。
-- Milvus BM25/text-only 检索索引、blue/green rebuild、alias switch、PostgreSQL final permission check。
-- Streamable HTTP MCP Server：user-bound PAT、`kb.*` tools/resources、审计日志。
-- Dify External Knowledge Adapter：app-scoped API key、`knowledge_id` mapping、`metadata_condition`、审计日志。
-- Phase 11 部署资产：Dockerfile、生产 Compose、Helm 最小 chart、健康检查、CPU-only 默认配置。
+<p align="center">
+  <img src="docs/assets/openkb-cover.png" alt="OpenKB cover" />
+</p>
 
-## 架构概览
+OpenKB 是一个开源、自托管的团队知识库。它关注三件事：写作体验接近语雀，权限模型足够清楚，检索和外部集成不绕过权限。
 
-```text
-apps/
-  web/            Next.js Web 工作台
-  api/            NestJS + Fastify API
-  mcp-server/     MCP Streamable HTTP Server
-  dify-adapter/   Dify External Knowledge Adapter
-workers/
-  import-worker/  PostgreSQL-backed import polling worker
-  index-worker/   Milvus index/rebuild worker
-packages/
-  auth/ db/ editor/ markdown/ milvus/ permissions/ retrieval/ shared/
-deploy/
-  docker-compose/ helm/
-docs/
-```
+项目当前处于 `v0.3.x / Phase 11`，已经打通 Web、API、导入、Milvus 检索、MCP、Dify、Docker Compose 和 Helm 的最小闭环，适合本地开发、公网测试平台和私有化试跑；还不是完整生产 GA 版本。
 
-```text
-Browser -> web -> api -> PostgreSQL
-                    -> S3/MinIO assets
-                    -> import/index job tables
+## ✨ 特性
 
-index-worker -> PostgreSQL chunks -> Milvus active alias
+- 📝 **Markdown 优先**：编辑边界跟随 Milkdown，不发明新的 Markdown 方言。
+- 🗂️ **语雀式结构**：工作区、知识库、目录、文档、协作者和分享链接。
+- 🔐 **权限清晰**：PostgreSQL 是内容与权限真相，管理员不默认读取所有私有文档。
+- 🔎 **可检索**：Milvus 负责检索索引，结果返回前再次经过 PostgreSQL 权限检查。
+- 📥 **可导入**：当前支持 Markdown、Text、HTML、CSV；复杂 Office/PDF/OCR 留给后续 adapter。
+- 🤖 **可接入 AI 工具**：MCP 是用户绑定的出口，Dify 是应用密钥绑定的出口。
+- 🚢 **可部署**：提供 Dockerfile、生产 Compose、Helm 最小 chart 和公网测试部署清单。
 
-MCP client -> mcp-server -> PostgreSQL PermissionService -> retrieval
-Dify       -> dify-adapter -> scoped key + KB mapping -> retrieval
-```
+## 🖼️ 预览
 
-PostgreSQL 是内容、权限、版本和审计真相；Milvus 只做检索索引。Web、MCP、Dify、附件和搜索结果返回前都必须走 PostgreSQL 最终权限检查。
+### 文档工作台
 
-## Docker 快速启动
+![OpenKB workbench](docs/assets/openkb-workbench.png)
 
-本地或测试机需要 Docker / Docker Compose。首次启动：
+### 知识库检索
+
+![OpenKB search](docs/assets/openkb-search.png)
+
+## 🚀 本地跑起来
+
+需要 Docker / Docker Compose。首次启动：
 
 ```bash
 docker compose -f deploy/docker-compose/compose.yml build
@@ -71,57 +70,43 @@ docker compose -f deploy/docker-compose/compose.yml run --rm seed-dev
 docker compose -f deploy/docker-compose/compose.yml up -d
 ```
 
-健康检查：
-
-```bash
-curl http://localhost:4000/health
-curl http://localhost:4100/health
-curl http://localhost:4200/health
-```
-
-本地开发账号：
+打开 `http://localhost:3000`，使用本地开发账号登录：
 
 ```text
-Email:    admin@openkb.local
-Password: OpenKB-dev-123456
+admin@openkb.local
+OpenKB-dev-123456
 ```
 
-这个账号和 `seed-dev` 只允许本地开发使用。公网测试或生产环境必须使用 `pnpm db:seed:first-admin` 创建负责人确认的一次性强密码管理员，不得提交或复用默认密码。
+更完整的本地部署、端口覆盖、健康检查和 MCP/Dify 验证见 [本地快速部署](docs/25-local-quickstart.zh-CN.md)。
 
-默认本地端口：
+## 📦 部署
 
-```text
-Web:  http://localhost:3000
-API:  http://localhost:4000
-MCP:  http://localhost:4100/mcp
-Dify: http://localhost:4200/retrieval
-```
+- Docker Compose: [deploy/docker-compose/README.md](deploy/docker-compose/README.md)
+- Helm: [deploy/helm/README.md](deploy/helm/README.md)
+- 公网测试平台: [docs/24-public-test-platform-deployment.zh-CN.md](docs/24-public-test-platform-deployment.zh-CN.md)
 
-## 公网测试部署
+公网环境不要使用 `seed-dev`、默认账号或默认密码。请启用 HTTPS，收紧 CORS，使用强密钥，并确保 PostgreSQL、Redis、MinIO、Milvus、etcd 不直接暴露到公网。
 
-部署到公网前先阅读 [docs/24-public-test-platform-deployment.zh-CN.md](docs/24-public-test-platform-deployment.zh-CN.md)。部署人员需要向项目负责人确认域名、HTTPS/TLS、管理员邮箱和强密码、数据库、Redis、S3/MinIO、Milvus、模型服务地址、Dify 出口 IP、MCP PAT 策略、上传策略、备份与日志保留策略。
+## 🧭 项目状态
 
-公网安全基线：
+已完成的主线：
 
-- 必须使用 HTTPS，`AUTH_COOKIE_SECURE=true`，`OPENKB_ALLOW_LOCAL_CORS=false`，`CORS_ORIGINS` 写精确公网域名。
-- Web/API/MCP/Dify 放在反向代理或 Ingress 后；PostgreSQL、Redis、MinIO Console、Milvus、etcd 不得暴露公网。
-- 禁止运行 `dev:seed` 或提交默认账号；管理员密码至少 20 位随机，首次登录后更换。
-- Dify key 是 app-scoped；MCP PAT 是 user-bound；不要给公网集成发管理员全库 token。
-- OpenKB 不保存 embedding/rerank provider key；相关凭据放在 Milvus、模型服务或部署平台 Secret。
-- 当前没有生产 SMTP、完整 MCP OAuth、2FA、病毒扫描和 Admin UI，公网测试应限制账号、上传和集成入口。
+- 登录注册、邮箱验证、密码重置、管理员激活/禁用用户。
+- 工作区、知识库、文档树、读写模式、源码模式和自动保存。
+- 文件上传、导入任务、chunk 生成和索引重建。
+- BM25/text-only 检索、MCP Server、Dify External Knowledge Adapter。
+- Phase 11 部署闭环：Docker Compose、Helm、环境变量、健康检查、安全基线文档。
 
-## Helm
+仍在路上的能力：
 
-最小 chart 位于 [deploy/helm/openkb](deploy/helm/openkb)：
+- 生产 SMTP、Admin UI、分享/协作者面板。
+- 完整 MCP OAuth、MCP/Dify key 管理 UI。
+- PDF/DOCX/PPTX/XLSX/图片 OCR adapter。
+- dense/hybrid/rerank 生产链路、监控备份和升级回滚。
 
-```bash
-helm lint deploy/helm/openkb
-helm template openkb deploy/helm/openkb --values deploy/helm/openkb/values.yaml
-```
+代码与需求文档的逐项差异见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
 
-chart 支持内置或外部 PostgreSQL、Redis、S3/MinIO、Milvus。生产或公网测试环境应使用私有 values overlay 与 `secrets.existingSecret`，不要把真实 Secret 提交到 Git。
-
-## 本地开发
+## 🛠️ 开发验证
 
 ```bash
 corepack enable
@@ -133,64 +118,17 @@ pnpm build
 pnpm test
 ```
 
-需要依赖服务时可使用旧 PowerShell + WSL 测试脚本：
+## 📚 文档
 
-```powershell
-pnpm db:test:up
-$env:DATABASE_URL="postgresql://openkb:openkb@localhost:55432/openkb_test?schema=public"
-pnpm db:migrate
-pnpm dev:seed
+| 文档                                                                                   | 用途          |
+| -------------------------------------------------------------------------------------- | ------------- |
+| [docs/00-index.zh-CN.md](docs/00-index.zh-CN.md)                                       | 文档索引      |
+| [docs/01-product-vision.zh-CN.md](docs/01-product-vision.zh-CN.md)                     | 产品目标      |
+| [docs/04-editor-spec.zh-CN.md](docs/04-editor-spec.zh-CN.md)                           | 编辑器边界    |
+| [docs/05-permission-spec.zh-CN.md](docs/05-permission-spec.zh-CN.md)                   | 权限模型      |
+| [docs/09-search-rag-milvus-native.zh-CN.md](docs/09-search-rag-milvus-native.zh-CN.md) | 检索与 Milvus |
+| [docs/10-mcp-server.zh-CN.md](docs/10-mcp-server.zh-CN.md)                             | MCP Server    |
+| [docs/11-dify-adapter.zh-CN.md](docs/11-dify-adapter.zh-CN.md)                         | Dify Adapter  |
+| [docs/13-deployment.zh-CN.md](docs/13-deployment.zh-CN.md)                             | 部署说明      |
 
-pnpm content:test
-pnpm import:test
-pnpm index:test
-pnpm retrieval:test
-pnpm mcp:test
-pnpm dify:test
-```
-
-开发服务：
-
-```powershell
-$env:DATABASE_URL="postgresql://openkb:openkb@localhost:55432/openkb_test?schema=public"
-$env:MILVUS_URI="localhost:59530"
-pnpm --filter @openkb/api dev
-
-$env:NEXT_PUBLIC_API_BASE_URL="http://localhost:4000"
-pnpm --filter @openkb/web exec next dev --port 3001
-```
-
-## MCP 与 Dify
-
-创建 MCP PAT：
-
-```powershell
-$env:DATABASE_URL="postgresql://openkb:openkb@localhost:55432/openkb_test?schema=public"
-$env:MCP_PAT_USER_EMAIL="admin@openkb.local"
-$env:MCP_PAT_NAME="Local MCP PAT"
-pnpm mcp:pat:create
-```
-
-创建 Dify External Knowledge API key：
-
-```powershell
-$env:DATABASE_URL="postgresql://openkb:openkb@localhost:55432/openkb_test?schema=public"
-$env:DIFY_KEY_CREATED_BY_EMAIL="admin@openkb.local"
-$env:DIFY_API_KEY_NAME="Local Dify Key"
-$env:DIFY_KNOWLEDGE_ID="openkb-demo"
-$env:DIFY_KNOWLEDGE_BASE_ID="<internal knowledge_base_id>"
-pnpm dify:key:create
-```
-
-## 边界与路线
-
-当前 v0.3.x 已完成 Phase 1-11 的主干资产，但以下能力仍是后续增强：
-
-- 生产 SMTP、公开注册完整邮件闭环、Admin UI。
-- Share/Collaborator 面板、邀请审批、分享密码、分享页。
-- 完整 MCP OAuth、MCP/Dify key 管理 UI。
-- PDF/DOCX/PPTX/XLSX/图片 OCR adapter、MinerU/GPU worker。
-- dense/hybrid/rerank 生产链路、模型服务运维面板。
-- 实时协同、监控告警、备份恢复、升级回滚流程。
-
-更完整的规则与非目标见 [AGENTS.md](AGENTS.md)、[docs/18-decision-overrides-v0.3.zh-CN.md](docs/18-decision-overrides-v0.3.zh-CN.md) 和 [docs/22-v0.3.3-clarifications.zh-CN.md](docs/22-v0.3.3-clarifications.zh-CN.md)。
+更严格的项目规则见 [AGENTS.md](AGENTS.md)、[docs/18-decision-overrides-v0.3.zh-CN.md](docs/18-decision-overrides-v0.3.zh-CN.md) 和 [docs/22-v0.3.3-clarifications.zh-CN.md](docs/22-v0.3.3-clarifications.zh-CN.md)。

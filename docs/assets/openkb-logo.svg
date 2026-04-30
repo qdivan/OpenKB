@@ -1,0 +1,30 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">OpenKB logo</title>
+  <desc id="desc">A rounded green mark with an open knowledge book and connected search nodes.</desc>
+  <defs>
+    <linearGradient id="bg" x1="36" y1="28" x2="220" y2="228" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#10B981"/>
+      <stop offset="0.5" stop-color="#0F9F9A"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="page" x1="72" y1="66" x2="184" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E7FFF7"/>
+    </linearGradient>
+    <filter id="shadow" x="24" y="20" width="208" height="220" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#0F172A" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect x="24" y="24" width="208" height="208" rx="52" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <path d="M65 76C65 66.6 72.6 59 82 59H116C123.5 59 130 63.7 132.5 70.4C135 63.7 141.5 59 149 59H178C187.4 59 195 66.6 195 76V180C195 187.2 189.2 193 182 193H148.5C139.9 193 132.5 198.9 132.5 207.5C132.5 198.9 125.1 193 116.5 193H78C70.8 193 65 187.2 65 180V76Z" fill="url(#page)"/>
+    <path d="M132.5 72V205" stroke="#0F766E" stroke-width="7" stroke-linecap="round"/>
+    <path d="M86 91H113M86 113H112M153 91H174M153 113H174M153 135H168" stroke="#0F766E" stroke-width="8" stroke-linecap="round"/>
+    <path d="M86 145C99 142 111 145 121 153" stroke="#34D399" stroke-width="7" stroke-linecap="round"/>
+    <path d="M152 160C164 151 177 149 189 154" stroke="#60A5FA" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <circle cx="190" cy="62" r="14" fill="#ECFEFF" stroke="#0EA5E9" stroke-width="8"/>
+  <path d="M200 72L215 87" stroke="#ECFEFF" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="62" cy="194" r="8" fill="#ECFEFF"/>
+  <circle cx="84" cy="213" r="6" fill="#ECFEFF" opacity="0.88"/>
+</svg>

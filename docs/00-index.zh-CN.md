@@ -37,6 +37,7 @@ Codex 开始任何代码工作前，必须按下面顺序阅读。
 - `docs/15-roadmap-and-codex-tasks.zh-CN.md`：开发路线。
 - `docs/23-docs-code-gap-analysis.zh-CN.md`：当前代码与 docs 需求差异核对。
 - `docs/24-public-test-platform-deployment.zh-CN.md`：公网测试平台安全部署文档。
+- `docs/25-local-quickstart.zh-CN.md`：本地 Docker Compose 快速部署。
 - `docs/18-decision-overrides-v0.3.zh-CN.md`：v0.3 最高优先级决策覆盖清单。
 - `docs/21-v0.3.2-clarifications.zh-CN.md`：Codex 首轮发现点的澄清和修正。
 - `docs/22-v0.3.3-clarifications.zh-CN.md`：Codex 第二轮发现点的澄清和修正。
@@ -46,5 +47,6 @@ Codex 开始任何代码工作前，必须按下面顺序阅读。
 - `docs/17-glossary.zh-CN.md`：术语表。
 - `docs/23-docs-code-gap-analysis.zh-CN.md`：文档/实现差异清单。
 - `docs/24-public-test-platform-deployment.zh-CN.md`：公网测试平台部署清单。
+- `docs/25-local-quickstart.zh-CN.md`：本地快速启动和冒烟测试。
 - `docs/99-references.md`：参考资料。
 - `prompts/`：给 Codex 的分阶段提示词。

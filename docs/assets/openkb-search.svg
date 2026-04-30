@@ -1,0 +1,33 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">OpenKB search preview</title>
+  <desc id="desc">A clean preview of scoped knowledge base search in OpenKB.</desc>
+  <rect width="1280" height="720" rx="28" fill="#F8FAFC"/>
+  <rect x="118" y="72" width="1044" height="576" rx="26" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="170" y="128" fill="#0F172A" font-size="28" font-weight="850">Search</text>
+    <text x="170" y="158" fill="#64748B" font-size="15">Scoped to Product Docs</text>
+    <rect x="170" y="200" width="760" height="58" rx="16" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <circle cx="204" cy="229" r="10" stroke="#64748B" stroke-width="3"/>
+    <path d="M212 237L224 249" stroke="#64748B" stroke-width="3" stroke-linecap="round"/>
+    <text x="244" y="236" fill="#0F172A" font-size="18" font-weight="700">Phase 11 deployment checklist</text>
+    <rect x="946" y="200" width="164" height="58" rx="16" fill="#0F172A"/>
+    <text x="998" y="236" fill="#FFFFFF" font-size="16" font-weight="800">Search</text>
+    <text x="170" y="306" fill="#475569" font-size="15">3 results</text>
+    <rect x="170" y="330" width="940" height="90" rx="18" fill="#F8FAFC" stroke="#E2E8F0"/>
+    <rect x="198" y="358" width="34" height="34" rx="10" fill="#DBEAFE"/>
+    <text x="252" y="368" fill="#0F172A" font-size="17" font-weight="850">Phase 11 Local Import Smoke</text>
+    <rect x="506" y="350" width="58" height="24" rx="12" fill="#DCFCE7"/>
+    <text x="522" y="367" fill="#166534" font-size="12" font-weight="800">1.36</text>
+    <text x="252" y="394" fill="#475569" font-size="14">Import worker, Milvus rebuild, and retrieval search smoke notes.</text>
+    <text x="252" y="410" fill="#94A3B8" font-size="12">Product Docs / Getting Started / Phase 11</text>
+    <rect x="170" y="444" width="940" height="90" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="198" y="472" width="34" height="34" rx="10" fill="#CCFBF1"/>
+    <text x="252" y="482" fill="#0F172A" font-size="17" font-weight="850">Public test deployment</text>
+    <rect x="470" y="464" width="58" height="24" rx="12" fill="#E0F2FE"/>
+    <text x="487" y="481" fill="#0369A1" font-size="12" font-weight="800">0.92</text>
+    <text x="252" y="508" fill="#475569" font-size="14">HTTPS, CORS, cookies, secrets, and reverse proxy checklist.</text>
+    <text x="252" y="524" fill="#94A3B8" font-size="12">Deployment / Security / Public test</text>
+    <rect x="170" y="558" width="940" height="52" rx="18" fill="#F0FDF4" stroke="#BBF7D0"/>
+    <text x="202" y="591" fill="#166534" font-size="15" font-weight="800">Every result is checked again by PostgreSQL permissions before it is returned.</text>
+  </g>
+</svg>
