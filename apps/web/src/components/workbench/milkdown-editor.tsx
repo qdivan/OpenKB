@@ -6,6 +6,7 @@ import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
+import { ENABLED_MILKDOWN_PRESETS, type MilkdownPreset } from "@openkb/editor";
 import { useEffect, useRef } from "react";
 
 export type MilkdownEditorProps = {
@@ -13,6 +14,11 @@ export type MilkdownEditorProps = {
   editable: boolean;
   onChange: (markdown: string) => void;
 };
+
+const milkdownPresetPlugins = {
+  "@milkdown/kit/preset/commonmark": commonmark,
+  "@milkdown/kit/preset/gfm": gfm
+} satisfies Record<MilkdownPreset, typeof commonmark>;
 
 export function MilkdownEditor(props: MilkdownEditorProps) {
   return (
@@ -31,27 +37,29 @@ function MilkdownEditorInner({ markdown, editable, onChange }: MilkdownEditorPro
   }, [onChange]);
 
   useEditor(
-    (root) =>
-      Editor.make()
-        .config((ctx) => {
-          ctx.set(rootCtx, root);
-          ctx.set(defaultValueCtx, initialMarkdownRef.current);
-          ctx.set(editorViewOptionsCtx, {
-            editable: () => editable,
-            attributes: {
-              class: editable ? "openkb-milkdown-editor" : "openkb-milkdown-reader"
-            }
-          });
-          ctx.get(listenerCtx).markdownUpdated((_, nextMarkdown, previousMarkdown) => {
-            if (nextMarkdown !== previousMarkdown) {
-              onChangeRef.current(nextMarkdown);
-            }
-          });
-        })
-        .use(commonmark)
-        .use(gfm)
-        .use(history)
-        .use(listener),
+    (root) => {
+      const editor = Editor.make().config((ctx) => {
+        ctx.set(rootCtx, root);
+        ctx.set(defaultValueCtx, initialMarkdownRef.current);
+        ctx.set(editorViewOptionsCtx, {
+          editable: () => editable,
+          attributes: {
+            class: editable ? "openkb-milkdown-editor" : "openkb-milkdown-reader"
+          }
+        });
+        ctx.get(listenerCtx).markdownUpdated((_, nextMarkdown, previousMarkdown) => {
+          if (nextMarkdown !== previousMarkdown) {
+            onChangeRef.current(nextMarkdown);
+          }
+        });
+      });
+
+      for (const preset of ENABLED_MILKDOWN_PRESETS) {
+        editor.use(milkdownPresetPlugins[preset]);
+      }
+
+      return editor.use(history).use(listener);
+    },
     [editable]
   );
 

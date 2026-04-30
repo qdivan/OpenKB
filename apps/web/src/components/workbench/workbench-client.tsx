@@ -2,17 +2,30 @@
 
 import {
   createEditorSavePayload,
+  extractMarkdownReferences,
   extractMarkdownOutline,
+  normalizeMarkdownSource,
+  prepareMarkdownForMilkdown,
+  restoreMarkdownFromMilkdown,
   validateMarkdownSource,
-  type MarkdownOutlineItem
+  type MarkdownOutlineItem,
+  type MarkdownReferenceExtraction
 } from "@openkb/editor";
 import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   BookOpen,
   ChevronDown,
   ChevronRight,
+  CheckCircle2,
+  Clock3,
   FileText,
   Folder,
   FolderPlus,
+  GripVertical,
+  ImageIcon,
+  Link2,
   LogOut,
   Pencil,
   Plus,
@@ -22,31 +35,46 @@ import {
   Share2,
   Sparkles,
   Trash2,
-  Users
+  Upload,
+  Users,
+  XCircle
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode
+} from "react";
 import { useRouter } from "next/navigation";
 
 import { MilkdownEditor } from "@/components/workbench/milkdown-editor";
 import {
   ApiRequestError,
   createDocument,
+  createImportJob,
   createKnowledgeBase,
   createWorkspace,
   deleteDocument,
   getDocument,
+  getImportJob,
   getKnowledgeBase,
   getKnowledgeBaseTree,
   getMe,
   isUnauthorized,
   listKnowledgeBases,
+  listImportJobs,
   listWorkspaces,
   logout,
   updateDocument,
   updateWorkspace,
+  uploadFile,
   type AuthMe,
   type DocumentDetail,
   type DocumentSummary,
+  type ImportJob,
   type KnowledgeBase,
   type Workspace
 } from "@/lib/openkb-api";
@@ -60,6 +88,12 @@ export type WorkbenchClientProps = {
 type EditorMode = "read" | "edit" | "source";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
 type TreeNode = DocumentSummary & { children: TreeNode[] };
+type TreeDropPosition = "before" | "inside" | "after";
+type DocumentMoveUpdate = {
+  id: string;
+  parent_id: string | null;
+  sort_order: number;
+};
 
 export function WorkbenchClient({
   initialWorkspaceId,
@@ -69,6 +103,8 @@ export function WorkbenchClient({
   const router = useRouter();
   const saveRunRef = useRef(0);
   const latestDraftRef = useRef({ title: "", markdown: "" });
+  const editorPaneRef = useRef<HTMLDivElement | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [me, setMe] = useState<AuthMe | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
@@ -88,17 +124,111 @@ export function WorkbenchClient({
   const [isBusy, setIsBusy] = useState(false);
   const [editorResetKey, setEditorResetKey] = useState(0);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [draggingDocumentId, setDraggingDocumentId] = useState<string | null>(null);
+  const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
+  const [importJobs, setImportJobs] = useState<ImportJob[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const selectedKnowledgeBase = knowledgeBases.find(
     (knowledgeBase) => knowledgeBase.id === selectedKnowledgeBaseId
   );
   const tree = useMemo(() => buildDocumentTree(documents), [documents]);
+  const hasActiveImportJobs = importJobs.some(
+    (job) => job.status === "pending" || job.status === "running"
+  );
   const outline = useMemo(() => extractMarkdownOutline(draftMarkdown), [draftMarkdown]);
+  const markdownReferences = useMemo(
+    () => extractMarkdownReferences(draftMarkdown),
+    [draftMarkdown]
+  );
+  const milkdownMarkdown = useMemo(
+    () => prepareMarkdownForMilkdown(draftMarkdown),
+    [draftMarkdown]
+  );
+  const hasUnsavedChanges =
+    Boolean(currentDocument) &&
+    (saveState === "conflict" ||
+      draftTitle.trim() !== savedTitle ||
+      (currentDocument?.type === "page" &&
+        normalizeMarkdownSource(draftMarkdown) !== savedMarkdown));
 
   useEffect(() => {
     latestDraftRef.current = { title: draftTitle, markdown: draftMarkdown };
   }, [draftMarkdown, draftTitle]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const headings = Array.from(
+        editorPaneRef.current?.querySelectorAll<HTMLHeadingElement>(
+          ".milkdown h1, .milkdown h2, .milkdown h3, .milkdown h4, .milkdown h5, .milkdown h6"
+        ) ?? []
+      );
+
+      headings.forEach((heading, index) => {
+        const item = outline[index];
+        if (!item) {
+          return;
+        }
+        heading.id = `openkb-heading-${item.id}`;
+        heading.dataset.outlineId = item.id;
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [draftMarkdown, editorResetKey, mode, outline]);
+
+  useEffect(() => {
+    if (outline.length === 0) {
+      setActiveOutlineId(null);
+      return;
+    }
+
+    let frame = 0;
+    const updateActiveHeading = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const headings = Array.from(
+          editorPaneRef.current?.querySelectorAll<HTMLHeadingElement>("[data-outline-id]") ?? []
+        );
+        const active =
+          headings
+            .map((heading) => ({
+              id: heading.dataset.outlineId ?? "",
+              top: heading.getBoundingClientRect().top
+            }))
+            .filter((item) => item.top <= 112)
+            .at(-1)?.id ??
+          outline[0]?.id ??
+          null;
+
+        setActiveOutlineId(active);
+      });
+    };
+
+    updateActiveHeading();
+    window.addEventListener("scroll", updateActiveHeading, { passive: true });
+    window.addEventListener("resize", updateActiveHeading);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", updateActiveHeading);
+      window.removeEventListener("resize", updateActiveHeading);
+    };
+  }, [outline]);
 
   const handleApiError = useCallback(
     (error: unknown) => {
@@ -126,6 +256,14 @@ export function WorkbenchClient({
     setEditorResetKey((key) => key + 1);
   }, []);
 
+  const confirmDiscardDraft = useCallback(() => {
+    if (!hasUnsavedChanges) {
+      return true;
+    }
+
+    return window.confirm("You have unsaved changes. Leave this document anyway?");
+  }, [hasUnsavedChanges]);
+
   const openDocument = useCallback(async (documentId: string) => {
     const document = await getDocument(documentId);
     setCurrentDocument(document);
@@ -142,15 +280,17 @@ export function WorkbenchClient({
 
   const loadKnowledgeBase = useCallback(
     async (knowledgeBaseId: string, preferredDocumentId?: string) => {
-      const [knowledgeBase, treeDocuments] = await Promise.all([
+      const [knowledgeBase, treeDocuments, jobs] = await Promise.all([
         getKnowledgeBase(knowledgeBaseId),
-        getKnowledgeBaseTree(knowledgeBaseId)
+        getKnowledgeBaseTree(knowledgeBaseId),
+        listImportJobs(knowledgeBaseId)
       ]);
       setSelectedKnowledgeBaseId(knowledgeBase.id);
       setKnowledgeBases((items) =>
         items.some((item) => item.id === knowledgeBase.id) ? items : [knowledgeBase, ...items]
       );
       setDocuments(treeDocuments);
+      setImportJobs(jobs);
 
       const targetDocument =
         treeDocuments.find((document) => document.id === preferredDocumentId) ??
@@ -183,6 +323,7 @@ export function WorkbenchClient({
       if (!workspace) {
         setKnowledgeBases([]);
         setDocuments([]);
+        setImportJobs([]);
         clearDocumentState();
         return;
       }
@@ -199,6 +340,7 @@ export function WorkbenchClient({
       } else {
         setSelectedKnowledgeBaseId(null);
         setDocuments([]);
+        setImportJobs([]);
         clearDocumentState();
       }
     } catch (error) {
@@ -220,14 +362,14 @@ export function WorkbenchClient({
   }, [boot]);
 
   const persistDraft = useCallback(async () => {
-    if (!currentDocument || saveState === "conflict") {
+    if (!currentDocument || saveState === "conflict" || saveState === "saving") {
       return;
     }
     const isPage = currentDocument.type === "page";
     const nextTitle = draftTitle.trim();
-    const nextMarkdown = draftMarkdown;
+    const nextMarkdown = normalizeMarkdownSource(draftMarkdown);
     const titleChanged = nextTitle !== savedTitle;
-    const markdownChanged = isPage && draftMarkdown !== savedMarkdown;
+    const markdownChanged = isPage && nextMarkdown !== savedMarkdown;
     if (!titleChanged && !markdownChanged) {
       return;
     }
@@ -244,7 +386,7 @@ export function WorkbenchClient({
 
     try {
       if (isPage) {
-        const validation = validateMarkdownSource(draftMarkdown);
+        const validation = validateMarkdownSource(nextMarkdown);
         if (!validation.ok) {
           const firstIssue = validation.issues[0];
           setSaveState("error");
@@ -302,6 +444,11 @@ export function WorkbenchClient({
         setMessage("This document changed elsewhere. Your draft is still here.");
         return;
       }
+      if (error instanceof ApiRequestError && error.body.error === "MARKDOWN_DIALECT_ERROR") {
+        setSaveState("error");
+        setMessage(describeMarkdownDialectError(error.body.details));
+        return;
+      }
       setSaveState("error");
       handleApiError(error);
     }
@@ -317,7 +464,7 @@ export function WorkbenchClient({
   ]);
 
   useEffect(() => {
-    if (!currentDocument || saveState === "conflict") {
+    if (!currentDocument || saveState === "conflict" || saveState === "saving") {
       return;
     }
 
@@ -343,7 +490,44 @@ export function WorkbenchClient({
     savedTitle
   ]);
 
+  useEffect(() => {
+    if (!selectedKnowledgeBaseId || !hasActiveImportJobs) {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshJobs = async () => {
+      try {
+        const jobs = await listImportJobs(selectedKnowledgeBaseId);
+        if (cancelled) {
+          return;
+        }
+        setImportJobs(jobs);
+        if (jobs.some((job) => job.status === "succeeded" && job.document_id)) {
+          setDocuments(await getKnowledgeBaseTree(selectedKnowledgeBaseId));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          handleApiError(error);
+        }
+      }
+    };
+
+    const timer = window.setInterval(() => void refreshJobs(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [handleApiError, hasActiveImportJobs, selectedKnowledgeBaseId]);
+
   async function selectWorkspace(workspaceId: string) {
+    if (workspaceId === selectedWorkspaceId) {
+      return;
+    }
+    if (!confirmDiscardDraft()) {
+      return;
+    }
+
     setIsBusy(true);
     setMessage("");
     try {
@@ -358,6 +542,7 @@ export function WorkbenchClient({
         router.push(`/app/workspaces/${workspaceId}`);
         setSelectedKnowledgeBaseId(null);
         setDocuments([]);
+        setImportJobs([]);
         clearDocumentState();
       }
     } catch (error) {
@@ -368,6 +553,13 @@ export function WorkbenchClient({
   }
 
   async function selectKnowledgeBase(knowledgeBaseId: string) {
+    if (knowledgeBaseId === selectedKnowledgeBaseId) {
+      return;
+    }
+    if (!confirmDiscardDraft()) {
+      return;
+    }
+
     setIsBusy(true);
     setMessage("");
     try {
@@ -381,6 +573,13 @@ export function WorkbenchClient({
   }
 
   async function selectDocument(documentId: string) {
+    if (documentId === currentDocument?.id) {
+      return;
+    }
+    if (!confirmDiscardDraft()) {
+      return;
+    }
+
     setIsBusy(true);
     setMessage("");
     try {
@@ -494,6 +693,84 @@ export function WorkbenchClient({
     }
   }
 
+  async function handleImportClick() {
+    if (!selectedKnowledgeBaseId || isImporting || isBusy) {
+      return;
+    }
+    importFileInputRef.current?.click();
+  }
+
+  async function handleImportFile(file: File | null) {
+    if (!file || !selectedKnowledgeBaseId) {
+      return;
+    }
+
+    const parentId = currentDocument?.type === "folder" ? currentDocument.id : null;
+    const defaultTitle = file.name.replace(/\.[^.]+$/, "");
+    const title = window.prompt("Imported document title", defaultTitle);
+    if (title === null) {
+      if (importFileInputRef.current) {
+        importFileInputRef.current.value = "";
+      }
+      return;
+    }
+
+    setIsImporting(true);
+    setMessage("");
+    try {
+      const asset = await uploadFile({
+        file,
+        knowledge_base_id: selectedKnowledgeBaseId,
+        parent_id: parentId
+      });
+      const job = await createImportJob({
+        source_asset_id: asset.id,
+        knowledge_base_id: selectedKnowledgeBaseId,
+        parent_id: parentId,
+        title: title.trim() || defaultTitle,
+        converter: "auto"
+      });
+      setImportJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]);
+      setMessage("Import job queued. The import worker will convert it to Markdown.");
+      void pollImportJob(job.id, selectedKnowledgeBaseId);
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsImporting(false);
+      if (importFileInputRef.current) {
+        importFileInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function pollImportJob(importJobId: string, knowledgeBaseId: string) {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await delay(1500);
+
+      try {
+        const job = await getImportJob(importJobId);
+        setImportJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]);
+        if (job.status === "succeeded") {
+          const nextTree = await getKnowledgeBaseTree(knowledgeBaseId);
+          setDocuments(nextTree);
+          if (job.document_id) {
+            await openDocument(job.document_id);
+            router.push(`/app/kb/${knowledgeBaseId}/docs/${job.document_id}`);
+          }
+          setMessage("");
+          return;
+        }
+        if (job.status === "failed") {
+          setMessage(job.error ? `Import failed: ${job.error}` : "Import failed.");
+          return;
+        }
+      } catch (error) {
+        handleApiError(error);
+        return;
+      }
+    }
+  }
+
   async function handleDeleteDocument() {
     if (!currentDocument) {
       return;
@@ -524,6 +801,10 @@ export function WorkbenchClient({
   }
 
   async function handleLogout() {
+    if (!confirmDiscardDraft()) {
+      return;
+    }
+
     try {
       await logout();
     } finally {
@@ -539,6 +820,93 @@ export function WorkbenchClient({
       await openDocument(currentDocument.id);
     } catch (error) {
       handleApiError(error);
+    }
+  }
+
+  function jumpToOutlineItem(item: MarkdownOutlineItem) {
+    const headings = Array.from(
+      editorPaneRef.current?.querySelectorAll<HTMLElement>("[data-outline-id]") ?? []
+    );
+    const target = headings.find((heading) => heading.dataset.outlineId === item.id);
+    if (!target) {
+      return;
+    }
+
+    const top = Math.max(0, window.scrollY + target.getBoundingClientRect().top - 88);
+    window.scrollTo({ top, behavior: "smooth" });
+    setActiveOutlineId(item.id);
+  }
+
+  function handleDocumentPaneClick(event: MouseEvent<HTMLDivElement>) {
+    const target = event.target instanceof Element ? event.target : null;
+    const anchor = target?.closest<HTMLAnchorElement>("a[href]");
+    const href = anchor?.getAttribute("href") ?? "";
+    if (!href.startsWith("openkb://document/")) {
+      return;
+    }
+
+    event.preventDefault();
+    const documentId = href.replace("openkb://document/", "").trim();
+    if (documentId) {
+      void selectDocument(documentId);
+    }
+  }
+
+  async function handleTreeDrop(draggedId: string, targetId: string, position: TreeDropPosition) {
+    const updates = planDocumentMove(documents, draggedId, targetId, position);
+    setDraggingDocumentId(null);
+    if (updates.length === 0) {
+      setMessage("Document cannot be moved there.");
+      return;
+    }
+
+    setIsBusy(true);
+    setMessage("");
+    try {
+      for (const update of updates) {
+        await updateDocument(update.id, {
+          parent_id: update.parent_id,
+          sort_order: update.sort_order
+        });
+      }
+      const nextTree = selectedKnowledgeBaseId
+        ? await getKnowledgeBaseTree(selectedKnowledgeBaseId)
+        : [];
+      setDocuments(nextTree);
+      const nextCurrent = nextTree.find((document) => document.id === currentDocument?.id);
+      if (currentDocument && nextCurrent) {
+        setCurrentDocument({ ...currentDocument, ...nextCurrent });
+      }
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleMoveDocumentByStep(documentId: string, direction: "up" | "down") {
+    const updates = planDocumentStepMove(documents, documentId, direction);
+    if (updates.length === 0) {
+      return;
+    }
+
+    setIsBusy(true);
+    setMessage("");
+    try {
+      for (const update of updates) {
+        await updateDocument(update.id, {
+          parent_id: update.parent_id,
+          sort_order: update.sort_order
+        });
+      }
+      const nextTree = selectedKnowledgeBaseId
+        ? await getKnowledgeBaseTree(selectedKnowledgeBaseId)
+        : [];
+      setDocuments(nextTree);
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
     }
   }
 
@@ -645,6 +1013,19 @@ export function WorkbenchClient({
                 <div className="flex gap-1">
                   <button
                     className="icon-button"
+                    disabled={!selectedKnowledgeBaseId || isBusy || isImporting}
+                    onClick={() => void handleImportClick()}
+                    title="Import file"
+                    type="button"
+                  >
+                    {isImporting ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    className="icon-button"
                     disabled={!selectedKnowledgeBaseId || isBusy}
                     onClick={() => void handleCreateDocument("folder")}
                     title="New folder"
@@ -663,6 +1044,13 @@ export function WorkbenchClient({
                   </button>
                 </div>
               </div>
+              <input
+                ref={importFileInputRef}
+                accept=".md,.markdown,.txt,.html,.htm,.csv,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
+                className="hidden"
+                onChange={(event) => void handleImportFile(event.target.files?.[0] ?? null)}
+                type="file"
+              />
 
               <div className="max-h-72 overflow-y-auto px-2 py-3 lg:max-h-none">
                 {tree.length > 0 ? (
@@ -672,6 +1060,14 @@ export function WorkbenchClient({
                       node={node}
                       activeId={currentDocument?.id ?? null}
                       collapsedFolders={collapsedFolders}
+                      draggingId={draggingDocumentId}
+                      isBusy={isBusy}
+                      onDragEnd={() => setDraggingDocumentId(null)}
+                      onDragStart={(id) => setDraggingDocumentId(id)}
+                      onDropItem={(draggedId, targetId, position) =>
+                        void handleTreeDrop(draggedId, targetId, position)
+                      }
+                      onMoveStep={(id, direction) => void handleMoveDocumentByStep(id, direction)}
                       onToggle={(id) => {
                         setCollapsedFolders((items) => toggleSet(items, id));
                       }}
@@ -681,6 +1077,7 @@ export function WorkbenchClient({
                 ) : (
                   <EmptyPanel title="No documents" action="Create a page or folder to start." />
                 )}
+                <ImportJobsPanel jobs={importJobs} />
               </div>
             </aside>
 
@@ -754,7 +1151,11 @@ export function WorkbenchClient({
                     </div>
                   ) : null}
 
-                  <div className="min-h-0 flex-1 px-5 py-5">
+                  <div
+                    ref={editorPaneRef}
+                    className="min-h-0 flex-1 px-5 py-5"
+                    onClick={handleDocumentPaneClick}
+                  >
                     {currentDocument.type === "folder" ? (
                       <EmptyPanel
                         title="Folder selected"
@@ -772,8 +1173,12 @@ export function WorkbenchClient({
                         <MilkdownEditor
                           key={`${currentDocument.id}:${mode}:${editorResetKey}`}
                           editable={mode === "edit"}
-                          markdown={draftMarkdown}
-                          onChange={setDraftMarkdown}
+                          markdown={milkdownMarkdown.markdown}
+                          onChange={(nextMarkdown) =>
+                            setDraftMarkdown(
+                              restoreMarkdownFromMilkdown(nextMarkdown, milkdownMarkdown)
+                            )
+                          }
                         />
                       </div>
                     )}
@@ -792,7 +1197,11 @@ export function WorkbenchClient({
                 <p className="text-sm font-semibold">Outline</p>
                 <p className="text-xs text-zinc-500">{outline.length} headings</p>
               </div>
-              <Outline items={outline} />
+              <Outline activeId={activeOutlineId} items={outline} onSelect={jumpToOutlineItem} />
+              <ReferencesPanel
+                references={markdownReferences}
+                onOpenDocument={(documentId) => void selectDocument(documentId)}
+              />
               <div className="border-t border-zinc-200 px-4 py-4">
                 <button
                   className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
@@ -840,29 +1249,63 @@ function TreeItem({
   node,
   activeId,
   collapsedFolders,
+  draggingId,
+  isBusy,
   onToggle,
   onSelect,
+  onDragStart,
+  onDragEnd,
+  onDropItem,
+  onMoveStep,
   depth = 0
 }: {
   node: TreeNode;
   activeId: string | null;
   collapsedFolders: Set<string>;
+  draggingId: string | null;
+  isBusy: boolean;
   onToggle: (id: string) => void;
   onSelect: (id: string) => void;
+  onDragStart: (id: string) => void;
+  onDragEnd: () => void;
+  onDropItem: (draggedId: string, targetId: string, position: TreeDropPosition) => void;
+  onMoveStep: (id: string, direction: "up" | "down") => void;
   depth?: number;
 }) {
   const isFolder = node.type === "folder";
   const collapsed = collapsedFolders.has(node.id);
+  const isDragging = draggingId === node.id;
 
   return (
     <div>
-      <div className="flex items-center">
+      <div className="group flex items-center gap-1">
         <button
-          className={treeButtonClass(node.id === activeId)}
+          className={treeButtonClass(node.id === activeId, isDragging)}
+          draggable={!isBusy}
           onClick={() => onSelect(node.id)}
+          onDragEnd={() => onDragEnd()}
+          onDragOver={(event) => event.preventDefault()}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/openkb-document-id", node.id);
+            onDragStart(node.id);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const draggedDocumentId =
+              event.dataTransfer.getData("text/openkb-document-id") || draggingId;
+            if (draggedDocumentId) {
+              onDropItem(
+                draggedDocumentId,
+                node.id,
+                getTreeDropPosition(event.currentTarget, event.clientY, isFolder)
+              );
+            }
+          }}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           type="button"
         >
+          <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
           {isFolder ? (
             <span
               className="mr-1 flex h-5 w-5 items-center justify-center rounded text-zinc-500 hover:bg-zinc-200"
@@ -883,6 +1326,24 @@ function TreeItem({
           {isFolder ? <Folder className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
           <span className="truncate">{node.title}</span>
         </button>
+        <button
+          className="icon-button h-7 w-7 shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
+          disabled={isBusy}
+          onClick={() => onMoveStep(node.id, "up")}
+          title="Move up"
+          type="button"
+        >
+          <ArrowUp className="h-3.5 w-3.5" />
+        </button>
+        <button
+          className="icon-button h-7 w-7 shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
+          disabled={isBusy}
+          onClick={() => onMoveStep(node.id, "down")}
+          title="Move down"
+          type="button"
+        >
+          <ArrowDown className="h-3.5 w-3.5" />
+        </button>
       </div>
       {isFolder && !collapsed
         ? node.children.map((child) => (
@@ -890,8 +1351,14 @@ function TreeItem({
               key={child.id}
               activeId={activeId}
               collapsedFolders={collapsedFolders}
+              draggingId={draggingId}
               depth={depth + 1}
+              isBusy={isBusy}
               node={child}
+              onDragEnd={onDragEnd}
+              onDragStart={onDragStart}
+              onDropItem={onDropItem}
+              onMoveStep={onMoveStep}
               onSelect={onSelect}
               onToggle={onToggle}
             />
@@ -901,7 +1368,15 @@ function TreeItem({
   );
 }
 
-function Outline({ items }: { items: MarkdownOutlineItem[] }) {
+function Outline({
+  activeId,
+  items,
+  onSelect
+}: {
+  activeId: string | null;
+  items: MarkdownOutlineItem[];
+  onSelect: (item: MarkdownOutlineItem) => void;
+}) {
   if (items.length === 0) {
     return <EmptyPanel title="No outline" action="Add headings to this page." />;
   }
@@ -909,16 +1384,184 @@ function Outline({ items }: { items: MarkdownOutlineItem[] }) {
   return (
     <div className="space-y-1 px-3 py-3">
       {items.map((item) => (
-        <div
+        <button
           key={`${item.id}:${item.line}`}
-          className="truncate rounded-md px-2 py-1 text-xs text-zinc-600"
+          className={`block w-full truncate rounded-md px-2 py-1 text-left text-xs transition ${
+            activeId === item.id
+              ? "bg-sky-50 font-medium text-sky-800"
+              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
+          }`}
+          onClick={() => onSelect(item)}
           style={{ paddingLeft: `${8 + (item.level - 1) * 12}px` }}
           title={item.title}
+          type="button"
         >
           {item.title}
-        </div>
+        </button>
       ))}
     </div>
+  );
+}
+
+function ReferencesPanel({
+  references,
+  onOpenDocument
+}: {
+  references: MarkdownReferenceExtraction;
+  onOpenDocument: (documentId: string) => void;
+}) {
+  const total =
+    references.internalLinks.length +
+    references.assetReferences.length +
+    references.externalLinks.length;
+
+  if (total === 0) {
+    return null;
+  }
+
+  return (
+    <div className="border-t border-zinc-200 px-4 py-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold">References</p>
+        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-500">{total}</span>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        {references.internalLinks.length > 0 ? (
+          <ReferenceGroup
+            icon={<Link2 className="h-3.5 w-3.5" />}
+            title="OpenKB links"
+            count={references.internalLinks.length}
+          >
+            {references.internalLinks.map((link) => (
+              <button
+                key={`${link.documentId}:${link.line}`}
+                className="block w-full truncate rounded-md px-2 py-1 text-left text-xs text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
+                onClick={() => onOpenDocument(link.documentId)}
+                title={link.rawUrl}
+                type="button"
+              >
+                {link.label || link.documentId}
+              </button>
+            ))}
+          </ReferenceGroup>
+        ) : null}
+
+        {references.assetReferences.length > 0 ? (
+          <ReferenceGroup
+            icon={<ImageIcon className="h-3.5 w-3.5" />}
+            title="Assets"
+            count={references.assetReferences.length}
+          >
+            {references.assetReferences.map((asset) => (
+              <div
+                key={`${asset.assetId}:${asset.line}`}
+                className="truncate rounded-md px-2 py-1 text-xs text-zinc-600"
+                title={asset.rawUrl}
+              >
+                {asset.alt || asset.assetId}
+              </div>
+            ))}
+          </ReferenceGroup>
+        ) : null}
+
+        {references.externalLinks.length > 0 ? (
+          <ReferenceGroup
+            icon={<Link2 className="h-3.5 w-3.5" />}
+            title="External"
+            count={references.externalLinks.length}
+          >
+            {references.externalLinks.map((link) => (
+              <a
+                key={`${link.url}:${link.line}`}
+                className="block truncate rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
+                href={link.url}
+                rel="noreferrer"
+                target="_blank"
+                title={link.url}
+              >
+                {link.label || link.url}
+              </a>
+            ))}
+          </ReferenceGroup>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
+  const visibleJobs = jobs.slice(0, 4);
+  if (visibleJobs.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 border-t border-zinc-200 pt-3">
+      <div className="mb-2 flex items-center justify-between px-2">
+        <p className="text-xs font-semibold uppercase text-zinc-500">Imports</p>
+        <span className="text-xs text-zinc-400">{jobs.length}</span>
+      </div>
+      <div className="space-y-1">
+        {visibleJobs.map((job) => (
+          <div
+            key={job.id}
+            className="rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-xs text-zinc-600"
+          >
+            <div className="flex items-center gap-2">
+              <ImportStatusIcon status={job.status} />
+              <span className="min-w-0 flex-1 truncate font-medium text-zinc-700">
+                {job.title || job.converter}
+              </span>
+              <span className={importStatusClass(job.status)}>{job.status}</span>
+            </div>
+            {job.error ? <p className="mt-1 truncate text-red-600">{job.error}</p> : null}
+            {extractImportWarnings(job).length > 0 ? (
+              <p className="mt-1 flex min-w-0 items-center gap-1 truncate text-amber-700">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                {extractImportWarnings(job)[0]?.message ?? "Import warning"}
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ImportStatusIcon({ status }: { status: ImportJob["status"] }) {
+  if (status === "succeeded") {
+    return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />;
+  }
+  if (status === "failed") {
+    return <XCircle className="h-3.5 w-3.5 shrink-0 text-red-600" />;
+  }
+  if (status === "running") {
+    return <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin text-sky-600" />;
+  }
+  return <Clock3 className="h-3.5 w-3.5 shrink-0 text-zinc-400" />;
+}
+
+function ReferenceGroup({
+  children,
+  count,
+  icon,
+  title
+}: {
+  children: ReactNode;
+  count: number;
+  icon: ReactNode;
+  title: string;
+}) {
+  return (
+    <section>
+      <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-zinc-500">
+        {icon}
+        <span>{title}</span>
+        <span>{count}</span>
+      </div>
+      <div className="space-y-0.5">{children}</div>
+    </section>
   );
 }
 
@@ -1059,10 +1702,133 @@ function navButtonClass(active: boolean): string {
   }`;
 }
 
-function treeButtonClass(active: boolean): string {
+function treeButtonClass(active: boolean, dragging = false): string {
   return `flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left text-sm transition ${
     active ? "bg-sky-50 text-sky-800" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
-  }`;
+  } ${dragging ? "opacity-50 ring-1 ring-sky-300" : ""}`;
+}
+
+function getTreeDropPosition(
+  target: HTMLElement,
+  clientY: number,
+  targetIsFolder: boolean
+): TreeDropPosition {
+  const rect = target.getBoundingClientRect();
+  const ratio = rect.height > 0 ? (clientY - rect.top) / rect.height : 0.5;
+
+  if (targetIsFolder && ratio > 0.25 && ratio < 0.75) {
+    return "inside";
+  }
+  return ratio < 0.5 ? "before" : "after";
+}
+
+function planDocumentStepMove(
+  documents: DocumentSummary[],
+  documentId: string,
+  direction: "up" | "down"
+): DocumentMoveUpdate[] {
+  const document = documents.find((item) => item.id === documentId);
+  if (!document) {
+    return [];
+  }
+
+  const siblings = getOrderedSiblings(documents, document.parent_id);
+  const index = siblings.findIndex((item) => item.id === documentId);
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  const target = siblings[targetIndex];
+  if (index < 0 || !target) {
+    return [];
+  }
+
+  return planDocumentMove(
+    documents,
+    documentId,
+    target.id,
+    direction === "up" ? "before" : "after"
+  );
+}
+
+function planDocumentMove(
+  documents: DocumentSummary[],
+  draggedId: string,
+  targetId: string,
+  position: TreeDropPosition
+): DocumentMoveUpdate[] {
+  const dragged = documents.find((document) => document.id === draggedId);
+  const target = documents.find((document) => document.id === targetId);
+  if (!dragged || !target || dragged.id === target.id) {
+    return [];
+  }
+
+  const nextPosition = position === "inside" && target.type !== "folder" ? "after" : position;
+  const nextParentId = nextPosition === "inside" ? target.id : target.parent_id;
+  if (nextParentId === dragged.id || isDocumentDescendant(documents, nextParentId, dragged.id)) {
+    return [];
+  }
+
+  const siblings = getOrderedSiblings(documents, nextParentId).filter(
+    (document) => document.id !== dragged.id
+  );
+  const inserted = { ...dragged, parent_id: nextParentId };
+
+  if (nextPosition === "inside") {
+    siblings.push(inserted);
+  } else {
+    const targetIndex = siblings.findIndex((document) => document.id === target.id);
+    if (targetIndex < 0) {
+      return [];
+    }
+    siblings.splice(nextPosition === "before" ? targetIndex : targetIndex + 1, 0, inserted);
+  }
+
+  return siblings
+    .map((document, index) => ({
+      id: document.id,
+      parent_id: document.id === dragged.id ? nextParentId : document.parent_id,
+      sort_order: index * 1000
+    }))
+    .filter((update) => {
+      const current = documents.find((document) => document.id === update.id);
+      return (
+        current !== undefined &&
+        (current.parent_id !== update.parent_id || current.sort_order !== update.sort_order)
+      );
+    });
+}
+
+function getOrderedSiblings(
+  documents: DocumentSummary[],
+  parentId: string | null
+): DocumentSummary[] {
+  return documents
+    .filter((document) => document.parent_id === parentId)
+    .slice()
+    .sort(
+      (left, right) => left.sort_order - right.sort_order || left.title.localeCompare(right.title)
+    );
+}
+
+function isDocumentDescendant(
+  documents: DocumentSummary[],
+  candidateId: string | null,
+  ancestorId: string
+): boolean {
+  let cursor = candidateId ? documents.find((document) => document.id === candidateId) : undefined;
+  let guard = 0;
+
+  while (cursor?.parent_id) {
+    if (cursor.parent_id === ancestorId) {
+      return true;
+    }
+    guard += 1;
+    if (guard > documents.length) {
+      return true;
+    }
+    const nextParentId = cursor.parent_id;
+    cursor = documents.find((document) => document.id === nextParentId);
+  }
+
+  return false;
 }
 
 function saveStatusText(state: SaveState): string {
@@ -1096,6 +1862,41 @@ function saveStateClass(state: SaveState): string {
   return `${base} bg-zinc-100 text-zinc-600`;
 }
 
+function importStatusClass(status: ImportJob["status"]): string {
+  const base = "rounded-full px-2 py-0.5 text-[11px] font-medium";
+  if (status === "succeeded") {
+    return `${base} bg-emerald-50 text-emerald-700`;
+  }
+  if (status === "failed") {
+    return `${base} bg-red-50 text-red-700`;
+  }
+  if (status === "running") {
+    return `${base} bg-sky-50 text-sky-700`;
+  }
+  return `${base} bg-zinc-100 text-zinc-600`;
+}
+
+function extractImportWarnings(job: ImportJob): Array<{ code?: string; message?: string }> {
+  return Array.isArray(job.warnings)
+    ? job.warnings.filter((warning): warning is { code?: string; message?: string } =>
+        Boolean(warning && typeof warning === "object")
+      )
+    : [];
+}
+
+function describeMarkdownDialectError(details: unknown): string {
+  const firstIssue =
+    typeof details === "object" && details !== null && "issues" in details
+      ? (details as { issues?: Array<{ message?: string; line?: number }> }).issues?.[0]
+      : undefined;
+
+  if (!firstIssue) {
+    return "Markdown is outside the enabled Milkdown dialect.";
+  }
+
+  return `${firstIssue.message ?? "Markdown is invalid."} Line ${firstIssue.line ?? "unknown"}.`;
+}
+
 function slugFromTitle(title: string, fallback: string): string {
   const slug = title
     .trim()
@@ -1104,4 +1905,8 @@ function slugFromTitle(title: string, fallback: string): string {
     .replace(/^-+|-+$/g, "");
 
   return slug || `${fallback}-${Date.now()}`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

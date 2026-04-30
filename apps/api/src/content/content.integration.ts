@@ -175,6 +175,83 @@ describe("ContentService integration", () => {
       await content.disconnect();
     }
   });
+
+  it("rejects markdown outside the enabled dialect", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const markdown = "```mermaid\ngraph TD\n```";
+
+      await expect(
+        content.updateDocument(login.sessionToken, seed.documentId, {
+          base_version_id: null,
+          markdown,
+          markdown_hash: markdownHash(markdown)
+        })
+      ).rejects.toMatchObject({
+        code: "VERSION_CONFLICT"
+      });
+
+      const current = await content.getDocument(login.sessionToken, seed.documentId);
+      await expect(
+        content.updateDocument(login.sessionToken, seed.documentId, {
+          base_version_id: current.currentVersion?.id ?? null,
+          markdown,
+          markdown_hash: markdownHash(markdown)
+        })
+      ).rejects.toMatchObject({
+        code: "MARKDOWN_DIALECT_ERROR",
+        details: {
+          issues: [
+            {
+              code: "UNSUPPORTED_MERMAID"
+            }
+          ]
+        }
+      });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("moves and sorts documents while preventing tree cycles", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const childFolder = await content.createDocument(login.sessionToken, {
+        knowledge_base_id: seed.knowledgeBaseId,
+        parent_id: seed.folderId,
+        type: "folder",
+        title: "Nested",
+        slug: "nested"
+      });
+
+      const moved = await content.updateDocument(login.sessionToken, seed.documentId, {
+        parent_id: null,
+        sort_order: 2000
+      });
+
+      expect(moved.parent_id).toBeNull();
+      expect(moved.sort_order).toBe(2000);
+      await expect(
+        content.updateDocument(login.sessionToken, seed.folderId, {
+          parent_id: childFolder.id
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    } finally {
+      await content.disconnect();
+    }
+  });
 });
 
 function markdownHash(markdown: string): string {

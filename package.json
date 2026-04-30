@@ -18,7 +18,12 @@
     "dev": "turbo run dev --parallel",
     "docs:check": "node -e \"require('node:fs').accessSync('docs/18-decision-overrides-v0.3.zh-CN.md'); require('node:fs').accessSync('docs/22-v0.3.3-clarifications.zh-CN.md'); console.log('OpenKB docs are present.')\"",
     "format:check": "prettier --check .",
+    "import:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/import-test.ps1",
+    "import:worker": "pnpm --filter @openkb/import-worker import:watch",
+    "import:worker:once": "pnpm --filter @openkb/import-worker import:once",
     "lint": "turbo run lint",
+    "object-storage:test:down": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/object-storage-test-down.ps1",
+    "object-storage:test:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/object-storage-test-up.ps1",
     "permissions:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/permissions-test.ps1",
     "test": "vitest run",
     "typecheck": "turbo run typecheck"

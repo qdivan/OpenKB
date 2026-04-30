@@ -207,17 +207,22 @@ model Document {
 }
 
 model DocumentAsset {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id   String   @db.Uuid
-  document_id String?  @db.Uuid
-  object_key  String
-  mime_type   String
-  size_bytes  BigInt
-  created_by  String   @db.Uuid
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id       String   @db.Uuid
+  document_id     String?  @db.Uuid
+  object_key      String
+  filename        String
+  mime_type       String
+  size_bytes      BigInt
+  checksum_sha256 String?
+  storage_bucket  String   @default("openkb-assets")
+  metadata        Json     @default("{}")
+  created_by      String   @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([document_id])
+  @@index([checksum_sha256])
   @@map("document_assets")
 }
 
@@ -307,17 +312,26 @@ model ImportJob {
   tenant_id          String   @db.Uuid
   workspace_id       String   @db.Uuid
   knowledge_base_id  String   @db.Uuid
+  parent_id          String?  @db.Uuid
   source_asset_id    String   @db.Uuid
   status             String
   converter          String
+  title              String?
+  document_id        String?  @db.Uuid
+  output_version_id  String?  @db.Uuid
   error              String?
+  warnings           Json     @default("[]")
+  metadata           Json     @default("{}")
   created_by         String   @db.Uuid
   created_at         DateTime @default(now()) @db.Timestamptz(6)
   updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  finished_at        DateTime? @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([workspace_id])
   @@index([knowledge_base_id])
+  @@index([status])
+  @@index([document_id])
   @@map("import_jobs")
 }
 

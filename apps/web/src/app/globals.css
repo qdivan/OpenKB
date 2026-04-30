@@ -82,6 +82,10 @@ textarea:focus-visible {
   text-wrap: pretty;
 }
 
+.milkdown .ProseMirror {
+  white-space: pre-wrap;
+}
+
 .openkb-milkdown-reader {
   background: rgb(250 250 250);
 }

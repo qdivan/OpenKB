@@ -5,11 +5,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
+    "import:once": "tsx src/main.ts --once",
+    "import:test": "vitest run --config vitest.import.config.ts",
+    "import:watch": "tsx src/main.ts --watch",
     "lint": "tsc --noEmit",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@openkb/auth": "workspace:*",
+    "@openkb/db": "workspace:*",
+    "@openkb/markdown": "workspace:*",
+    "@openkb/storage": "workspace:*",
     "@openkb/shared": "workspace:*"
   }
 }

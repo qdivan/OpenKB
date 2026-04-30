@@ -13,6 +13,7 @@ import {
   type PrismaClient,
   type WorkspaceInvitationRole
 } from "@openkb/db";
+import { normalizeMarkdownSource, validateMarkdownSource } from "@openkb/editor";
 import {
   PermissionService,
   type ContentObjectType,
@@ -58,6 +59,7 @@ type CreateDocumentInput = {
 type UpdateDocumentInput = {
   title?: string;
   slug?: string;
+  parent_id?: string | null;
   markdown?: string;
   markdown_hash?: string;
   base_version_id?: string | null;
@@ -355,7 +357,7 @@ export class ContentService {
     const type = normalizeDocumentType(input.type ?? "page");
     const title = requireText(input.title, "title");
     const slug = normalizeSlug(input.slug || title);
-    const markdown = type === "page" ? (input.markdown ?? "") : "";
+    const markdown = type === "page" ? normalizeAndValidateMarkdown(input.markdown ?? "") : "";
     const now = new Date();
 
     const document = await this.prisma.$transaction(async (tx) => {
@@ -432,6 +434,9 @@ export class ContentService {
     if (!current || current.status === "deleted") {
       throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
     }
+    if (input.parent_id !== undefined || input.sort_order !== undefined) {
+      await this.permissions.requireCanManage(me.user.id, "document", documentId);
+    }
     if (
       input.base_version_id !== undefined &&
       input.base_version_id !== current.current_version_id
@@ -448,12 +453,19 @@ export class ContentService {
         updated_at: current.updated_at.toISOString()
       });
     }
+
+    const normalizedMarkdown =
+      input.markdown !== undefined ? normalizeAndValidateMarkdown(input.markdown) : undefined;
     if (
-      input.markdown !== undefined &&
+      normalizedMarkdown !== undefined &&
       input.markdown_hash !== undefined &&
-      input.markdown_hash !== markdownHash(input.markdown)
+      input.markdown_hash !== markdownHash(normalizedMarkdown)
     ) {
       throw new ContentError("INVALID_INPUT", "markdown_hash does not match markdown.", 400);
+    }
+    const nextParentId = input.parent_id !== undefined ? input.parent_id || null : undefined;
+    if (nextParentId !== undefined) {
+      await this.assertValidDocumentParent(current, nextParentId);
     }
 
     const now = new Date();
@@ -472,14 +484,15 @@ export class ContentService {
                 visibility: input.visibility === null ? null : normalizeVisibility(input.visibility)
               }
             : {}),
+          ...(nextParentId !== undefined ? { parent_id: nextParentId } : {}),
           ...(Number.isInteger(input.sort_order) ? { sort_order: Number(input.sort_order) } : {}),
           updated_by: me.user.id,
           updated_at: now
         }
       });
 
-      if (input.markdown !== undefined && current.type === "page") {
-        await this.createDocumentVersion(tx, me, documentId, input.markdown, now);
+      if (normalizedMarkdown !== undefined && current.type === "page") {
+        await this.createDocumentVersion(tx, me, documentId, normalizedMarkdown, now);
       }
       await this.writeAuditLog(tx, me, "document.update", "document", documentId);
     });
@@ -925,6 +938,59 @@ export class ContentService {
     }
   }
 
+  private async assertValidDocumentParent(
+    current: {
+      id: string;
+      knowledge_base_id: string;
+      type: string;
+    },
+    nextParentId: string | null
+  ) {
+    if (nextParentId === null) {
+      return;
+    }
+    if (nextParentId === current.id) {
+      throw new ContentError("INVALID_INPUT", "Document cannot be its own parent.", 400);
+    }
+
+    const parent = await this.prisma.document.findUnique({ where: { id: nextParentId } });
+    if (
+      !parent ||
+      parent.status === "deleted" ||
+      parent.knowledge_base_id !== current.knowledge_base_id ||
+      parent.type !== "folder"
+    ) {
+      throw new ContentError("INVALID_INPUT", "Parent folder is invalid.", 400);
+    }
+    if (current.type === "folder" && (await this.isDocumentDescendant(nextParentId, current.id))) {
+      throw new ContentError("INVALID_INPUT", "Folder cannot be moved into its own child.", 400);
+    }
+  }
+
+  private async isDocumentDescendant(candidateId: string, ancestorId: string): Promise<boolean> {
+    let cursor = await this.prisma.document.findUnique({
+      where: { id: candidateId },
+      select: { parent_id: true }
+    });
+    let depth = 0;
+
+    while (cursor?.parent_id) {
+      if (cursor.parent_id === ancestorId) {
+        return true;
+      }
+      depth += 1;
+      if (depth > 1000) {
+        throw new ContentError("INVALID_INPUT", "Document tree is too deep.", 400);
+      }
+      cursor = await this.prisma.document.findUnique({
+        where: { id: cursor.parent_id },
+        select: { parent_id: true }
+      });
+    }
+
+    return false;
+  }
+
   private async resolveShareObject(objectType: ContentObjectType, objectId: string) {
     if (objectType === "knowledge_base") {
       const knowledgeBase = await this.prisma.knowledgeBase.findUnique({ where: { id: objectId } });
@@ -1023,6 +1089,20 @@ function normalizeDocumentType(value: string): "folder" | "page" {
     return value;
   }
   throw new ContentError("INVALID_INPUT", "document type is invalid.", 400);
+}
+
+function normalizeAndValidateMarkdown(markdown: string): string {
+  const normalized = normalizeMarkdownSource(markdown);
+  const validation = validateMarkdownSource(normalized);
+  if (!validation.ok) {
+    throw new ContentError(
+      "MARKDOWN_DIALECT_ERROR",
+      "Markdown is outside the enabled Milkdown dialect.",
+      400,
+      { issues: validation.issues }
+    );
+  }
+  return normalized;
 }
 
 function normalizePermissionMode(value: string): "inherit" | "custom" {
