@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertNoProviderSecrets,
+  buildChunkSearchFilter,
   buildOpenKBMilvusSchema,
   createCollectionName,
   MILVUS_CHUNK_ID_FIELD,
@@ -53,5 +54,21 @@ describe("@openkb/milvus schema", () => {
         timestamp: new Date("2026-04-30T02:00:00.000Z")
       })
     ).toBe("openkb_chunks_v1_20260430020000");
+  });
+
+  it("builds BM25 search filters with tenant, current state, scope and principals", () => {
+    const filter = buildChunkSearchFilter({
+      tenantId: "tenant-a",
+      knowledgeBaseIds: ["kb-1", "kb-2"],
+      accessPrincipals: ["user:u1", "workspace:w1:member"]
+    });
+
+    expect(filter).toContain('tenant_id == "tenant-a"');
+    expect(filter).toContain("is_current == true");
+    expect(filter).toContain('doc_status == "published"');
+    expect(filter).toContain(
+      'ARRAY_CONTAINS_ANY(access_principals, ["user:u1", "workspace:w1:member"])'
+    );
+    expect(filter).toContain('knowledge_base_id in ["kb-1", "kb-2"]');
   });
 });

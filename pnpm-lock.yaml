@@ -62,6 +62,9 @@ importers:
       '@openkb/permissions':
         specifier: workspace:*
         version: link:../../packages/permissions
+      '@openkb/retrieval':
+        specifier: workspace:*
+        version: link:../../packages/retrieval
       '@openkb/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -207,7 +210,17 @@ importers:
         specifier: workspace:*
         version: link:../db
 
-  packages/retrieval: {}
+  packages/retrieval:
+    dependencies:
+      '@openkb/db':
+        specifier: workspace:*
+        version: link:../db
+      '@openkb/milvus':
+        specifier: workspace:*
+        version: link:../milvus
+      '@openkb/permissions':
+        specifier: workspace:*
+        version: link:../permissions
 
   packages/shared: {}
 

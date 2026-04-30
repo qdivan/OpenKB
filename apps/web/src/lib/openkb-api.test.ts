@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiRequestError, apiFetch, isUnauthorized } from "./openkb-api";
+import { ApiRequestError, apiFetch, isUnauthorized, searchKnowledge } from "./openkb-api";
 
 describe("OpenKB API client", () => {
   afterEach(() => {
@@ -41,5 +41,27 @@ describe("OpenKB API client", () => {
   it("recognizes unauthorized errors", () => {
     expect(isUnauthorized(new ApiRequestError(401, { error: "UNAUTHORIZED" }))).toBe(true);
     expect(isUnauthorized(new ApiRequestError(403, { error: "FORBIDDEN" }))).toBe(false);
+  });
+
+  it("posts search requests with JSON and credentials", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ query: "MCP", top_k: 10, results: [] }))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(searchKnowledge({ query: "MCP", knowledge_base_ids: ["kb_1"] })).resolves.toEqual({
+      query: "MCP",
+      top_k: 10,
+      results: []
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/search",
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST",
+        body: JSON.stringify({ query: "MCP", knowledge_base_ids: ["kb_1"] })
+      })
+    );
   });
 });

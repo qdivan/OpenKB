@@ -23,6 +23,7 @@
     "@openkb/markdown": "workspace:*",
     "@openkb/milvus": "workspace:*",
     "@openkb/permissions": "workspace:*",
+    "@openkb/retrieval": "workspace:*",
     "@openkb/shared": "workspace:*",
     "@openkb/storage": "workspace:*",
     "fastify": "^4.28.1",

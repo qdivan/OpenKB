@@ -117,6 +117,26 @@ export type ImportJob = {
   finished_at: string | null;
 };
 
+export type SearchResult = {
+  chunk_id: string;
+  document_id: string;
+  knowledge_base_id: string;
+  workspace_id: string;
+  title: string;
+  path: string[];
+  heading_path: string[];
+  content: string;
+  score: number;
+  metadata: Record<string, unknown>;
+  updated_at: string;
+};
+
+export type SearchResponse = {
+  query: string;
+  top_k: number;
+  results: SearchResult[];
+};
+
 export type UpdateDocumentInput = {
   title?: string;
   parent_id?: string | null;
@@ -269,6 +289,18 @@ export function listImportJobs(knowledgeBaseId: string) {
 
 export function getAssetUrl(id: string) {
   return apiFetch<{ url: string; asset: DocumentAsset }>(`/api/assets/${id}/url`);
+}
+
+export function searchKnowledge(input: {
+  query: string;
+  knowledge_base_ids?: string[];
+  top_k?: number;
+  filters?: Record<string, unknown>;
+}) {
+  return apiFetch<SearchResponse>("/api/search", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
 }
 
 export function isUnauthorized(error: unknown): boolean {

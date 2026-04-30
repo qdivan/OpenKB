@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AuthService } from "@openkb/auth";
 import { PermissionService } from "@openkb/permissions";
+import { RetrievalService } from "@openkb/retrieval";
 
 import { AdminController } from "./auth/admin.controller";
 import { AuthController } from "./auth/auth.controller";
@@ -17,6 +18,7 @@ import { WorkspaceController } from "./content/workspace.controller";
 import { HealthController } from "./health.controller";
 import { MilvusAdminController } from "./milvus/milvus-admin.controller";
 import { MilvusAdminService } from "./milvus/milvus-admin.service";
+import { SearchController } from "./search/search.controller";
 
 @Module({
   controllers: [
@@ -31,8 +33,16 @@ import { MilvusAdminService } from "./milvus/milvus-admin.service";
     ImportJobController,
     CollaborationController,
     ShareController,
-    MilvusAdminController
+    MilvusAdminController,
+    SearchController
   ],
-  providers: [AuthService, PermissionService, ContentService, ImportService, MilvusAdminService]
+  providers: [
+    AuthService,
+    PermissionService,
+    ContentService,
+    ImportService,
+    MilvusAdminService,
+    RetrievalService
+  ]
 })
 export class AppModule {}

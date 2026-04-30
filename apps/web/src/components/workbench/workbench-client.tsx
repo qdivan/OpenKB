@@ -812,6 +812,17 @@ export function WorkbenchClient({
     }
   }
 
+  function handleOpenSearch() {
+    if (!confirmDiscardDraft()) {
+      return;
+    }
+    router.push(
+      selectedKnowledgeBaseId
+        ? `/app/search?kb_id=${encodeURIComponent(selectedKnowledgeBaseId)}`
+        : "/app/search"
+    );
+  }
+
   async function reloadCurrentDocument() {
     if (!currentDocument) {
       return;
@@ -980,7 +991,7 @@ export function WorkbenchClient({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="icon-button" title="Search" type="button">
+            <button className="icon-button" onClick={handleOpenSearch} title="Search" type="button">
               <Search className="h-4 w-4" />
             </button>
             <button className="icon-button" title="Collaborators" type="button">

@@ -84,6 +84,32 @@ export type MilvusChunkRecord = {
   updated_at: number;
 };
 
+export type MilvusSearchChunksInput = {
+  query: string;
+  tenantId: string;
+  accessPrincipals: string[];
+  knowledgeBaseIds?: string[];
+  limit: number;
+  alias?: string;
+};
+
+export type MilvusSearchChunkResult = {
+  id: string;
+  chunk_id: string;
+  tenant_id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  document_id: string;
+  version_id: string;
+  title: string;
+  heading_path: string[];
+  content_text: string;
+  content_markdown: string;
+  metadata: Record<string, unknown>;
+  updated_at: number;
+  score: number;
+};
+
 export type MilvusHealth = {
   ok: boolean;
   uri: string;
@@ -115,6 +141,7 @@ export type MilvusErrorCode =
   | "INVALID_INPUT"
   | "MILVUS_CONNECTION_FAILED"
   | "MILVUS_OPERATION_FAILED"
+  | "SEARCH_INDEX_NOT_READY"
   | "PROVIDER_SECRET_FORBIDDEN";
 
 export class MilvusError extends Error {
@@ -282,6 +309,33 @@ export class OpenKBMilvus {
       ? await this.client.alterAlias({ alias, collection_name: collectionName })
       : await this.client.createAlias({ alias, collection_name: collectionName });
     assertStatus(status);
+  }
+
+  async searchChunks(input: MilvusSearchChunksInput): Promise<MilvusSearchChunkResult[]> {
+    const alias = input.alias ?? this.config.activeAlias;
+    assertMilvusName(alias, "alias");
+
+    const activeAlias = await this.describeAlias(alias);
+    if (!activeAlias) {
+      throw new MilvusError("SEARCH_INDEX_NOT_READY", "Milvus active alias is not ready.", 503);
+    }
+
+    const response = await this.client.search({
+      collection_name: alias,
+      data: [input.query],
+      anns_field: MILVUS_COLLECTION_FIELDS.sparseVector,
+      metric_type: MetricType.BM25,
+      limit: input.limit,
+      filter: buildChunkSearchFilter({
+        tenantId: input.tenantId,
+        accessPrincipals: input.accessPrincipals,
+        knowledgeBaseIds: input.knowledgeBaseIds
+      }),
+      output_fields: SEARCH_OUTPUT_FIELDS
+    });
+    assertStatus(response.status);
+
+    return flattenSearchResults(response.results).map(normalizeSearchResult);
   }
 }
 
@@ -461,6 +515,33 @@ export function assertMilvusName(value: string, fieldName: string): void {
   }
 }
 
+export function buildChunkSearchFilter(input: {
+  tenantId: string;
+  accessPrincipals: string[];
+  knowledgeBaseIds?: string[];
+}): string {
+  const principalFilterValues =
+    input.accessPrincipals.length > 0 ? input.accessPrincipals : ["__openkb_no_access__"];
+  const clauses = [
+    `${MILVUS_COLLECTION_FIELDS.tenantId} == ${toMilvusString(input.tenantId)}`,
+    `${MILVUS_COLLECTION_FIELDS.isCurrent} == true`,
+    `${MILVUS_COLLECTION_FIELDS.docStatus} == "published"`,
+    `ARRAY_CONTAINS_ANY(${MILVUS_COLLECTION_FIELDS.accessPrincipals}, ${toMilvusStringArray(
+      principalFilterValues
+    )})`
+  ];
+
+  if (input.knowledgeBaseIds && input.knowledgeBaseIds.length > 0) {
+    clauses.push(
+      `${MILVUS_COLLECTION_FIELDS.knowledgeBaseId} in ${toMilvusStringArray(
+        input.knowledgeBaseIds
+      )}`
+    );
+  }
+
+  return clauses.join(" and ");
+}
+
 function assertStatus(status: ResStatus): void {
   if (status.error_code === "Success" || status.error_code === 0) {
     return;
@@ -471,6 +552,96 @@ function assertStatus(status: ResStatus): void {
     status.reason || status.detail || "Milvus operation failed.",
     502
   );
+}
+
+const SEARCH_OUTPUT_FIELDS = [
+  MILVUS_COLLECTION_FIELDS.chunkId,
+  MILVUS_COLLECTION_FIELDS.tenantId,
+  MILVUS_COLLECTION_FIELDS.workspaceId,
+  MILVUS_COLLECTION_FIELDS.knowledgeBaseId,
+  MILVUS_COLLECTION_FIELDS.documentId,
+  MILVUS_COLLECTION_FIELDS.versionId,
+  MILVUS_COLLECTION_FIELDS.title,
+  MILVUS_COLLECTION_FIELDS.headingPath,
+  MILVUS_COLLECTION_FIELDS.contentText,
+  MILVUS_COLLECTION_FIELDS.contentMarkdown,
+  MILVUS_COLLECTION_FIELDS.metadata,
+  MILVUS_COLLECTION_FIELDS.updatedAt
+];
+
+function normalizeSearchResult(
+  row: Record<string, unknown> & { id?: unknown; score?: unknown }
+): MilvusSearchChunkResult {
+  return {
+    id: toStringValue(row[MILVUS_COLLECTION_FIELDS.id] ?? row.id),
+    chunk_id: toStringValue(row[MILVUS_COLLECTION_FIELDS.chunkId]),
+    tenant_id: toStringValue(row[MILVUS_COLLECTION_FIELDS.tenantId]),
+    workspace_id: toStringValue(row[MILVUS_COLLECTION_FIELDS.workspaceId]),
+    knowledge_base_id: toStringValue(row[MILVUS_COLLECTION_FIELDS.knowledgeBaseId]),
+    document_id: toStringValue(row[MILVUS_COLLECTION_FIELDS.documentId]),
+    version_id: toStringValue(row[MILVUS_COLLECTION_FIELDS.versionId]),
+    title: toStringValue(row[MILVUS_COLLECTION_FIELDS.title]),
+    heading_path: toStringArray(row[MILVUS_COLLECTION_FIELDS.headingPath]),
+    content_text: toStringValue(row[MILVUS_COLLECTION_FIELDS.contentText]),
+    content_markdown: toStringValue(row[MILVUS_COLLECTION_FIELDS.contentMarkdown]),
+    metadata: toRecord(row[MILVUS_COLLECTION_FIELDS.metadata]),
+    updated_at: toNumberValue(row[MILVUS_COLLECTION_FIELDS.updatedAt]),
+    score: toNumberValue(row.score)
+  };
+}
+
+function flattenSearchResults(
+  value: unknown
+): Array<Record<string, unknown> & { id?: unknown; score?: unknown }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const rows = value.flatMap((item) => (Array.isArray(item) ? item : [item]));
+  return rows.filter(
+    (item): item is Record<string, unknown> & { id?: unknown; score?: unknown } =>
+      typeof item === "object" && item !== null
+  );
+}
+
+function toMilvusString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function toMilvusStringArray(values: string[]): string {
+  return `[${values.map(toMilvusString).join(", ")}]`;
+}
+
+function toStringValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function toNumberValue(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
 }
 
 function isMilvusNotFound(error: unknown): boolean {
