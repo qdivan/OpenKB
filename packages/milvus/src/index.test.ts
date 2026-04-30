@@ -60,7 +60,8 @@ describe("@openkb/milvus schema", () => {
     const filter = buildChunkSearchFilter({
       tenantId: "tenant-a",
       knowledgeBaseIds: ["kb-1", "kb-2"],
-      accessPrincipals: ["user:u1", "workspace:w1:member"]
+      accessPrincipals: ["user:u1", "workspace:w1:member"],
+      filters: { tags: ["mcp", 'quote"tag'] }
     });
 
     expect(filter).toContain('tenant_id == "tenant-a"');
@@ -70,5 +71,6 @@ describe("@openkb/milvus schema", () => {
       'ARRAY_CONTAINS_ANY(access_principals, ["user:u1", "workspace:w1:member"])'
     );
     expect(filter).toContain('knowledge_base_id in ["kb-1", "kb-2"]');
+    expect(filter).toContain('json_contains_any(metadata["tags"], ["mcp", "quote\\"tag"])');
   });
 });

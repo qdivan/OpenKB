@@ -1,4 +1,4 @@
-import { Body, Controller, Inject, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import { AuthService } from "@openkb/auth";
 import { RetrievalService } from "@openkb/retrieval";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -14,6 +14,7 @@ export class SearchController {
   ) {}
 
   @Post()
+  @HttpCode(200)
   async search(
     @Body() body: unknown,
     @Req() request: FastifyRequest,

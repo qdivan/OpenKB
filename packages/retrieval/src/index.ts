@@ -42,11 +42,16 @@ export type RetrievalSearchInput = {
   filters?: unknown;
 };
 
+export type RetrievalSearchFilters = {
+  tags: string[];
+};
+
 export type NormalizedRetrievalSearchInput = {
   query: string;
   knowledgeBaseIds: string[];
   topK: number;
   candidateLimit: number;
+  filters: RetrievalSearchFilters;
 };
 
 export type RetrievalSearchResult = {
@@ -122,6 +127,7 @@ export class RetrievalService {
         tenantId,
         accessPrincipals,
         knowledgeBaseIds: normalized.knowledgeBaseIds,
+        filters: normalized.filters,
         limit: normalized.candidateLimit
       });
     } catch (error) {
@@ -249,13 +255,14 @@ export function normalizeRetrievalSearchInput(
 
   const knowledgeBaseIds = normalizeStringArray(input.knowledge_base_ids, "knowledge_base_ids");
   const topK = normalizeTopK(input.top_k);
-  assertNoUnsupportedFilters(input.filters);
+  const filters = normalizeSearchFilters(input.filters);
 
   return {
     query,
     knowledgeBaseIds,
     topK,
-    candidateLimit: calculateCandidateLimit(topK)
+    candidateLimit: calculateCandidateLimit(topK),
+    filters
   };
 }
 
@@ -298,16 +305,25 @@ function normalizeStringArray(value: unknown, fieldName: string): string[] {
   return unique(ids);
 }
 
-function assertNoUnsupportedFilters(value: unknown): void {
+function normalizeSearchFilters(value: unknown): RetrievalSearchFilters {
   if (value === undefined || value === null) {
-    return;
+    return { tags: [] };
   }
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new RetrievalError("INVALID_INPUT", "filters must be an object.", 400);
   }
-  if (Object.keys(value).length > 0) {
-    throw new RetrievalError("INVALID_INPUT", "Search filters are not supported yet.", 400);
+
+  const filters = value as Record<string, unknown>;
+  const unknownKeys = Object.keys(filters).filter((key) => key !== "tags");
+  if (unknownKeys.length > 0) {
+    throw new RetrievalError("INVALID_INPUT", "Search filter is not supported.", 400, {
+      unsupported_filters: unknownKeys
+    });
   }
+
+  return {
+    tags: normalizeStringArray(filters.tags, "filters.tags")
+  };
 }
 
 function unique(values: string[]): string[] {

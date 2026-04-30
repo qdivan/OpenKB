@@ -8,6 +8,7 @@
     "dev": "tsx watch src/main.ts",
     "import:test": "vitest run --config vitest.import.config.ts",
     "lint": "tsc --noEmit",
+    "retrieval:test": "vitest run --config vitest.retrieval.config.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },

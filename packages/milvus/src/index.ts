@@ -89,8 +89,13 @@ export type MilvusSearchChunksInput = {
   tenantId: string;
   accessPrincipals: string[];
   knowledgeBaseIds?: string[];
+  filters?: MilvusSearchFilters;
   limit: number;
   alias?: string;
+};
+
+export type MilvusSearchFilters = {
+  tags?: string[];
 };
 
 export type MilvusSearchChunkResult = {
@@ -329,7 +334,8 @@ export class OpenKBMilvus {
       filter: buildChunkSearchFilter({
         tenantId: input.tenantId,
         accessPrincipals: input.accessPrincipals,
-        knowledgeBaseIds: input.knowledgeBaseIds
+        knowledgeBaseIds: input.knowledgeBaseIds,
+        filters: input.filters
       }),
       output_fields: SEARCH_OUTPUT_FIELDS
     });
@@ -519,6 +525,7 @@ export function buildChunkSearchFilter(input: {
   tenantId: string;
   accessPrincipals: string[];
   knowledgeBaseIds?: string[];
+  filters?: MilvusSearchFilters;
 }): string {
   const principalFilterValues =
     input.accessPrincipals.length > 0 ? input.accessPrincipals : ["__openkb_no_access__"];
@@ -536,6 +543,14 @@ export function buildChunkSearchFilter(input: {
       `${MILVUS_COLLECTION_FIELDS.knowledgeBaseId} in ${toMilvusStringArray(
         input.knowledgeBaseIds
       )}`
+    );
+  }
+
+  if (input.filters?.tags && input.filters.tags.length > 0) {
+    clauses.push(
+      `json_contains_any(${MILVUS_COLLECTION_FIELDS.metadata}["tags"], ${toMilvusStringArray(
+        input.filters.tags
+      )})`
     );
   }
 

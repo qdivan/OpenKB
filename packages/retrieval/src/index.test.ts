@@ -23,7 +23,8 @@ describe("@openkb/retrieval input helpers", () => {
     ).toMatchObject({
       query: "MCP 接入",
       topK: 20,
-      candidateLimit: 100
+      candidateLimit: 100,
+      filters: { tags: [] }
     });
 
     expect(calculateCandidateLimit(1)).toBe(20);
@@ -31,7 +32,17 @@ describe("@openkb/retrieval input helpers", () => {
     expect(calculateCandidateLimit(20)).toBe(100);
   });
 
-  it("rejects empty query, invalid top_k and unsupported filters", () => {
+  it("accepts tags filters and rejects invalid or unsupported filters", () => {
+    expect(
+      normalizeRetrievalSearchInput({
+        user,
+        query: "docs",
+        filters: { tags: ["mcp", "mcp", "rag"] }
+      })
+    ).toMatchObject({
+      filters: { tags: ["mcp", "rag"] }
+    });
+
     expect(() => normalizeRetrievalSearchInput({ user, query: "" })).toThrow(RetrievalError);
     expect(() => normalizeRetrievalSearchInput({ user, query: "docs", top_k: 1.5 })).toThrow(
       "top_k"
@@ -39,6 +50,9 @@ describe("@openkb/retrieval input helpers", () => {
     expect(() =>
       normalizeRetrievalSearchInput({ user, query: "docs", filters: { status: "published" } })
     ).toThrow("not supported");
+    expect(() =>
+      normalizeRetrievalSearchInput({ user, query: "docs", filters: { tags: ["mcp", ""] } })
+    ).toThrow("filters.tags");
   });
 
   it("filters admin-only principals before Milvus prefiltering", () => {

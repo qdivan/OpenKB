@@ -25,14 +25,17 @@ try {
   Invoke-Step { pnpm db:migrate } "db:migrate"
   Invoke-Step { pnpm dev:seed } "dev:seed"
   Invoke-Step { pnpm --filter @openkb/db build } "db build"
+  Invoke-Step { pnpm --filter @openkb/auth build } "auth build"
   Invoke-Step { pnpm --filter @openkb/permissions build } "permissions build"
   Invoke-Step { pnpm --filter @openkb/milvus build } "milvus build"
   Invoke-Step { pnpm --filter @openkb/retrieval build } "retrieval build"
   Invoke-Step { pnpm --filter @openkb/index-worker build } "index-worker build"
+  Invoke-Step { pnpm --filter @openkb/api build } "api build"
   Invoke-Step { pnpm --filter @openkb/milvus test } "milvus unit test"
   Invoke-Step { pnpm --filter @openkb/retrieval test } "retrieval unit test"
   Invoke-Step { pnpm --filter @openkb/index-worker index:test } "index-worker index:test"
   Invoke-Step { pnpm --filter @openkb/retrieval retrieval:test } "retrieval integration test"
+  Invoke-Step { pnpm --filter @openkb/api retrieval:test } "search API integration test"
 } finally {
   pnpm milvus:test:down
   pnpm db:test:down

@@ -88,6 +88,33 @@ describe("retrieval service integration", () => {
     ]);
   });
 
+  it("applies tags filters with ANY semantics", async () => {
+    const seed = await seedDev({ prisma });
+    await createChunkForSeedDocument(prisma, seed, "Tagged retrieval content for MCP and RAG.", [
+      "mcp",
+      "rag"
+    ]);
+    await indexCurrentChunks(seed, milvus, permissions);
+
+    await expect(
+      retrieval.search({
+        user: { user: { id: seed.userId }, tenantId: seed.tenantId },
+        query: "Tagged retrieval content",
+        filters: { tags: ["mcp", "other"] }
+      })
+    ).resolves.toMatchObject({
+      results: [expect.objectContaining({ document_id: seed.documentId })]
+    });
+
+    await expect(
+      retrieval.search({
+        user: { user: { id: seed.userId }, tenantId: seed.tenantId },
+        query: "Tagged retrieval content",
+        filters: { tags: ["missing"] }
+      })
+    ).resolves.toMatchObject({ results: [] });
+  });
+
   it("lets workspace members search workspace-visible KBs but not guests", async () => {
     const seed = await seedDev({ prisma });
     await createChunkForSeedDocument(prisma, seed, "Workspace members can search this document.");
@@ -143,6 +170,49 @@ describe("retrieval service integration", () => {
     });
   });
 
+  it("uses PostgreSQL final permission checks when Milvus access principals are stale", async () => {
+    const seed = await seedDev({ prisma });
+    await prisma.knowledgeBase.update({
+      where: { id: seed.knowledgeBaseId },
+      data: { visibility: "private" }
+    });
+    const viewer = await createTenantUser(prisma, seed.tenantId, "stale-viewer@example.com");
+    await prisma.collaborator.create({
+      data: {
+        tenant_id: seed.tenantId,
+        object_type: "knowledge_base",
+        object_id: seed.knowledgeBaseId,
+        subject_type: "user",
+        subject_id: viewer.id,
+        role: "viewer",
+        source: "direct",
+        created_by: seed.userId
+      }
+    });
+    await createChunkForSeedDocument(
+      prisma,
+      seed,
+      "Stale Milvus principals must still be denied by PostgreSQL."
+    );
+    await indexCurrentChunks(seed, milvus, permissions);
+    await prisma.collaborator.deleteMany({
+      where: {
+        object_type: "knowledge_base",
+        object_id: seed.knowledgeBaseId,
+        subject_type: "user",
+        subject_id: viewer.id
+      }
+    });
+
+    await expect(
+      retrieval.search({
+        user: { user: { id: viewer.id }, tenantId: seed.tenantId },
+        query: "Stale Milvus principals",
+        top_k: 10
+      })
+    ).resolves.toMatchObject({ results: [] });
+  });
+
   it("rejects unreadable knowledge_base_ids scope instead of widening search", async () => {
     const seed = await seedDev({ prisma });
     const user = await createTenantUser(prisma, seed.tenantId, "scope-user@example.com");
@@ -185,7 +255,8 @@ async function createChunkForSeedDocument(
     knowledgeBaseId: string;
     documentId: string;
   },
-  contentText: string
+  contentText: string,
+  tags: string[] = []
 ) {
   const document = await prismaClient.document.findUniqueOrThrow({
     where: { id: seed.documentId }
@@ -208,7 +279,8 @@ async function createChunkForSeedDocument(
       content_markdown: `# Welcome to OpenKB\n\n${contentText}`,
       token_count: 16,
       metadata: {
-        source: "retrieval-test"
+        source: "retrieval-test",
+        tags
       }
     }
   });
