@@ -16,7 +16,13 @@ describe("MCP auth helpers", () => {
 
   it("normalizes supported scopes and rejects unknown scopes", () => {
     expect(parseScopes("kb:read,kb:search,doc:read")).toEqual(["kb:read", "kb:search", "doc:read"]);
-    expect(() => assertAllowedScopes(["kb:write"])).toThrow(/Unsupported MCP scopes/);
+    expect(parseScopes("profile:read,kb:write,doc:write,toc:write")).toEqual([
+      "profile:read",
+      "kb:write",
+      "doc:write",
+      "toc:write"
+    ]);
+    expect(() => assertAllowedScopes(["admin:all"])).toThrow(/Unsupported MCP scopes/);
   });
 
   it("exposes protected resource metadata without enabling full OAuth", () => {
@@ -29,7 +35,15 @@ describe("MCP auth helpers", () => {
     expect(metadata).toMatchObject({
       resource: "http://localhost:4100/mcp",
       bearer_methods_supported: ["header"],
-      scopes_supported: ["kb:read", "kb:search", "doc:read"],
+      scopes_supported: [
+        "kb:read",
+        "kb:search",
+        "doc:read",
+        "profile:read",
+        "kb:write",
+        "doc:write",
+        "toc:write"
+      ],
       openkb_auth: {
         oauth_status: "not_configured_in_phase_9"
       }

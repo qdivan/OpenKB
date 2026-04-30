@@ -99,6 +99,30 @@
 - 用户权限绑定。
 - 审计。
 
+## Phase 9.1 — MCP 对齐语雀公开 MCP 的文档核对
+
+输出：
+
+- 对照 `yuque/yuque-mcp-server` 公开工具清单。
+- 明确 OpenKB 只使用 `kb.*` 工具命名，不提供 `yuque_*` 别名。
+- 明确安全 stdio bridge 只能转发固定 HTTP MCP，不允许任意 command spawn。
+- 明确语雀 TOC 是知识库目录树；OpenKB 保留文档 outline，并规划知识库 TOC 工具。
+- 明确 notes 小记不进入 v0.x 对齐范围。
+
+## Phase 9.2 — MCP 写工具与语雀能力补齐
+
+输出：
+
+- `kb.get_current_user`。
+- `kb.get_knowledge_base`。
+- `kb.create_knowledge_base` / `kb.update_knowledge_base`。
+- `kb.create_document` / `kb.update_document`。
+- `kb.get_knowledge_base_toc` / `kb.update_knowledge_base_toc`。
+- 新增 `profile:read`、`kb:write`、`doc:write`、`toc:write` scopes。
+- 写工具只做 create/update，不做 delete。
+- 写入 Markdown 必须通过 Feature Registry 校验、版本冲突检查、Permission Service 和审计。
+- TOC 更新使用结构化操作，不接收任意 raw `toc_data` 字符串。
+
 ## Phase 10 — Dify Adapter
 
 输出：

@@ -2,8 +2,10 @@ export type McpErrorCode =
   | "AUTHENTICATION_REQUIRED"
   | "FORBIDDEN"
   | "INVALID_INPUT"
+  | "MARKDOWN_DIALECT_ERROR"
   | "MCP_OAUTH_NOT_CONFIGURED"
-  | "OBJECT_NOT_FOUND";
+  | "OBJECT_NOT_FOUND"
+  | "VERSION_CONFLICT";
 
 export class OpenKBMcpError extends Error {
   constructor(

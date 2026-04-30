@@ -246,6 +246,7 @@ v0.x 不支持链接编辑权限。`share_links.permission` 必须固定为 `vie
 canReadDocument(user, documentId): Promise<boolean>
 canEditDocument(user, documentId): Promise<boolean>
 canManageDocument(user, documentId): Promise<boolean>
+canManageWorkspace(user, workspaceId): Promise<boolean>
 canManageKnowledgeBase(user, kbId): Promise<boolean>
 canInviteCollaborator(user, object): Promise<boolean>
 canCreateShareLink(user, object): Promise<boolean>

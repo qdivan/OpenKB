@@ -22,6 +22,14 @@ This project intentionally follows public product/API documentation where useful
 
 - MCP Authorization tutorial: https://modelcontextprotocol.io/docs/tutorials/security/authorization
 - MCP Authorization spec: https://modelcontextprotocol.io/specification/draft/basic/authorization
+- Yuque MCP Server README: https://github.com/yuque/yuque-mcp-server
+- Yuque MCP doc tools: https://github.com/yuque/yuque-mcp-server/blob/main/src/tools/doc.ts
+- Yuque MCP TOC tools: https://github.com/yuque/yuque-mcp-server/blob/main/src/tools/toc.ts
+- Yuque MCP book tools: https://github.com/yuque/yuque-mcp-server/blob/main/src/tools/book.ts
+- Yuque MCP note tools: https://github.com/yuque/yuque-mcp-server/blob/main/src/tools/note.ts
+- Yuque API docs entry: https://www.yuque.com/yuque/developer/api
+
+The Yuque MCP references above are public server/API references used for capability comparison. OpenKB does not copy Yuque internal implementation details.
 
 ## Codex
 

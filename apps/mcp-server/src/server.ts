@@ -7,7 +7,7 @@ import * as z from "zod/v4";
 
 import { getMcpHealth } from "./health";
 import { McpAuthService, type McpAuthContext } from "./auth";
-import { getMcpServerConfig } from "./config";
+import { MCP_ALLOWED_SCOPES, getMcpServerConfig } from "./config";
 import { OpenKBMcpError, toJsonError } from "./errors";
 import { McpContentService, jsonText, type McpRequestMeta } from "./service";
 
@@ -36,6 +36,49 @@ const documentInputSchema = {
   document_id: z.string()
 };
 
+const knowledgeBaseInputSchema = {
+  knowledge_base_id: z.string()
+};
+
+const createKnowledgeBaseInputSchema = {
+  workspace_id: z.string(),
+  title: z.string(),
+  slug: z.string().optional(),
+  visibility: z.enum(["private", "workspace", "public"]).optional()
+};
+
+const updateKnowledgeBaseInputSchema = {
+  knowledge_base_id: z.string(),
+  title: z.string().optional(),
+  slug: z.string().optional(),
+  visibility: z.enum(["private", "workspace", "public"]).optional(),
+  status: z.enum(["active", "archived"]).optional()
+};
+
+const createDocumentInputSchema = {
+  knowledge_base_id: z.string(),
+  parent_id: z.string().nullable().optional(),
+  type: z.enum(["page", "folder"]).optional(),
+  title: z.string(),
+  slug: z.string().optional(),
+  markdown: z.string().optional(),
+  sort_order: z.number().int().optional()
+};
+
+const updateDocumentInputSchema = {
+  document_id: z.string(),
+  title: z.string().optional(),
+  slug: z.string().optional(),
+  parent_id: z.string().nullable().optional(),
+  markdown: z.string().optional(),
+  markdown_hash: z.string().optional(),
+  base_version_id: z.string().nullable().optional(),
+  status: z.enum(["draft", "published", "archived"]).optional(),
+  permission_mode: z.enum(["inherit", "custom"]).optional(),
+  visibility: z.enum(["private", "workspace", "public"]).nullable().optional(),
+  sort_order: z.number().int().optional()
+};
+
 const listWorkspacesInputSchema = {
   limit: z.number().int().positive().optional()
 };
@@ -51,6 +94,20 @@ const listDocumentsInputSchema = {
   limit: z.number().int().positive().optional()
 };
 
+const tocOperationSchema = z.object({
+  action: z.string(),
+  document_id: z.string(),
+  parent_id: z.string().nullable().optional(),
+  title: z.string().optional(),
+  slug: z.string().optional(),
+  sort_order: z.number().int().optional()
+});
+
+const updateKnowledgeBaseTocInputSchema = {
+  knowledge_base_id: z.string(),
+  operations: z.array(tocOperationSchema).min(1)
+};
+
 export function createOpenKBMcpServer(
   context: McpAuthContext,
   meta: McpRequestMeta,
@@ -60,6 +117,16 @@ export function createOpenKBMcpServer(
     name: "openkb-mcp-server",
     version: "0.3.3"
   });
+
+  server.registerTool(
+    "kb.get_current_user",
+    {
+      title: "Get current OpenKB MCP user",
+      description: "Read the user, tenant and scopes bound to the current MCP token.",
+      inputSchema: {}
+    },
+    async () => toolJson(() => content.getCurrentUser(context, meta))
+  );
 
   server.registerTool(
     "kb.search",
@@ -114,6 +181,76 @@ export function createOpenKBMcpServer(
   );
 
   server.registerTool(
+    "kb.get_knowledge_base",
+    {
+      title: "Get OpenKB knowledge base",
+      description: "Read metadata for a knowledge base the current user can access.",
+      inputSchema: knowledgeBaseInputSchema
+    },
+    async (input) => toolJson(() => content.getKnowledgeBase(context, input, meta))
+  );
+
+  server.registerTool(
+    "kb.create_knowledge_base",
+    {
+      title: "Create OpenKB knowledge base",
+      description: "Create a knowledge base in a workspace the current user can manage.",
+      inputSchema: createKnowledgeBaseInputSchema
+    },
+    async (input) => toolJson(() => content.createKnowledgeBase(context, input, meta))
+  );
+
+  server.registerTool(
+    "kb.update_knowledge_base",
+    {
+      title: "Update OpenKB knowledge base",
+      description: "Update metadata for a knowledge base the current user can manage.",
+      inputSchema: updateKnowledgeBaseInputSchema
+    },
+    async (input) => toolJson(() => content.updateKnowledgeBase(context, input, meta))
+  );
+
+  server.registerTool(
+    "kb.create_document",
+    {
+      title: "Create OpenKB document",
+      description: "Create a document or folder using OpenKB Markdown rules.",
+      inputSchema: createDocumentInputSchema
+    },
+    async (input) => toolJson(() => content.createDocument(context, input, meta))
+  );
+
+  server.registerTool(
+    "kb.update_document",
+    {
+      title: "Update OpenKB document",
+      description: "Update a document with permission, Markdown and version conflict checks.",
+      inputSchema: updateDocumentInputSchema
+    },
+    async (input) => toolJson(() => content.updateDocument(context, input, meta))
+  );
+
+  server.registerTool(
+    "kb.get_knowledge_base_toc",
+    {
+      title: "Get OpenKB knowledge base TOC",
+      description: "Read the Yuque-style document tree for a readable knowledge base.",
+      inputSchema: knowledgeBaseInputSchema
+    },
+    async (input) => toolJson(() => content.getKnowledgeBaseToc(context, input, meta))
+  );
+
+  server.registerTool(
+    "kb.update_knowledge_base_toc",
+    {
+      title: "Update OpenKB knowledge base TOC",
+      description: "Move, rename or reorder existing document tree nodes.",
+      inputSchema: updateKnowledgeBaseTocInputSchema
+    },
+    async (input) => toolJson(() => content.updateKnowledgeBaseToc(context, input, meta))
+  );
+
+  server.registerTool(
     "kb.list_workspaces",
     {
       title: "List OpenKB workspaces",
@@ -148,6 +285,14 @@ export function createOpenKBMcpServer(
     server,
     "knowledge-base",
     "kb://knowledge-base/{knowledge_base_id}",
+    context,
+    meta,
+    content
+  );
+  registerResource(
+    server,
+    "knowledge-base-toc",
+    "kb://knowledge-base/{knowledge_base_id}/toc",
     context,
     meta,
     content
@@ -223,7 +368,7 @@ export function getProtectedResourceMetadata(env: NodeJS.ProcessEnv = process.en
     resource: `${config.baseUrl}/mcp`,
     authorization_servers: [],
     bearer_methods_supported: ["header"],
-    scopes_supported: ["kb:read", "kb:search", "doc:read"],
+    scopes_supported: MCP_ALLOWED_SCOPES,
     openkb_auth: {
       pat_prefix: config.patPrefix,
       oauth_status: "not_configured_in_phase_9"

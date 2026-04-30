@@ -1,6 +1,7 @@
 export const MCP_PAT_PREFIX = "kbpat_";
 export const MCP_DEFAULT_SCOPES = ["kb:read", "kb:search", "doc:read"] as const;
-export const MCP_ALLOWED_SCOPES = [...MCP_DEFAULT_SCOPES] as const;
+export const MCP_WRITE_SCOPES = ["profile:read", "kb:write", "doc:write", "toc:write"] as const;
+export const MCP_ALLOWED_SCOPES = [...MCP_DEFAULT_SCOPES, ...MCP_WRITE_SCOPES] as const;
 export const MCP_DEFAULT_TOP_K = 5;
 export const MCP_DEFAULT_LIMIT = 50;
 export const MCP_MAX_LIMIT = 100;

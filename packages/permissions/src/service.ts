@@ -155,6 +155,10 @@ export class PermissionService {
     return role === "owner" || role === "manager";
   }
 
+  async canManageWorkspace(userId: string, workspaceId: string): Promise<boolean> {
+    return this.canManage(userId, "workspace", workspaceId);
+  }
+
   async canCreateShareLink(
     userId: string,
     objectType: ContentObjectType,
