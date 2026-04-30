@@ -1,5 +1,5 @@
 {
-  "name": "@openkb/retrieval",
+  "name": "@openkb/model-client",
   "private": true,
   "version": "0.3.3",
   "main": "./dist/index.js",
@@ -13,14 +13,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
-    "retrieval:test": "vitest run --config vitest.retrieval.config.ts",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@openkb/db": "workspace:*",
-    "@openkb/model-client": "workspace:*",
-    "@openkb/milvus": "workspace:*",
-    "@openkb/permissions": "workspace:*"
   }
 }

@@ -137,6 +137,77 @@ export type SearchResponse = {
   results: SearchResult[];
 };
 
+export type RetrievalMode = "bm25" | "dense" | "dense_rerank" | "hybrid" | "hybrid_rerank";
+
+export type RetrievalModeCapability = {
+  mode: RetrievalMode;
+  enabled: boolean;
+  disabled_reason: string | null;
+};
+
+export type RetrievalSettingsStatus = {
+  mode: RetrievalMode;
+  effective_mode: RetrievalMode;
+  supported_modes: RetrievalMode[];
+  modes: RetrievalModeCapability[];
+  embedding: {
+    configured: boolean;
+    model: string | null;
+    dim: number;
+  };
+  rerank: {
+    configured: boolean;
+    model: string | null;
+  };
+  active_alias: string;
+  next_rebuild_collection: string;
+  active_profile: {
+    id: string;
+    tenant_id: string | null;
+    alias: string;
+    collection_name: string;
+    schema_version: string;
+    vector_dim: number;
+    embedding_function_name: string;
+    bm25_function_name: string | null;
+    rerank_function_name: string | null;
+    status: string;
+    function_metadata: unknown;
+    created_by: string;
+    created_at: string;
+    activated_at: string | null;
+  } | null;
+  latest_rebuild_job: IndexRebuildJob | null;
+  dense_index_ready: boolean;
+  needs_rebuild: boolean;
+};
+
+export type ModelProbeResult = {
+  configured: boolean;
+  ok: boolean;
+  model?: string;
+  dim?: number;
+  latency_ms?: number;
+  error?: string;
+};
+
+export type RetrievalProbeResponse = {
+  embedding: ModelProbeResult;
+  rerank: ModelProbeResult;
+};
+
+export type IndexRebuildJob = {
+  id: string;
+  tenant_id: string | null;
+  target_collection: string;
+  target_alias: string;
+  status: string;
+  started_by: string;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+};
+
 export type UpdateDocumentInput = {
   title?: string;
   parent_id?: string | null;
@@ -298,6 +369,35 @@ export function searchKnowledge(input: {
   filters?: Record<string, unknown>;
 }) {
   return apiFetch<SearchResponse>("/api/search", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function getRetrievalSettings() {
+  return apiFetch<RetrievalSettingsStatus>("/api/admin/retrieval-settings");
+}
+
+export function updateRetrievalSettings(input: { mode: RetrievalMode }) {
+  return apiFetch<RetrievalSettingsStatus>("/api/admin/retrieval-settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function probeRetrievalModels() {
+  return apiFetch<RetrievalProbeResponse>("/api/admin/retrieval-settings/probe", {
+    method: "POST"
+  });
+}
+
+export function createMilvusRebuildJob(
+  input: {
+    target_collection?: string;
+    target_alias?: string;
+  } = {}
+) {
+  return apiFetch<IndexRebuildJob>("/api/admin/milvus/rebuild-jobs", {
     method: "POST",
     body: JSON.stringify(input)
   });

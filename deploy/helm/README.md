@@ -57,6 +57,13 @@ s3:
 milvus:
   mode: external
   uri: milvus.example.internal:19530
+models:
+  embedding:
+    endpoint: http://embedding.internal/v1/embeddings
+    model: qwen3-vl-embedding-2b
+  rerank:
+    endpoint: http://rerank.internal/v1/rerank
+    model: qwen3-vl-reranker-2b
 ```
 
 Set `secrets.existingSecret` when an operator wants to manage secrets outside this chart. The Secret must include the application keys used by OpenKB:
@@ -93,6 +100,8 @@ optionalModels:
 ```
 
 Optional model services are placeholders for explicit operator overlays. The chart must not contain embedding/rerank provider API keys, and OpenKB must not save those credentials in its database.
+
+When `models.embedding.endpoint` and `models.embedding.model` are empty, OpenKB uses BM25 even if `retrieval.defaultMode` is `hybrid`. After enabling model endpoints, rebuild the Milvus index and switch mode in `/app/admin/retrieval`.
 
 ## Migrations
 

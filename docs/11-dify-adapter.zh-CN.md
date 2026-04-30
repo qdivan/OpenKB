@@ -90,8 +90,9 @@ min(request.retrieval_setting.top_k, key.retrieval_top_k_limit, DIFY_MAX_TOP_K)
 validate bearer api key
   -> resolve active knowledge_id mapping
   -> check key allowed_knowledge_base_ids
-  -> Milvus active alias BM25 search
+  -> RetrievalService bm25/dense/hybrid search
   -> PostgreSQL final scope check
+  -> rerank authorized candidates if active
   -> metadata_condition post-filter
   -> return Dify records
 ```

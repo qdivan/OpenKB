@@ -33,6 +33,10 @@ GET  /api/admin/milvus/index-profiles
 POST /api/admin/milvus/rebuild-jobs
 GET  /api/admin/milvus/rebuild-jobs/:id
 POST /api/admin/milvus/aliases/switch
+
+GET  /api/admin/retrieval-settings
+PUT  /api/admin/retrieval-settings
+POST /api/admin/retrieval-settings/probe
 ```
 
 这些接口不保存模型 API key，只管理 OpenKB 侧可见的 index profile、job、alias 状态。

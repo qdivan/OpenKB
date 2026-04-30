@@ -84,6 +84,12 @@ DIFY_RESULT_BASE_URL
 DIFY_REQUEST_MAX_BYTES
 MILVUS_ENABLE_TEXT_EMBEDDING
 MILVUS_ENABLE_RERANK
+OPENKB_RETRIEVAL_DEFAULT_MODE
+OPENKB_EMBEDDING_ENDPOINT
+OPENKB_EMBEDDING_MODEL
+OPENKB_EMBEDDING_DIM
+OPENKB_RERANK_ENDPOINT
+OPENKB_RERANK_MODEL
 ```
 
 `AUTH_COOKIE_SECURE=auto` follows the configured Web base URL: local `http://localhost`
@@ -105,17 +111,20 @@ milvus-standalone:19530
 
 Migrations and seed are explicit one-off services under the `init` profile (`migrate` and `seed-dev`). Long-running app services do not run migrations automatically.
 
-## CPU-only Defaults
+## Retrieval Defaults
 
-The default deployment is CPU-only:
+The default deployment is CPU-only and falls back to BM25 when model endpoints are empty:
 
 ```text
 MILVUS_ENABLE_BM25=true
 MILVUS_ENABLE_TEXT_EMBEDDING=false
 MILVUS_ENABLE_RERANK=false
+OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid
+OPENKB_EMBEDDING_ENDPOINT=
+OPENKB_RERANK_ENDPOINT=
 ```
 
-Do not enable TEXTEMBEDDING, RERANK, MinerU GPU workers, Qwen Embedding TEI, or Qwen Reranker vLLM on machines without NVIDIA GPU support. Optional model services must be deployed explicitly and are not started by OpenKB compose by default.
+To test dense/hybrid/rerank, set `OPENKB_EMBEDDING_*` and optional `OPENKB_RERANK_*`, restart app services, then create an index rebuild job from `/app/admin/retrieval`.
 
 OpenKB does not store embedding/rerank provider API keys in its database.
 

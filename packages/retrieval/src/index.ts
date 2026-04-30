@@ -1,7 +1,13 @@
 import { createDatabaseClient, type PrismaClient } from "@openkb/db";
 import {
+  createOpenKBModelClient,
+  type OpenKBModelClient,
+  type RerankDocumentScore
+} from "@openkb/model-client";
+import {
   createOpenKBMilvus,
   MilvusError,
+  type MilvusSearchMode,
   type MilvusSearchChunkResult,
   type OpenKBMilvus
 } from "@openkb/milvus";
@@ -12,8 +18,16 @@ export const RETRIEVAL_INDEX_BACKEND = "milvus";
 export const DEFAULT_SEARCH_TOP_K = 10;
 export const MAX_SEARCH_TOP_K = 20;
 export const MAX_QUERY_LENGTH = 500;
+export const RETRIEVAL_MODES = [
+  "bm25",
+  "dense",
+  "dense_rerank",
+  "hybrid",
+  "hybrid_rerank"
+] as const;
 
 export type RetrievalErrorCode = "INVALID_INPUT" | "SEARCH_FAILED" | "SEARCH_INDEX_NOT_READY";
+export type RetrievalMode = (typeof RETRIEVAL_MODES)[number];
 
 export class RetrievalError extends Error {
   constructor(
@@ -84,10 +98,19 @@ export type RetrievalSearchResponse = {
   results: RetrievalSearchResult[];
 };
 
+export type RetrievalModeResolution = {
+  requestedMode: RetrievalMode;
+  effectiveMode: RetrievalMode;
+  embeddingConfigured: boolean;
+  rerankConfigured: boolean;
+};
+
 export type RetrievalServiceOptions = {
   prisma?: PrismaClient;
   milvus?: OpenKBMilvus;
   permissions?: PermissionService;
+  modelClient?: OpenKBModelClient;
+  env?: NodeJS.ProcessEnv;
 };
 
 export type RetrievalPackageStatus = {
@@ -106,11 +129,15 @@ export class RetrievalService {
   private readonly prisma: PrismaClient;
   private readonly milvus: OpenKBMilvus;
   private readonly permissions: PermissionService;
+  private readonly modelClient: OpenKBModelClient;
+  private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: RetrievalServiceOptions = {}) {
     this.prisma = options.prisma ?? createDatabaseClient();
     this.milvus = options.milvus ?? createOpenKBMilvus();
     this.permissions = options.permissions ?? new PermissionService({ prisma: this.prisma });
+    this.modelClient = options.modelClient ?? createOpenKBModelClient();
+    this.env = options.env ?? process.env;
   }
 
   async disconnect(): Promise<void> {
@@ -121,6 +148,8 @@ export class RetrievalService {
     const normalized = normalizeRetrievalSearchInput(input);
     const userId = input.user.user.id;
     const tenantId = input.user.tenantId;
+    const mode = await this.resolveSearchMode(tenantId);
+    const queryVector = await this.embedQueryIfNeeded(normalized.query, mode.effectiveMode);
 
     for (const knowledgeBaseId of normalized.knowledgeBaseIds) {
       await this.permissions.requireCanRead(userId, "knowledge_base", knowledgeBaseId);
@@ -134,6 +163,8 @@ export class RetrievalService {
     try {
       candidates = await this.milvus.searchChunks({
         query: normalized.query,
+        mode: toMilvusSearchMode(mode.effectiveMode),
+        queryVector,
         tenantId,
         accessPrincipals,
         knowledgeBaseIds: normalized.knowledgeBaseIds,
@@ -154,15 +185,21 @@ export class RetrievalService {
       throw error;
     }
 
-    const allowed = await this.finalPermissionFilter(userId, candidates, normalized.topK);
-    const paths = await this.resolveDocumentPaths(allowed);
+    const allowed = await this.finalPermissionFilter(userId, candidates, normalized.candidateLimit);
+    const ranked = (await this.applyRerank(normalized.query, allowed, mode.effectiveMode)).slice(
+      0,
+      normalized.topK
+    );
+    const paths = await this.resolveDocumentPaths(ranked);
 
-    return this.toSearchResponse(normalized.query, normalized.topK, allowed, paths);
+    return this.toSearchResponse(normalized.query, normalized.topK, ranked, paths);
   }
 
   async searchAppScope(input: RetrievalAppSearchInput): Promise<RetrievalSearchResponse> {
     const normalized = normalizeRetrievalAppSearchInput(input);
     const tenantId = input.app.tenantId;
+    const mode = await this.resolveSearchMode(tenantId);
+    const queryVector = await this.embedQueryIfNeeded(normalized.query, mode.effectiveMode);
     const activeKnowledgeBaseIds = await this.resolveActiveAppKnowledgeBaseIds(
       tenantId,
       normalized.knowledgeBaseIds
@@ -180,6 +217,8 @@ export class RetrievalService {
     try {
       candidates = await this.milvus.searchScopedChunks({
         query: normalized.query,
+        mode: toMilvusSearchMode(mode.effectiveMode),
+        queryVector,
         tenantId,
         knowledgeBaseIds: activeKnowledgeBaseIds,
         filters: normalized.filters,
@@ -203,10 +242,59 @@ export class RetrievalService {
       tenantId,
       activeKnowledgeBaseIds,
       candidates,
+      normalized.candidateLimit
+    );
+    const ranked = (await this.applyRerank(normalized.query, allowed, mode.effectiveMode)).slice(
+      0,
       normalized.topK
     );
-    const paths = await this.resolveDocumentPaths(allowed);
-    return this.toSearchResponse(normalized.query, normalized.topK, allowed, paths);
+    const paths = await this.resolveDocumentPaths(ranked);
+    return this.toSearchResponse(normalized.query, normalized.topK, ranked, paths);
+  }
+
+  async resolveSearchMode(tenantId: string): Promise<RetrievalModeResolution> {
+    const [setting, activeProfile] = await Promise.all([
+      this.prisma.retrievalSetting.findFirst({
+        where: { tenant_id: tenantId },
+        select: { mode: true }
+      }),
+      this.prisma.milvusIndexProfile.findFirst({
+        where: {
+          alias: this.milvus.config.activeAlias,
+          status: "active",
+          OR: [{ tenant_id: tenantId }, { tenant_id: null }]
+        },
+        orderBy: { activated_at: "desc" }
+      })
+    ]);
+    const resolution = resolveEffectiveRetrievalMode({
+      storedMode: setting?.mode,
+      envDefaultMode: this.env.OPENKB_RETRIEVAL_DEFAULT_MODE,
+      embeddingConfigured: this.modelClient.embeddingConfigured,
+      rerankConfigured: this.modelClient.rerankConfigured
+    });
+
+    if (
+      retrievalModeNeedsEmbedding(resolution.effectiveMode) &&
+      !activeProfileSupportsDenseVector(activeProfile, {
+        dim: this.modelClient.config.embedding.dim,
+        model: this.modelClient.config.embedding.model
+      })
+    ) {
+      throw new RetrievalError(
+        "SEARCH_INDEX_NOT_READY",
+        "Dense retrieval is enabled, but the active Milvus index does not contain matching dense vectors. Rebuild the active index first.",
+        503,
+        {
+          mode: resolution.effectiveMode,
+          active_alias: this.milvus.config.activeAlias,
+          required_embedding_dim: this.modelClient.config.embedding.dim,
+          required_embedding_model: this.modelClient.config.embedding.model ?? null
+        }
+      );
+    }
+
+    return resolution;
   }
 
   private toSearchResponse(
@@ -237,7 +325,7 @@ export class RetrievalService {
   private async finalPermissionFilter(
     userId: string,
     candidates: MilvusSearchChunkResult[],
-    topK: number
+    limit: number
   ): Promise<MilvusSearchChunkResult[]> {
     const allowed: MilvusSearchChunkResult[] = [];
     const seenChunkIds = new Set<string>();
@@ -251,7 +339,7 @@ export class RetrievalService {
       if (await this.permissions.canRead(userId, "document", candidate.document_id)) {
         allowed.push(candidate);
       }
-      if (allowed.length >= topK) {
+      if (allowed.length >= limit) {
         break;
       }
     }
@@ -263,7 +351,7 @@ export class RetrievalService {
     tenantId: string,
     knowledgeBaseIds: string[],
     candidates: MilvusSearchChunkResult[],
-    topK: number
+    limit: number
   ): Promise<MilvusSearchChunkResult[]> {
     const sortedCandidates = candidates
       .filter((candidate) => candidate.chunk_id && candidate.document_id)
@@ -345,7 +433,7 @@ export class RetrievalService {
 
       seenChunkIds.add(candidate.chunk_id);
       allowed.push(candidate);
-      if (allowed.length >= topK) {
+      if (allowed.length >= limit) {
         break;
       }
     }
@@ -417,6 +505,203 @@ export class RetrievalService {
 
     return pathByDocumentId;
   }
+
+  private async embedQueryIfNeeded(
+    query: string,
+    mode: RetrievalMode
+  ): Promise<number[] | undefined> {
+    if (!retrievalModeNeedsEmbedding(mode)) {
+      return undefined;
+    }
+
+    try {
+      return await this.modelClient.embedText(query);
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new RetrievalError("SEARCH_FAILED", error.message, 502);
+      }
+      throw error;
+    }
+  }
+
+  private async applyRerank(
+    query: string,
+    candidates: MilvusSearchChunkResult[],
+    mode: RetrievalMode
+  ): Promise<MilvusSearchChunkResult[]> {
+    const annotated = candidates.map((candidate) =>
+      annotateRetrievalMetadata(candidate, {
+        mode,
+        rawScore: candidate.score
+      })
+    );
+
+    if (!retrievalModeNeedsRerank(mode) || !this.modelClient.rerankConfigured) {
+      return annotated;
+    }
+
+    let rerankScores: RerankDocumentScore[];
+    try {
+      rerankScores = await this.modelClient.rerankDocuments({
+        query,
+        documents: candidates.map((candidate) => candidate.content_text)
+      });
+    } catch {
+      return annotated.map((candidate) =>
+        annotateRetrievalMetadata(candidate, {
+          mode,
+          rawScore: getRawScore(candidate),
+          rerankFailed: true
+        })
+      );
+    }
+
+    const used = new Set<number>();
+    const reranked = rerankScores.flatMap((score) => {
+      const candidate = annotated[score.index];
+      if (!candidate) {
+        return [];
+      }
+      used.add(score.index);
+      return [
+        annotateRetrievalMetadata(
+          {
+            ...candidate,
+            score: score.relevance_score
+          },
+          {
+            mode,
+            rawScore: getRawScore(candidate),
+            rerankScore: score.relevance_score
+          }
+        )
+      ];
+    });
+
+    const missing = annotated.filter((_, index) => !used.has(index));
+    return [...reranked, ...missing];
+  }
+}
+
+export function resolveEffectiveRetrievalMode(input: {
+  storedMode?: string | null;
+  envDefaultMode?: string | null;
+  embeddingConfigured: boolean;
+  rerankConfigured: boolean;
+}): RetrievalModeResolution {
+  const fallback = input.embeddingConfigured ? "hybrid" : "bm25";
+  const requestedMode = normalizeRetrievalMode(input.storedMode ?? input.envDefaultMode, fallback);
+  let effectiveMode = requestedMode;
+
+  if (!input.embeddingConfigured && retrievalModeNeedsEmbedding(effectiveMode)) {
+    effectiveMode = "bm25";
+  }
+
+  if (!input.rerankConfigured && retrievalModeNeedsRerank(effectiveMode)) {
+    effectiveMode = stripRerankMode(effectiveMode);
+  }
+
+  return {
+    requestedMode,
+    effectiveMode,
+    embeddingConfigured: input.embeddingConfigured,
+    rerankConfigured: input.rerankConfigured
+  };
+}
+
+export function normalizeRetrievalMode(
+  value: string | null | undefined,
+  fallback: RetrievalMode = "bm25"
+): RetrievalMode {
+  return RETRIEVAL_MODES.includes(value as RetrievalMode) ? (value as RetrievalMode) : fallback;
+}
+
+export function retrievalModeNeedsEmbedding(mode: RetrievalMode): boolean {
+  return (
+    mode === "dense" || mode === "dense_rerank" || mode === "hybrid" || mode === "hybrid_rerank"
+  );
+}
+
+export function retrievalModeNeedsRerank(mode: RetrievalMode): boolean {
+  return mode === "dense_rerank" || mode === "hybrid_rerank";
+}
+
+export function stripRerankMode(mode: RetrievalMode): RetrievalMode {
+  if (mode === "dense_rerank") {
+    return "dense";
+  }
+  if (mode === "hybrid_rerank") {
+    return "hybrid";
+  }
+  return mode;
+}
+
+export function toMilvusSearchMode(mode: RetrievalMode): MilvusSearchMode {
+  if (mode === "dense" || mode === "dense_rerank") {
+    return "dense";
+  }
+  if (mode === "hybrid" || mode === "hybrid_rerank") {
+    return "hybrid";
+  }
+  return "bm25";
+}
+
+export function activeProfileSupportsDenseVector(
+  profile: {
+    vector_dim: number;
+    embedding_function_name: string;
+    function_metadata: unknown;
+  } | null,
+  expected: { dim: number; model?: string }
+): boolean {
+  if (!profile || profile.vector_dim !== expected.dim) {
+    return false;
+  }
+  const metadata = toRecord(profile.function_metadata);
+  const model = typeof metadata.embedding_model === "string" ? metadata.embedding_model : null;
+  return (
+    metadata.dense_vector === true &&
+    profile.embedding_function_name === "openkb_direct_embedding" &&
+    Boolean(expected.model) &&
+    model === expected.model
+  );
+}
+
+function annotateRetrievalMetadata(
+  candidate: MilvusSearchChunkResult,
+  input: {
+    mode: RetrievalMode;
+    rawScore: number;
+    rerankScore?: number;
+    rerankFailed?: boolean;
+  }
+): MilvusSearchChunkResult {
+  const previous = toRecord(candidate.metadata.openkb_retrieval);
+  const openkbRetrieval: Record<string, unknown> = {
+    ...previous,
+    mode: input.mode,
+    raw_score: input.rawScore
+  };
+  if (input.rerankScore !== undefined) {
+    openkbRetrieval.rerank_score = input.rerankScore;
+  }
+  if (input.rerankFailed) {
+    openkbRetrieval.rerank_failed = true;
+  }
+
+  return {
+    ...candidate,
+    metadata: {
+      ...candidate.metadata,
+      openkb_retrieval: openkbRetrieval
+    }
+  };
+}
+
+function getRawScore(candidate: MilvusSearchChunkResult): number {
+  const retrievalMetadata = toRecord(candidate.metadata.openkb_retrieval);
+  const rawScore = retrievalMetadata.raw_score;
+  return typeof rawScore === "number" ? rawScore : candidate.score;
 }
 
 export function normalizeRetrievalSearchInput(
@@ -541,6 +826,12 @@ function unique(values: string[]): string[] {
 function trimResultContent(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length > 600 ? `${compact.slice(0, 597)}...` : compact;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function toIsoString(epochMs: number): string {

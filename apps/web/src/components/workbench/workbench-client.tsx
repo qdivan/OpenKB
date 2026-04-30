@@ -33,6 +33,7 @@ import {
   Save,
   Search,
   Share2,
+  Settings2,
   Sparkles,
   Trash2,
   Upload,
@@ -823,6 +824,13 @@ export function WorkbenchClient({
     );
   }
 
+  function handleOpenRetrievalAdmin() {
+    if (!confirmDiscardDraft()) {
+      return;
+    }
+    router.push("/app/admin/retrieval");
+  }
+
   async function reloadCurrentDocument() {
     if (!currentDocument) {
       return;
@@ -922,6 +930,9 @@ export function WorkbenchClient({
   }
 
   const statusText = saveStatusText(saveState);
+  const isAdmin = Boolean(
+    me?.roles.some((role) => role === "system_admin" || role === "tenant_admin")
+  );
 
   return (
     <main className="flex min-h-screen bg-zinc-50 text-zinc-950">
@@ -994,6 +1005,16 @@ export function WorkbenchClient({
             <button className="icon-button" onClick={handleOpenSearch} title="Search" type="button">
               <Search className="h-4 w-4" />
             </button>
+            {isAdmin ? (
+              <button
+                className="icon-button"
+                onClick={handleOpenRetrievalAdmin}
+                title="Retrieval admin"
+                type="button"
+              >
+                <Settings2 className="h-4 w-4" />
+              </button>
+            ) : null}
             <button className="icon-button" title="Collaborators" type="button">
               <Users className="h-4 w-4" />
             </button>

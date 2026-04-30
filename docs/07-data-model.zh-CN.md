@@ -317,7 +317,17 @@ index_rebuild_jobs (
 )
 ```
 
-OpenKB 不保存 embedding/rerank API key。密钥放 Milvus 或模型服务部署配置。
+```sql
+retrieval_settings (
+  id uuid primary key,
+  tenant_id uuid null unique,
+  mode text not null check (mode in ('bm25', 'dense', 'dense_rerank', 'hybrid', 'hybrid_rerank')),
+  updated_by uuid not null,
+  updated_at timestamptz not null
+)
+```
+
+OpenKB 不保存 embedding/rerank API key。模型 endpoint/model 只走部署环境变量；`retrieval_settings` 只保存模式。
 
 ## 8. MCP OAuth / PAT 持久化
 

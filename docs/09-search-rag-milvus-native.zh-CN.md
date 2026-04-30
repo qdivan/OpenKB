@@ -5,11 +5,11 @@
 ```text
 Milvus 是检索索引，不是业务数据库，也不是最终权限系统。
 PostgreSQL 是文档、chunk 和权限真相。
-Embedding / BM25 / rerank 优先使用 Milvus Server 2.6+ 原生 Function 能力。
+Embedding / BM25 / rerank 长期优先使用 Milvus Server 2.6+ 原生 Function 能力。
 OpenKB v0.x 不保存 embedding/rerank provider API key。
 ```
 
-如果当前 Milvus/provider 暂时不兼容某个模型，v0.x 不在 OpenKB 内实现“旁路模型配置中心”来保存 embedding/rerank key。应在部署层更换为 Milvus 支持的 provider、TEI endpoint、vLLM ranker endpoint，或等待新的项目决策文档显式改变该规则。
+当前 v0.3.x 已按部署决策实现 OpenKB 直连 HTTP 模型服务：endpoint/model 只来自环境变量，检索模式只由 Admin 设置保存到 `retrieval_settings`，不保存 provider key，不提供知识库级模型配置。Milvus TEXTEMBEDDING/RERANK Function 仍保留为后续演进方向。
 
 ## 2. OpenKB 管理什么
 
@@ -22,6 +22,7 @@ collection/index status
 rebuild job
 alias switch
 health check
+retrieval mode
 ```
 
 OpenKB 不管理：
@@ -31,33 +32,36 @@ embedding provider API key
 rerank provider API key
 知识库级模型配置
 知识库级向量维度配置
+模型 endpoint/key 的数据库配置
 ```
 
-## 3. Embedding Function
+## 3. Embedding
 
-目标链路：
+当前链路：
 
 ```text
-OpenKB writes raw chunk text + metadata to Milvus
-  -> Milvus TEXTEMBEDDING Function calls provider service
-  -> Milvus stores dense_vector
+index-worker reads PostgreSQL chunks
+  -> OpenKB calls OPENKB_EMBEDDING_ENDPOINT
+  -> OpenKB writes raw text + metadata + dense_vector to Milvus
 ```
 
 查询链路：
 
 ```text
-OpenKB sends query text
-  -> Milvus uses same TEXTEMBEDDING Function to embed query
-  -> vector search
+OpenKB calls OPENKB_EMBEDDING_ENDPOINT for query vector
+  -> Milvus dense or hybrid search
+  -> PostgreSQL final permission check
 ```
 
-适配 Qwen3 Embedding 的推荐部署：
+已验证的兼容配置示例：
 
 ```text
-Qwen3-Embedding service via TEI / compatible provider
-Milvus TEXTEMBEDDING Function references that provider/endpoint
-OpenKB only calls Milvus
+OPENKB_EMBEDDING_ENDPOINT=http://192.168.6.220:18081/v1/embeddings
+OPENKB_EMBEDDING_MODEL=qwen3-vl-embedding-2b
+OPENKB_EMBEDDING_DIM=2048
 ```
+
+Milvus Function 版本的目标仍是后续可选演进：由 Milvus TEXTEMBEDDING Function 调用 provider service，OpenKB 只写 raw text。
 
 ## 4. BM25 / Sparse Search
 
@@ -68,30 +72,39 @@ content_text: VARCHAR
 sparse_vector: SPARSE_FLOAT_VECTOR 或 Milvus BM25 Function 输出字段
 ```
 
-检索时优先使用：
+未配置 embedding endpoint 时，OpenKB 固定回退到 BM25。配置 embedding 并完成索引重建后，可以使用：
 
 ```text
-dense search + BM25/sparse search + hybrid fusion/ranker
+bm25
+dense
+hybrid
 ```
 
-## 5. Rerank Function
+## 5. Rerank
 
-Rerank 优先放在 Milvus search-time Function 中。
-
-推荐方式：
+当前链路：
 
 ```text
-Qwen3-Reranker service via vLLM/TEI-compatible ranker
-Milvus RERANK / Model Ranker Function references endpoint
-OpenKB receives reranked results from Milvus
+Milvus returns candidates
+  -> PostgreSQL final permission check
+  -> OpenKB calls OPENKB_RERANK_ENDPOINT with authorized chunk text only
+  -> OpenKB sorts by relevance_score
+```
+
+已验证的兼容配置示例：
+
+```text
+OPENKB_RERANK_ENDPOINT=http://192.168.6.220:18082/v1/rerank
+OPENKB_RERANK_MODEL=qwen3-vl-reranker-2b
 ```
 
 限制：
 
 - rerank 使用的字段必须是文本字段。
-- rerank 失败时可以降级为未 rerank 的 hybrid 结果，但必须记录日志。
-- rerank 不能绕过最终权限检查。
+- rerank 失败时降级为未 rerank 结果，并在结果 metadata 标记 `rerank_failed`。
+- rerank 必须发生在最终权限检查之后。
 - OpenKB 不保存 rerank API key。
+- Milvus RERANK / Model Ranker Function 是后续可选演进。
 
 ## 6. Collection schema
 
@@ -146,7 +159,7 @@ content_text: VARCHAR
 content_markdown: VARCHAR
 metadata: JSON
 access_principals: ARRAY<VARCHAR>
-dense_vector: FLOAT_VECTOR(dim = current embedding dim)
+dense_vector: FLOAT_VECTOR(dim = current embedding dim) optional
 sparse_vector: SPARSE_FLOAT_VECTOR optional
 created_at: INT64 timestamp
 updated_at: INT64 timestamp
@@ -175,13 +188,13 @@ and ARRAY_CONTAINS_ANY(access_principals, [
 Embedding 模型更换流程：
 
 ```text
-1. 管理员在 Milvus/模型服务部署层更新 provider、endpoint、credential。
+1. 管理员在部署环境更新 `OPENKB_EMBEDDING_*` / `OPENKB_RERANK_*`。
 2. 管理员在 OpenKB 后台创建 rebuild job。
 3. OpenKB 创建新 Milvus collection。
-4. collection schema 定义新的 TEXTEMBEDDING/BM25/RERANK functions。
+4. collection schema 定义 BM25 Function；如启用 embedding，则包含普通 `dense_vector` 字段。
 5. OpenKB 从 PostgreSQL 读取当前有效 chunks。
-6. OpenKB 写入 raw text、metadata、access_principals。
-7. Milvus 生成 embedding 并建立索引。
+6. index-worker 调用 embedding endpoint 生成 dense vector。
+7. OpenKB 写入 raw text、metadata、access_principals、dense_vector。
 8. OpenKB load collection 并执行 sample search。
 9. OpenKB 切换 alias openkb_chunks_active -> new collection。
 10. 旧 collection 保留 rollback window。
@@ -228,8 +241,11 @@ type RetrievalResult = {
 ```text
 resolve caller identity
   -> resolve readable principals
+  -> resolve retrieval mode
+  -> embed query if dense/hybrid is active
   -> Milvus search active alias with filters
   -> PostgreSQL final permission check
+  -> rerank authorized candidates if rerank mode is active
   -> trim/top_k
   -> return
 ```
@@ -239,18 +255,14 @@ resolve caller identity
 后台页面：
 
 ```text
-系统设置 / Milvus 与索引
-  - Milvus 连接状态
-  - active alias
-  - 当前 collection
-  - vector dim
-  - embedding function 名称
-  - BM25 function 状态
-  - rerank function 状态
-  - 索引文档数/chunk 数
-  - 触发全量重建
-  - rebuild job 日志
-  - alias 切换记录
+/app/admin/retrieval
+  - 当前检索模式
+  - embedding/rerank 是否配置
+  - 模型名和 vector dim
+  - active alias / active collection
+  - dense index 是否需要重建
+  - 模型 probe
+  - 创建 rebuild job
 ```
 
 不提供知识库级模型配置页面。

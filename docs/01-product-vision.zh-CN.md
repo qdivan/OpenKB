@@ -18,7 +18,7 @@ OpenKB 是一个 Markdown-first、语雀式权限和编辑体验、支持私有�
 知识管理：空间、知识库、目录、文档、版本。
 权限：语雀式协作者、邀请、分享、审批、密码访问、成员可见。
 导入：PDF/DOCX/PPTX/XLSX/图片 -> Markdown + assets。
-检索：Milvus 原生 Function + dense/sparse/hybrid/rerank。
+检索：Milvus BM25 + OpenKB 直连 embedding/rerank；后续可演进到 Milvus 原生 Function。
 集成：MCP Server、Dify External Knowledge API。
 部署：Docker Compose、K8s/Helm。
 ```

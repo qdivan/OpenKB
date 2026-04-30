@@ -43,7 +43,7 @@ OpenKB 是一个开源、自托管的团队知识库。它关注三件事：写�
 - 📝 **Markdown 优先**：编辑边界跟随 Milkdown，不发明新的 Markdown 方言。
 - 🗂️ **语雀式结构**：工作区、知识库、目录、文档、协作者和分享链接。
 - 🔐 **权限清晰**：PostgreSQL 是内容与权限真相，管理员不默认读取所有私有文档。
-- 🔎 **可检索**：Milvus 负责检索索引，结果返回前再次经过 PostgreSQL 权限检查。
+- 🔎 **可检索**：默认 BM25；配置模型后支持 dense、hybrid 和 rerank，结果返回前再次经过 PostgreSQL 权限检查。
 - 📥 **可导入**：当前支持 Markdown、Text、HTML、CSV；复杂 Office/PDF/OCR 留给后续 adapter。
 - 🤖 **可接入 AI 工具**：MCP 是用户绑定的出口，Dify 是应用密钥绑定的出口。
 - 🚢 **可部署**：提供 Dockerfile、生产 Compose、Helm 最小 chart 和公网测试部署清单。
@@ -94,15 +94,15 @@ OpenKB-dev-123456
 - 登录注册、邮箱验证、密码重置、管理员激活/禁用用户。
 - 工作区、知识库、文档树、读写模式、源码模式和自动保存。
 - 文件上传、导入任务、chunk 生成和索引重建。
-- BM25/text-only 检索、MCP Server、Dify External Knowledge Adapter。
+- BM25、dense、hybrid、rerank 检索链路、MCP Server、Dify External Knowledge Adapter。
 - Phase 11 部署闭环：Docker Compose、Helm、环境变量、健康检查、安全基线文档。
 
 仍在路上的能力：
 
-- 生产 SMTP、Admin UI、分享/协作者面板。
+- 生产 SMTP、分享/协作者面板。
 - 完整 MCP OAuth、MCP/Dify key 管理 UI。
 - PDF/DOCX/PPTX/XLSX/图片 OCR adapter。
-- dense/hybrid/rerank 生产链路、监控备份和升级回滚。
+- 监控备份、升级回滚和更完整的 Admin UI。
 
 代码与需求文档的逐项差异见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
 

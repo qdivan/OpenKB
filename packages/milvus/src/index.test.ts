@@ -41,6 +41,26 @@ describe("@openkb/milvus schema", () => {
     expect(schema.indexParams.some((index) => index.field_name === "sparse_vector")).toBe(true);
   });
 
+  it("uses a stored dense vector field when OpenKB embedding is enabled", () => {
+    const schema = buildOpenKBMilvusSchema({
+      collectionName: "openkb_chunks_test",
+      vectorDim: 2048,
+      enableDenseVector: true,
+      enableRerank: true
+    });
+
+    const denseField = schema.fields.find(
+      (field) => field.name === MILVUS_COLLECTION_FIELDS.denseVector
+    );
+    expect(denseField).toBeDefined();
+    expect(denseField?.dim).toBe(2048);
+    expect(denseField?.is_function_output).not.toBe(true);
+    expect(schema.functions.map((fn) => fn.name)).toEqual(["openkb_bm25"]);
+    expect(schema.functions.map((fn) => String(fn.type))).not.toContain("TEXTEMBEDDING");
+    expect(schema.functions.map((fn) => String(fn.type))).not.toContain("RERANK");
+    expect(schema.indexParams.some((index) => index.field_name === "dense_vector")).toBe(true);
+  });
+
   it("rejects provider secrets in function metadata", () => {
     expect(() => assertNoProviderSecrets({ provider: { api_key: "secret" } })).toThrow(
       "provider credentials"

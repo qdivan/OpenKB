@@ -395,6 +395,17 @@ model IndexRebuildJob {
   @@map("index_rebuild_jobs")
 }
 
+model RetrievalSetting {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String?  @unique @db.Uuid
+  mode       String
+  updated_by String   @db.Uuid
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@map("retrieval_settings")
+}
+
 model McpOauthClient {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id      String   @db.Uuid

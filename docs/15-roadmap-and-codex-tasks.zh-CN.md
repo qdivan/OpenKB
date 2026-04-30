@@ -147,4 +147,4 @@
 - Milvus standalone/external。
 - MinIO/Postgres/Redis。
 
-Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、Helm 最小 chart、环境变量整理、健康检查和部署文档。后续不要把生产 SMTP、完整 MCP OAuth、复杂 OCR、dense/hybrid/rerank、实时协同或 admin UI 等产品增强混入 Phase 11 部署闭环。
+Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、Helm 最小 chart、环境变量整理、健康检查和部署文档。Phase 12 已开始接入真实 embedding/rerank/hybrid。后续不要把生产 SMTP、完整 MCP OAuth、复杂 OCR、实时协同或完整 admin UI 等产品增强混入部署闭环。

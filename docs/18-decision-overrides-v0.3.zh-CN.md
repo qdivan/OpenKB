@@ -23,12 +23,12 @@ v0.x 只做语雀式：空间、知识库、文档、协作者、邀请、分享
 ## 4. Embedding/rerank 尽量放到 Milvus 侧
 
 ```text
-Embedding: Milvus TEXTEMBEDDING Function。
+Embedding: 长期优先 Milvus TEXTEMBEDDING Function；v0.3.x 当前实现允许 OpenKB 直连环境变量中的 embedding HTTP endpoint。
 BM25: Milvus BM25 Function。
-Rerank: Milvus RERANK Function / Model Ranker。
+Rerank: 长期优先 Milvus RERANK Function / Model Ranker；v0.3.x 当前实现允许 OpenKB 在最终权限过滤后直连环境变量中的 rerank HTTP endpoint。
 ```
 
-OpenKB v0.x 不保存 embedding/rerank API key，也不实现旁路 embedding/rerank 模型配置中心。Qwen embedding 推荐通过 TEI 或 Milvus 支持的 provider；Qwen rerank 推荐通过 vLLM/TEI ranker 或 Milvus 支持的 ranker。如果未来需要 fallback，必须通过新的版本化项目决策文档显式改变本规则，Codex 不得自行添加。
+OpenKB v0.x 不保存 embedding/rerank API key，也不实现知识库级模型配置中心。endpoint/model 只能来自部署环境变量；Admin UI 只能切换检索模式。Qwen embedding/rerank 可以由独立模型服务提供 HTTP 兼容接口，后续仍可演进回 Milvus Function。
 
 ## 5. Embedding 更换走 Milvus collection/index/alias
 
@@ -74,4 +74,4 @@ Codex 第二轮阅读发现的 5 个点按以下方式定稿：
 2. Milvus 主键固定为 `id` primary key；`chunk_id` 是普通字段。v0.x 中两者值都等于 PostgreSQL `document_chunks.id` 的字符串形式。
 3. `auth_settings` 必须在数据模型中实现，不能只在 auth 文档和 prompt 中提到。
 4. MCP OAuth/PAT 和 Dify scoped API key 必须有明确持久化表，见 `docs/07-data-model.zh-CN.md`。
-5. OpenKB v0.x 不保存 embedding/rerank provider API key；`docs/18` 旧表述中的 fallback 不适用于当前硬规则。
+5. OpenKB v0.x 不保存 embedding/rerank provider API key；endpoint/model 只走部署环境变量，模式只走 admin 级 `retrieval_settings`。

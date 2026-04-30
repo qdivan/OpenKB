@@ -65,16 +65,18 @@ Milkdown editor
 ```text
 caller identity
   -> permission principals
+  -> resolve bm25/dense/hybrid mode
   -> Milvus search with metadata/access_principals pre-filter
   -> PostgreSQL final permission check
+  -> rerank authorized candidates if enabled
   -> return authorized chunks/documents
 ```
 
 ### Embedding 模型更换
 
 ```text
-admin updates Milvus/provider deployment
-  -> create new Milvus collection with new functions/schema
+admin updates OPENKB_EMBEDDING_* deployment env
+  -> create new Milvus collection with matching schema
   -> rebuild chunks into new collection
   -> health check
   -> switch alias

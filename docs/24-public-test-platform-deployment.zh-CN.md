@@ -18,7 +18,7 @@
 - 不允许使用 `dev:seed`、`OpenKB-dev-123456`、`openkb-secret`、`admin@openkb.local` 等开发默认值。
 - 不允许把 PostgreSQL、Redis、MinIO Console、Milvus、Milvus MinIO、etcd 暴露到公网。
 - 公开注册、开放上传、MCP 公网访问、Dify 公网访问必须由项目负责人逐项确认。
-- 当前没有生产 SMTP、完整 MCP OAuth、2FA、病毒扫描、Admin UI；因此公网测试应以受控账号和受控网络为前提。
+- 当前没有生产 SMTP、完整 MCP OAuth、2FA、病毒扫描、完整 Admin UI；因此公网测试应以受控账号和受控网络为前提。
 
 ## 1. 部署人员必须向项目负责人确认的信息
 
@@ -37,7 +37,7 @@
 | Redis | Redis 地址、是否内置、密码/网络策略 | `REDIS_URL` | 当前 workers 仍轮询 PostgreSQL，但 Redis 是部署基线。 |
 | 对象存储 | S3/MinIO endpoint、bucket、access key、secret、region、path-style | `S3_*` | key 只授予目标 bucket 最小权限。 |
 | Milvus | Milvus URI、token、database、是否 external | `MILVUS_*` | Milvus 只做索引，不做最终授权源。 |
-| 模型服务 | 是否启用 Milvus TEXTEMBEDDING/RERANK、模型服务地址、认证方式、向量维度 | Milvus/模型服务部署配置 | OpenKB 不保存 embedding/rerank provider key；凭据放在 Milvus 或模型服务侧。 |
+| 模型服务 | 是否启用 embedding/rerank、endpoint、model 名、向量维度、认证方式、是否仅内网可达 | `OPENKB_EMBEDDING_*`、`OPENKB_RERANK_*`、模型服务部署配置 | OpenKB 不保存 embedding/rerank provider key；如有凭据放在模型服务或部署平台 Secret。 |
 | OCR/导入 | 是否启用 MinerU/OCR/Office/PDF adapter、服务地址、资源规格 | 后续 adapter/worker | 当前代码只启用 Markdown/Text/HTML/CSV 导入。 |
 | 上传策略 | 单文件大小、允许文件类型、是否接入杀毒/内容扫描 | `UPLOAD_MAX_BYTES`、网关策略 | 公网未知用户上传必须接入外部扫描。 |
 | Dify | Dify 出口 IP、knowledge_id 命名、允许 KB、top_k 限制、API key 有效期 | Dify key/mapping | Dify key 是 app-scoped，不可模拟用户。 |
@@ -131,6 +131,17 @@ MILVUS_COLLECTION_PREFIX=openkb_chunks
 MILVUS_ENABLE_BM25=true
 MILVUS_ENABLE_TEXT_EMBEDDING=false
 MILVUS_ENABLE_RERANK=false
+MILVUS_VECTOR_DIM=2048
+
+OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid
+OPENKB_EMBEDDING_ENDPOINT=<负责人提供的 embedding endpoint，未启用则留空>
+OPENKB_EMBEDDING_MODEL=<负责人提供的 embedding model，未启用则留空>
+OPENKB_EMBEDDING_DIM=2048
+OPENKB_EMBEDDING_BATCH_SIZE=16
+OPENKB_EMBEDDING_TIMEOUT_MS=30000
+OPENKB_RERANK_ENDPOINT=<负责人提供的 rerank endpoint，未启用则留空>
+OPENKB_RERANK_MODEL=<负责人提供的 rerank model，未启用则留空>
+OPENKB_RERANK_TIMEOUT_MS=15000
 
 MCP_SERVER_BASE_URL=https://mcp-kb-test.example.com
 DIFY_RESULT_BASE_URL=https://kb-test.example.com
@@ -229,6 +240,19 @@ milvus:
   enableBm25: "true"
   enableTextEmbedding: "false"
   enableRerank: "false"
+  vectorDim: "2048"
+
+retrieval:
+  defaultMode: hybrid
+
+models:
+  embedding:
+    endpoint: ""
+    model: ""
+    dim: "2048"
+  rerank:
+    endpoint: ""
+    model: ""
 ```
 
 Secret 至少包含：
@@ -281,8 +305,9 @@ curl -b cookie.txt -H 'Content-Type: application/json' \
 4. 确认跨域 Origin 不在 `CORS_ORIGINS` 中时被拒绝。
 5. 确认 HTTP 自动跳 HTTPS，响应包含 HSTS。
 6. 确认公网无法访问数据库、Redis、MinIO Console、Milvus、etcd。
-7. 只在需要时创建 Dify key 和 MCP PAT，并记录创建人、scope、过期时间。
-8. 执行一次导入、索引 rebuild、搜索、MCP/Dify 检索烟测。
+7. 如启用 embedding/rerank，进入 `/app/admin/retrieval` 执行 probe，创建 index rebuild job，等待 index-worker 完成。
+8. 只在需要时创建 Dify key 和 MCP PAT，并记录创建人、scope、过期时间。
+9. 执行一次导入、索引 rebuild、搜索、MCP/Dify 检索烟测。
 
 ## 6. 安全验收清单
 
@@ -314,6 +339,7 @@ curl -b cookie.txt -H 'Content-Type: application/json' \
 - 上传大小有限制，未知用户上传必须经外部扫描。
 - Dify key 与 MCP PAT 设置最小 scope 和过期时间。
 - 模型 provider key 不进入 OpenKB 数据库。
+- 模型 endpoint 不对公网开放；rerank 只会收到最终权限检查后的候选文本。
 
 运维：
 

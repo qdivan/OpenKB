@@ -11,7 +11,7 @@
 - Git。
 - 可访问镜像源。国内环境如拉取 Milvus、MinIO 较慢，可以按部署机实际情况配置 Docker registry mirror。
 
-当前默认链路是 CPU-only：Milvus 使用 BM25/text-only，不启动 embedding、rerank、MinerU GPU 或 Qwen 模型服务。
+当前默认链路是 CPU-only：Milvus 使用 BM25/text-only，不启动 MinerU GPU 或 Qwen 模型服务。配置外部 embedding endpoint 并重建索引后，可在 Admin 页面切换 dense/hybrid/rerank。
 
 ## 2. 启动
 
@@ -91,6 +91,19 @@ docker compose -f deploy/docker-compose/compose.yml up -d
 6. 如需测试 MCP，创建 PAT 后调用 `http://localhost:4100/mcp`。
 7. 如需测试 Dify，创建 scoped key 后调用 `http://localhost:4200/retrieval`。
 
+如需测试真实 embedding/rerank，可在 `.env` 中加入：
+
+```bash
+OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid
+OPENKB_EMBEDDING_ENDPOINT=http://192.168.6.220:18081/v1/embeddings
+OPENKB_EMBEDDING_MODEL=qwen3-vl-embedding-2b
+OPENKB_EMBEDDING_DIM=2048
+OPENKB_RERANK_ENDPOINT=http://192.168.6.220:18082/v1/rerank
+OPENKB_RERANK_MODEL=qwen3-vl-reranker-2b
+```
+
+然后重启应用和 index-worker，登录 `/app/admin/retrieval`，执行 probe、创建 rebuild job，等重建完成后再切换 `dense`、`hybrid` 或 rerank 模式。
+
 创建 MCP PAT：
 
 ```bash
@@ -129,5 +142,5 @@ docker compose -f deploy/docker-compose/compose.yml down -v
 
 - `seed-dev` 只用于本地；公网测试和生产必须用 `db:seed:first-admin`。
 - Redis 已作为部署基线服务提供，但当前 workers 仍通过 PostgreSQL 轮询任务表。
-- OpenKB 不保存 embedding/rerank provider key；模型服务凭据应留在 Milvus、模型服务或部署平台 Secret 中。
+- OpenKB 不保存 embedding/rerank provider key；模型 endpoint/model 只读环境变量，凭据应留在模型服务或部署平台 Secret 中。
 - 如果 Web 登录后回到登录页，先检查 `APP_BASE_URL`、`AUTH_COOKIE_SECURE` 和浏览器访问协议是否一致。

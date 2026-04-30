@@ -66,32 +66,56 @@ curl http://localhost:4200/health
 
 Redis 是 Phase 11 部署基线依赖，但当前 import/index workers 仍使用 PostgreSQL 轮询 `import_jobs` 和 `index_rebuild_jobs`；BullMQ 队列接入不属于 Phase 11。
 
-## 2. CPU-only 默认
+## 2. CPU-only 默认与模型开关
 
-本地和自托管默认是 CPU-only：
+本地和自托管默认是 CPU-only，且不配置模型 endpoint 时自动使用 BM25：
 
 ```text
 MILVUS_ENABLE_BM25=true
 MILVUS_ENABLE_TEXT_EMBEDDING=false
 MILVUS_ENABLE_RERANK=false
+OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid
+OPENKB_EMBEDDING_ENDPOINT=
+OPENKB_RERANK_ENDPOINT=
 ```
 
-没有 NVIDIA GPU / `nvidia-smi` 的机器不要启用 TEXTEMBEDDING、RERANK、MinerU GPU worker、Qwen Embedding TEI 或 Qwen Reranker vLLM。
+`OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid` 只有在 embedding endpoint 配置且 active index 已重建后才会生效；否则自动回退到 `bm25`。
+
+如果启用直连模型服务，至少配置：
+
+```text
+OPENKB_EMBEDDING_ENDPOINT
+OPENKB_EMBEDDING_MODEL
+OPENKB_EMBEDDING_DIM=2048
+OPENKB_RERANK_ENDPOINT
+OPENKB_RERANK_MODEL
+```
+
+没有 NVIDIA GPU / `nvidia-smi` 的机器不要在同机启动 MinerU GPU worker、Qwen Embedding TEI 或 Qwen Reranker vLLM。模型服务可以部署在独立机器或内网模型平台上。
 
 可选模型服务只能通过显式 compose profile、Helm values overlay 或外部部署启用。默认部署不启动高显存模型服务。
 
 ## 3. Milvus 配置
 
-Milvus/provider 凭证放在：
+Milvus/token 和模型服务凭证放在部署层：
 
 ```text
-milvus.yaml
 Docker Compose env
 K8s Secret + Helm values
 provider service env
 ```
 
 OpenKB 数据库不保存 embedding/rerank API key。
+
+OpenKB 只从环境变量读取 endpoint/model；`retrieval_settings` 只保存当前模式：
+
+```text
+bm25
+dense
+dense_rerank
+hybrid
+hybrid_rerank
+```
 
 默认 compose 使用 Milvus standalone + etcd + 独立 `milvus-minio`，与 OpenKB 附件用的 `minio-assets` 分开。
 
@@ -206,6 +230,16 @@ MILVUS_COLLECTION_PREFIX
 MILVUS_ENABLE_BM25
 MILVUS_ENABLE_TEXT_EMBEDDING
 MILVUS_ENABLE_RERANK
+MILVUS_VECTOR_DIM
+OPENKB_RETRIEVAL_DEFAULT_MODE
+OPENKB_EMBEDDING_ENDPOINT
+OPENKB_EMBEDDING_MODEL
+OPENKB_EMBEDDING_DIM
+OPENKB_EMBEDDING_BATCH_SIZE
+OPENKB_EMBEDDING_TIMEOUT_MS
+OPENKB_RERANK_ENDPOINT
+OPENKB_RERANK_MODEL
+OPENKB_RERANK_TIMEOUT_MS
 MCP_SERVER_BASE_URL
 DIFY_REQUEST_MAX_BYTES
 DIFY_RESULT_BASE_URL
@@ -260,7 +294,6 @@ Dify scoped key + /retrieval
 - MCP 完整 OAuth 授权码、同意页、refresh/revoke。
 - MCP PAT 和 Dify API key Web 管理页。
 - Office/PDF/OCR/MinerU 全量复杂转换。
-- Dense/hybrid/rerank 生产链路。
 - 实时协同。
-- 生产级 Admin UI。
+- 生产级完整 Admin UI。
 - 监控、日志聚合、备份恢复、升级/回滚演练。

@@ -1,5 +1,12 @@
 import { Prisma, createDatabaseClient, type PrismaClient } from "@openkb/db";
 import {
+  createOpenKBModelClient,
+  getOpenKBModelClientConfig,
+  isEmbeddingConfigured,
+  isRerankConfigured,
+  type OpenKBModelClient
+} from "@openkb/model-client";
+import {
   createCollectionName,
   createOpenKBMilvus,
   getMilvusConfig,
@@ -12,6 +19,7 @@ export type IndexWorkerOptions = {
   prisma?: PrismaClient;
   milvus?: OpenKBMilvus;
   permissions?: PermissionService;
+  modelClient?: OpenKBModelClient;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -58,6 +66,8 @@ export async function runRebuildOnce(options: IndexWorkerOptions = {}): Promise<
   const prisma = options.prisma ?? createDatabaseClient();
   const permissions = options.permissions ?? new PermissionService({ prisma });
   const milvus = options.milvus ?? createOpenKBMilvus(getMilvusConfig(options.env));
+  const modelClient =
+    options.modelClient ?? createOpenKBModelClient(getOpenKBModelClientConfig(options.env));
   const shouldDisconnect = !options.prisma;
 
   try {
@@ -67,7 +77,14 @@ export async function runRebuildOnce(options: IndexWorkerOptions = {}): Promise<
     }
 
     try {
-      const indexedChunks = await processRebuildJob(prisma, permissions, milvus, job, options.env);
+      const indexedChunks = await processRebuildJob(
+        prisma,
+        permissions,
+        milvus,
+        modelClient,
+        job,
+        options.env
+      );
       return {
         processed: true,
         job_id: job.id,
@@ -105,10 +122,14 @@ async function processRebuildJob(
   prisma: PrismaClient,
   permissions: PermissionService,
   milvus: OpenKBMilvus,
+  modelClient: OpenKBModelClient,
   job: IndexRebuildJobRow,
   env: NodeJS.ProcessEnv = process.env
 ): Promise<number> {
   const config = getMilvusConfig(env);
+  const modelConfig = getOpenKBModelClientConfig(env);
+  const embeddingConfigured = isEmbeddingConfigured(modelConfig);
+  const rerankConfigured = isRerankConfigured(modelConfig);
   const now = new Date();
 
   const profile = await prisma.milvusIndexProfile.create({
@@ -118,15 +139,19 @@ async function processRebuildJob(
       collection_name: job.target_collection,
       schema_version: config.schemaVersion,
       vector_dim: config.vectorDim,
-      embedding_function_name: config.enableTextEmbedding ? "openkb_text_embedding" : "disabled",
+      embedding_function_name: embeddingConfigured ? "openkb_direct_embedding" : "disabled",
       bm25_function_name: config.enableBm25 ? "openkb_bm25" : null,
-      rerank_function_name: config.enableRerank ? "openkb_rerank" : null,
+      rerank_function_name: rerankConfigured ? "openkb_direct_rerank" : null,
       status: "building",
       function_metadata: {
         schema_version: config.schemaVersion,
         enable_bm25: config.enableBm25,
-        enable_text_embedding: config.enableTextEmbedding,
-        enable_rerank: config.enableRerank
+        dense_vector: embeddingConfigured,
+        embedding_endpoint_configured: embeddingConfigured,
+        embedding_model: modelConfig.embedding.model ?? null,
+        embedding_dim: modelConfig.embedding.dim,
+        rerank_endpoint_configured: rerankConfigured,
+        rerank_model: modelConfig.rerank.model ?? null
       },
       created_by: job.started_by,
       created_at: now
@@ -135,7 +160,14 @@ async function processRebuildJob(
 
   try {
     await milvus.createChunkCollection(job.target_collection);
-    const indexedChunks = await insertCurrentChunks(prisma, permissions, milvus, job, env);
+    const indexedChunks = await insertCurrentChunks(
+      prisma,
+      permissions,
+      milvus,
+      modelClient,
+      job,
+      env
+    );
     await milvus.flush(job.target_collection);
     await milvus.loadCollection(job.target_collection);
     await milvus.count(job.target_collection);
@@ -181,10 +213,12 @@ async function insertCurrentChunks(
   prisma: PrismaClient,
   permissions: PermissionService,
   milvus: OpenKBMilvus,
+  modelClient: OpenKBModelClient,
   job: IndexRebuildJobRow,
   env: NodeJS.ProcessEnv
 ): Promise<number> {
   const batchSize = parsePositiveInt(env.INDEX_WORKER_BATCH_SIZE, 100);
+  const embeddingConfigured = modelClient.embeddingConfigured;
   let offset = 0;
   let inserted = 0;
   const principalCache = new Map<string, string[]>();
@@ -195,14 +229,17 @@ async function insertCurrentChunks(
       return inserted;
     }
 
+    const denseVectors = embeddingConfigured
+      ? await modelClient.embedTexts(rows.map((row) => truncate(row.content_text, 65_535)))
+      : [];
     const records: MilvusChunkRecord[] = [];
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       let accessPrincipals = principalCache.get(row.document_id);
       if (!accessPrincipals) {
         accessPrincipals = await permissions.getObjectAccessPrincipals("document", row.document_id);
         principalCache.set(row.document_id, accessPrincipals);
       }
-      records.push(toMilvusChunkRecord(row, accessPrincipals));
+      records.push(toMilvusChunkRecord(row, accessPrincipals, denseVectors[index]));
     }
 
     inserted += await milvus.insertChunks(job.target_collection, records);
@@ -282,8 +319,12 @@ async function markJobFailed(
   });
 }
 
-function toMilvusChunkRecord(row: ChunkRow, accessPrincipals: string[]): MilvusChunkRecord {
-  return {
+function toMilvusChunkRecord(
+  row: ChunkRow,
+  accessPrincipals: string[],
+  denseVector?: number[]
+): MilvusChunkRecord {
+  const record: MilvusChunkRecord = {
     id: row.id,
     chunk_id: row.id,
     tenant_id: row.tenant_id,
@@ -302,6 +343,10 @@ function toMilvusChunkRecord(row: ChunkRow, accessPrincipals: string[]): MilvusC
     created_at: row.created_at.getTime(),
     updated_at: row.document_updated_at.getTime()
   };
+  if (denseVector) {
+    record.dense_vector = denseVector;
+  }
+  return record;
 }
 
 function normalizeMetadata(

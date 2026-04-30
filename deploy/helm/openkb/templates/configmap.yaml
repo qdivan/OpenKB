@@ -37,6 +37,16 @@ data:
   MILVUS_ENABLE_BM25: {{ .Values.milvus.enableBm25 | quote }}
   MILVUS_ENABLE_TEXT_EMBEDDING: {{ .Values.milvus.enableTextEmbedding | quote }}
   MILVUS_ENABLE_RERANK: {{ .Values.milvus.enableRerank | quote }}
+  MILVUS_VECTOR_DIM: {{ .Values.milvus.vectorDim | quote }}
+  OPENKB_RETRIEVAL_DEFAULT_MODE: {{ .Values.retrieval.defaultMode | quote }}
+  OPENKB_EMBEDDING_ENDPOINT: {{ .Values.models.embedding.endpoint | quote }}
+  OPENKB_EMBEDDING_MODEL: {{ .Values.models.embedding.model | quote }}
+  OPENKB_EMBEDDING_DIM: {{ .Values.models.embedding.dim | quote }}
+  OPENKB_EMBEDDING_BATCH_SIZE: {{ .Values.models.embedding.batchSize | quote }}
+  OPENKB_EMBEDDING_TIMEOUT_MS: {{ .Values.models.embedding.timeoutMs | quote }}
+  OPENKB_RERANK_ENDPOINT: {{ .Values.models.rerank.endpoint | quote }}
+  OPENKB_RERANK_MODEL: {{ .Values.models.rerank.model | quote }}
+  OPENKB_RERANK_TIMEOUT_MS: {{ .Values.models.rerank.timeoutMs | quote }}
   MCP_SERVER_BASE_URL: {{ .Values.mcp.baseUrl | quote }}
   MCP_PAT_PREFIX: "kbpat_"
   MCP_DEFAULT_SCOPES: "kb:read,kb:search,doc:read"

@@ -22,6 +22,7 @@
     "@openkb/db": "workspace:*",
     "@openkb/editor": "workspace:*",
     "@openkb/markdown": "workspace:*",
+    "@openkb/model-client": "workspace:*",
     "@openkb/milvus": "workspace:*",
     "@openkb/permissions": "workspace:*",
     "@openkb/retrieval": "workspace:*",

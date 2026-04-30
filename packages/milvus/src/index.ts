@@ -4,6 +4,7 @@ import {
   IndexType,
   MetricType,
   MilvusClient,
+  RRFRanker,
   type FieldType,
   type FunctionObject,
   type ResStatus
@@ -46,6 +47,7 @@ export type MilvusConfig = {
   schemaVersion: string;
   vectorDim: number;
   enableBm25: boolean;
+  enableDenseVector: boolean;
   enableTextEmbedding: boolean;
   enableRerank: boolean;
   timeoutMs: number;
@@ -80,12 +82,17 @@ export type MilvusChunkRecord = {
   content_markdown: string;
   metadata: Record<string, unknown>;
   access_principals: string[];
+  dense_vector?: number[];
   created_at: number;
   updated_at: number;
 };
 
+export type MilvusSearchMode = "bm25" | "dense" | "hybrid";
+
 export type MilvusSearchChunksInput = {
   query: string;
+  mode?: MilvusSearchMode;
+  queryVector?: number[];
   tenantId: string;
   accessPrincipals: string[];
   knowledgeBaseIds?: string[];
@@ -96,6 +103,8 @@ export type MilvusSearchChunksInput = {
 
 export type MilvusSearchScopedChunksInput = {
   query: string;
+  mode?: MilvusSearchMode;
+  queryVector?: number[];
   tenantId: string;
   knowledgeBaseIds: string[];
   filters?: MilvusSearchFilters;
@@ -217,6 +226,7 @@ export class OpenKBMilvus {
       collectionName,
       vectorDim: this.config.vectorDim,
       enableBm25: this.config.enableBm25,
+      enableDenseVector: this.config.enableDenseVector,
       enableTextEmbedding: this.config.enableTextEmbedding,
       enableRerank: this.config.enableRerank
     });
@@ -334,23 +344,19 @@ export class OpenKBMilvus {
       throw new MilvusError("SEARCH_INDEX_NOT_READY", "Milvus active alias is not ready.", 503);
     }
 
-    const response = await this.client.search({
-      collection_name: alias,
-      data: [input.query],
-      anns_field: MILVUS_COLLECTION_FIELDS.sparseVector,
-      metric_type: MetricType.BM25,
+    return this.searchByMode({
+      alias,
+      query: input.query,
+      queryVector: input.queryVector,
+      mode: input.mode ?? "bm25",
       limit: input.limit,
       filter: buildChunkSearchFilter({
         tenantId: input.tenantId,
         accessPrincipals: input.accessPrincipals,
         knowledgeBaseIds: input.knowledgeBaseIds,
         filters: input.filters
-      }),
-      output_fields: SEARCH_OUTPUT_FIELDS
+      })
     });
-    assertStatus(response.status);
-
-    return flattenSearchResults(response.results).map(normalizeSearchResult);
   }
 
   async searchScopedChunks(
@@ -364,18 +370,78 @@ export class OpenKBMilvus {
       throw new MilvusError("SEARCH_INDEX_NOT_READY", "Milvus active alias is not ready.", 503);
     }
 
-    const response = await this.client.search({
-      collection_name: alias,
-      data: [input.query],
-      anns_field: MILVUS_COLLECTION_FIELDS.sparseVector,
-      metric_type: MetricType.BM25,
+    return this.searchByMode({
+      alias,
+      query: input.query,
+      queryVector: input.queryVector,
+      mode: input.mode ?? "bm25",
       limit: input.limit,
       filter: buildScopedChunkSearchFilter({
         tenantId: input.tenantId,
         knowledgeBaseIds: input.knowledgeBaseIds,
         filters: input.filters
-      }),
-      output_fields: SEARCH_OUTPUT_FIELDS
+      })
+    });
+  }
+
+  private async searchByMode(input: {
+    alias: string;
+    query: string;
+    queryVector?: number[];
+    mode: MilvusSearchMode;
+    filter: string;
+    limit: number;
+  }): Promise<MilvusSearchChunkResult[]> {
+    if (input.mode === "bm25") {
+      const response = await this.client.search({
+        collection_name: input.alias,
+        data: [input.query],
+        anns_field: MILVUS_COLLECTION_FIELDS.sparseVector,
+        metric_type: MetricType.BM25,
+        limit: input.limit,
+        filter: input.filter,
+        output_fields: SEARCH_OUTPUT_FIELDS
+      });
+      assertStatus(response.status);
+
+      return flattenSearchResults(response.results).map(normalizeSearchResult);
+    }
+
+    const queryVector = assertDenseQueryVector(input.queryVector, this.config.vectorDim);
+
+    if (input.mode === "dense") {
+      const response = await this.client.search({
+        collection_name: input.alias,
+        data: [queryVector],
+        anns_field: MILVUS_COLLECTION_FIELDS.denseVector,
+        metric_type: MetricType.COSINE,
+        limit: input.limit,
+        filter: input.filter,
+        output_fields: SEARCH_OUTPUT_FIELDS
+      });
+      assertStatus(response.status);
+
+      return flattenSearchResults(response.results).map(normalizeSearchResult);
+    }
+
+    const response = await this.client.hybridSearch({
+      collection_name: input.alias,
+      data: [
+        {
+          data: input.query,
+          anns_field: MILVUS_COLLECTION_FIELDS.sparseVector,
+          expr: input.filter
+        },
+        {
+          data: queryVector,
+          anns_field: MILVUS_COLLECTION_FIELDS.denseVector,
+          expr: input.filter,
+          params: { metric_type: MetricType.COSINE }
+        }
+      ],
+      limit: input.limit,
+      output_fields: SEARCH_OUTPUT_FIELDS,
+      rerank: RRFRanker(60)
     });
     assertStatus(response.status);
 
@@ -391,10 +457,14 @@ export function getMilvusConfig(env: NodeJS.ProcessEnv = process.env): MilvusCon
     activeAlias: env.MILVUS_ACTIVE_ALIAS || MILVUS_ACTIVE_ALIAS,
     collectionPrefix: env.MILVUS_COLLECTION_PREFIX || "openkb_chunks",
     schemaVersion: env.MILVUS_SCHEMA_VERSION || MILVUS_SCHEMA_VERSION,
-    vectorDim: parsePositiveInt(env.MILVUS_VECTOR_DIM, 1024),
+    vectorDim: parsePositiveInt(env.OPENKB_EMBEDDING_DIM ?? env.MILVUS_VECTOR_DIM, 2048),
     enableBm25: parseBoolean(env.MILVUS_ENABLE_BM25, true),
-    enableTextEmbedding: parseBoolean(env.MILVUS_ENABLE_TEXT_EMBEDDING, false),
-    enableRerank: parseBoolean(env.MILVUS_ENABLE_RERANK, false),
+    enableDenseVector: Boolean(
+      emptyToUndefined(env.OPENKB_EMBEDDING_ENDPOINT) &&
+      emptyToUndefined(env.OPENKB_EMBEDDING_MODEL)
+    ),
+    enableTextEmbedding: false,
+    enableRerank: false,
     timeoutMs: parsePositiveInt(env.MILVUS_TIMEOUT_MS, 30_000)
   };
 }
@@ -416,6 +486,7 @@ export function buildOpenKBMilvusSchema(input: {
   collectionName: string;
   vectorDim: number;
   enableBm25?: boolean;
+  enableDenseVector?: boolean;
   enableTextEmbedding?: boolean;
   enableRerank?: boolean;
 }): MilvusCollectionSchema {
@@ -484,20 +555,11 @@ export function buildOpenKBMilvusSchema(input: {
     });
   }
 
-  if (input.enableTextEmbedding) {
+  if (input.enableDenseVector ?? input.enableTextEmbedding) {
     fields.push({
       name: MILVUS_COLLECTION_FIELDS.denseVector,
       data_type: DataType.FloatVector,
-      dim: input.vectorDim,
-      is_function_output: true
-    });
-    functions.push({
-      name: "openkb_text_embedding",
-      description: "OpenKB TEXTEMBEDDING function configured in Milvus deployment.",
-      type: FunctionType.TEXTEMBEDDING,
-      input_field_names: [MILVUS_COLLECTION_FIELDS.contentText],
-      output_field_names: [MILVUS_COLLECTION_FIELDS.denseVector],
-      params: {}
+      dim: input.vectorDim
     });
     indexParams.push({
       collection_name: input.collectionName,
@@ -505,16 +567,6 @@ export function buildOpenKBMilvusSchema(input: {
       index_name: "openkb_dense_idx",
       index_type: IndexType.AUTOINDEX,
       metric_type: MetricType.COSINE,
-      params: {}
-    });
-  }
-
-  if (input.enableRerank) {
-    functions.push({
-      name: "openkb_rerank",
-      description: "OpenKB RERANK function configured in Milvus deployment.",
-      type: FunctionType.RERANK,
-      input_field_names: [MILVUS_COLLECTION_FIELDS.contentText],
       params: {}
     });
   }
@@ -636,6 +688,21 @@ function assertStatus(status: ResStatus): void {
     status.reason || status.detail || "Milvus operation failed.",
     502
   );
+}
+
+function assertDenseQueryVector(value: number[] | undefined, expectedDim: number): number[] {
+  if (
+    !Array.isArray(value) ||
+    value.length !== expectedDim ||
+    !value.every((item) => typeof item === "number" && Number.isFinite(item))
+  ) {
+    throw new MilvusError(
+      "INVALID_INPUT",
+      `Dense query vector must be a ${expectedDim}-dimensional number array.`,
+      400
+    );
+  }
+  return value;
 }
 
 const SEARCH_OUTPUT_FIELDS = [

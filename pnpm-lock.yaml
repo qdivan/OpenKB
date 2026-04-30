@@ -63,6 +63,9 @@ importers:
       '@openkb/milvus':
         specifier: workspace:*
         version: link:../../packages/milvus
+      '@openkb/model-client':
+        specifier: workspace:*
+        version: link:../../packages/model-client
       '@openkb/permissions':
         specifier: workspace:*
         version: link:../../packages/permissions
@@ -238,6 +241,8 @@ importers:
         specifier: 2.6.14
         version: 2.6.14
 
+  packages/model-client: {}
+
   packages/permissions:
     dependencies:
       '@openkb/db':
@@ -252,6 +257,9 @@ importers:
       '@openkb/milvus':
         specifier: workspace:*
         version: link:../milvus
+      '@openkb/model-client':
+        specifier: workspace:*
+        version: link:../model-client
       '@openkb/permissions':
         specifier: workspace:*
         version: link:../permissions
@@ -293,6 +301,9 @@ importers:
       '@openkb/milvus':
         specifier: workspace:^
         version: link:../../packages/milvus
+      '@openkb/model-client':
+        specifier: workspace:*
+        version: link:../../packages/model-client
       '@openkb/permissions':
         specifier: workspace:^
         version: link:../../packages/permissions

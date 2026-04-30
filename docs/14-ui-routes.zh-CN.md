@@ -18,6 +18,7 @@
 /app/kb/:kbId
 /app/kb/:kbId/docs/:docId
 /app/search
+/app/admin/retrieval
 ```
 
 ## 3. 文档页面布局
@@ -55,10 +56,11 @@
 /admin/auth-settings
 /admin/milvus
 /admin/milvus/rebuild-jobs
+/app/admin/retrieval
 /admin/audit-logs
 ```
 
-Admin 页面不显示“给某个知识库单独配置模型”的入口。
+当前已实现 `/app/admin/retrieval` 最小页面，用于检索模式、模型 probe 和索引重建。Admin 页面不显示“给某个知识库单独配置模型”的入口。
 
 ## 6. 知识库设置页
 
