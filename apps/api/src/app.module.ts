@@ -15,6 +15,8 @@ import { ShareController } from "./content/share.controller";
 import { UploadController } from "./content/upload.controller";
 import { WorkspaceController } from "./content/workspace.controller";
 import { HealthController } from "./health.controller";
+import { MilvusAdminController } from "./milvus/milvus-admin.controller";
+import { MilvusAdminService } from "./milvus/milvus-admin.service";
 
 @Module({
   controllers: [
@@ -28,8 +30,9 @@ import { HealthController } from "./health.controller";
     AssetController,
     ImportJobController,
     CollaborationController,
-    ShareController
+    ShareController,
+    MilvusAdminController
   ],
-  providers: [AuthService, PermissionService, ContentService, ImportService]
+  providers: [AuthService, PermissionService, ContentService, ImportService, MilvusAdminService]
 })
 export class AppModule {}

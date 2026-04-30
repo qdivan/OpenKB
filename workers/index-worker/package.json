@@ -5,11 +5,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
+    "index:test": "vitest run --config vitest.index.config.ts",
+    "index:worker": "tsx src/main.ts --watch",
+    "index:worker:once": "tsx src/main.ts --once",
+    "index:rebuild:once": "tsx src/main.ts --rebuild-once",
     "lint": "tsc --noEmit",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@openkb/db": "workspace:^",
+    "@openkb/milvus": "workspace:^",
+    "@openkb/permissions": "workspace:^",
     "@openkb/shared": "workspace:*"
   }
 }
