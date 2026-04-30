@@ -2,7 +2,7 @@
 
 OpenKB 是一个 Markdown-first、语雀式权限与编辑体验、面向私有化部署的开源知识库系统。项目目标是把团队知识库、用户级权限、文件导入、Milvus 检索索引、MCP Server 和 Dify 第三方知识库适配统一在一套可自托管架构里。
 
-当前代码已推进到 Phase 9：MCP Server。仓库仍处于早期开发阶段，适合本地开发、架构验证和后续功能迭代。
+当前代码已推进到 Phase 9.2.1：MCP 写工具与本地测试地基修复。仓库仍处于早期开发阶段，适合本地开发、架构验证和后续功能迭代。
 
 ## 已实现
 
@@ -17,7 +17,7 @@ OpenKB 是一个 Markdown-first、语雀式权限与编辑体验、面向私有�
 - MinIO/S3 文件上传、Markdown/Text/HTML/CSV 导入、import worker、PostgreSQL chunks
 - Milvus schema builder、BM25/text-only collection、blue/green rebuild job、alias switch、index worker
 - `@openkb/retrieval`、`POST /api/search`、`/app/search` 站内搜索，返回前执行 PostgreSQL 最终权限检查
-- Streamable HTTP MCP Server、user-bound PAT、read-only `kb.*` tools/resources、MCP audit logs
+- Streamable HTTP MCP Server、user-bound PAT、`kb.*` read/write tools/resources、MCP audit logs
 
 ## 目录结构
 
@@ -70,11 +70,14 @@ pnpm dev:seed
 集成测试：
 
 ```powershell
+pnpm content:test
 pnpm import:test
 pnpm index:test
 pnpm retrieval:test
 pnpm mcp:test
 ```
+
+`content:test` 是轻量内容 API 回归，只启动 PostgreSQL，不依赖 Milvus。`retrieval:test` 和 `mcp:test` 会启动 PostgreSQL + Milvus，用于验证 BM25/text-only 检索和 MCP 链路。
 
 开发测试账号：
 
@@ -112,6 +115,12 @@ $env:MCP_PAT_USER_EMAIL="admin@openkb.local"
 $env:MCP_PAT_NAME="Local MCP PAT"
 pnpm mcp:pat:create
 ```
+
+### CPU-only 本地环境
+
+默认本地链路是 CPU-only：Milvus 使用 BM25/text-only，`.env.example` 中 `MILVUS_ENABLE_TEXT_EMBEDDING=false`、`MILVUS_ENABLE_RERANK=false`。没有 NVIDIA GPU / `nvidia-smi` 的机器不要启用 TEXTEMBEDDING、RERANK、MinerU GPU worker、Qwen Embedding TEI 或 Qwen Reranker vLLM 服务。
+
+Qwen Embedding、Reranker、MinerU 属于可选外部服务；OpenKB 默认测试脚本不会启动它们，也不会保存 embedding/rerank provider API key。宿主机已有的 Dify、SkillHub 或其他 Docker 容器不属于 OpenKB 测试 compose，OpenKB 脚本只管理自己的 test compose 服务。
 
 ## 核心约束
 
