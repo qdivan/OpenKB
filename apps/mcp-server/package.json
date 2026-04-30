@@ -6,10 +6,19 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "lint": "tsc --noEmit",
+    "mcp:pat:create": "tsx src/pat-cli.ts",
+    "mcp:test": "vitest run --config vitest.mcp.config.ts",
     "start": "node dist/main.js",
+    "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@openkb/shared": "workspace:*"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@openkb/db": "workspace:^",
+    "@openkb/editor": "workspace:^",
+    "@openkb/permissions": "workspace:^",
+    "@openkb/retrieval": "workspace:^",
+    "@openkb/shared": "workspace:*",
+    "zod": "^4.4.1"
   }
 }

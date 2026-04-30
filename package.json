@@ -28,6 +28,8 @@
     "lint": "turbo run lint",
     "milvus:test:down": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/milvus-test-down.ps1",
     "milvus:test:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/milvus-test-up.ps1",
+    "mcp:pat:create": "pnpm --filter @openkb/mcp-server mcp:pat:create",
+    "mcp:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/mcp-test.ps1",
     "object-storage:test:down": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/object-storage-test-down.ps1",
     "object-storage:test:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/object-storage-test-up.ps1",
     "permissions:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/permissions-test.ps1",
