@@ -94,6 +94,15 @@ export type MilvusSearchChunksInput = {
   alias?: string;
 };
 
+export type MilvusSearchScopedChunksInput = {
+  query: string;
+  tenantId: string;
+  knowledgeBaseIds: string[];
+  filters?: MilvusSearchFilters;
+  limit: number;
+  alias?: string;
+};
+
 export type MilvusSearchFilters = {
   tags?: string[];
 };
@@ -343,6 +352,35 @@ export class OpenKBMilvus {
 
     return flattenSearchResults(response.results).map(normalizeSearchResult);
   }
+
+  async searchScopedChunks(
+    input: MilvusSearchScopedChunksInput
+  ): Promise<MilvusSearchChunkResult[]> {
+    const alias = input.alias ?? this.config.activeAlias;
+    assertMilvusName(alias, "alias");
+
+    const activeAlias = await this.describeAlias(alias);
+    if (!activeAlias) {
+      throw new MilvusError("SEARCH_INDEX_NOT_READY", "Milvus active alias is not ready.", 503);
+    }
+
+    const response = await this.client.search({
+      collection_name: alias,
+      data: [input.query],
+      anns_field: MILVUS_COLLECTION_FIELDS.sparseVector,
+      metric_type: MetricType.BM25,
+      limit: input.limit,
+      filter: buildScopedChunkSearchFilter({
+        tenantId: input.tenantId,
+        knowledgeBaseIds: input.knowledgeBaseIds,
+        filters: input.filters
+      }),
+      output_fields: SEARCH_OUTPUT_FIELDS
+    });
+    assertStatus(response.status);
+
+    return flattenSearchResults(response.results).map(normalizeSearchResult);
+  }
 }
 
 export function getMilvusConfig(env: NodeJS.ProcessEnv = process.env): MilvusConfig {
@@ -529,14 +567,12 @@ export function buildChunkSearchFilter(input: {
 }): string {
   const principalFilterValues =
     input.accessPrincipals.length > 0 ? input.accessPrincipals : ["__openkb_no_access__"];
-  const clauses = [
-    `${MILVUS_COLLECTION_FIELDS.tenantId} == ${toMilvusString(input.tenantId)}`,
-    `${MILVUS_COLLECTION_FIELDS.isCurrent} == true`,
-    `${MILVUS_COLLECTION_FIELDS.docStatus} == "published"`,
+  const clauses = buildChunkBaseFilterClauses(input.tenantId);
+  clauses.push(
     `ARRAY_CONTAINS_ANY(${MILVUS_COLLECTION_FIELDS.accessPrincipals}, ${toMilvusStringArray(
       principalFilterValues
     )})`
-  ];
+  );
 
   if (input.knowledgeBaseIds && input.knowledgeBaseIds.length > 0) {
     clauses.push(
@@ -555,6 +591,39 @@ export function buildChunkSearchFilter(input: {
   }
 
   return clauses.join(" and ");
+}
+
+export function buildScopedChunkSearchFilter(input: {
+  tenantId: string;
+  knowledgeBaseIds: string[];
+  filters?: MilvusSearchFilters;
+}): string {
+  const clauses = buildChunkBaseFilterClauses(input.tenantId);
+  const knowledgeBaseIds =
+    input.knowledgeBaseIds.length > 0 ? input.knowledgeBaseIds : ["__openkb_no_kb_scope__"];
+  clauses.push(
+    `${MILVUS_COLLECTION_FIELDS.knowledgeBaseId} in ${toMilvusStringArray(knowledgeBaseIds)}`
+  );
+  appendMetadataFilterClauses(clauses, input.filters);
+  return clauses.join(" and ");
+}
+
+function buildChunkBaseFilterClauses(tenantId: string): string[] {
+  return [
+    `${MILVUS_COLLECTION_FIELDS.tenantId} == ${toMilvusString(tenantId)}`,
+    `${MILVUS_COLLECTION_FIELDS.isCurrent} == true`,
+    `${MILVUS_COLLECTION_FIELDS.docStatus} == "published"`
+  ];
+}
+
+function appendMetadataFilterClauses(clauses: string[], filters: MilvusSearchFilters | undefined) {
+  if (filters?.tags && filters.tags.length > 0) {
+    clauses.push(
+      `json_contains_any(${MILVUS_COLLECTION_FIELDS.metadata}["tags"], ${toMilvusStringArray(
+        filters.tags
+      )})`
+    );
+  }
 }
 
 function assertStatus(status: ResStatus): void {

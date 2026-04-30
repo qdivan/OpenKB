@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculateCandidateLimit,
   filterRetrievalAccessPrincipals,
+  normalizeRetrievalAppSearchInput,
   normalizeRetrievalSearchInput,
   RetrievalError
 } from "./index";
@@ -65,5 +66,30 @@ describe("@openkb/retrieval input helpers", () => {
         "workspace:w1:member"
       ])
     ).toEqual(["user:u1", "tenant:t1:member", "workspace:w1:member"]);
+  });
+
+  it("normalizes app-scoped retrieval input without a user context", () => {
+    expect(
+      normalizeRetrievalAppSearchInput({
+        app: {
+          tenantId: "tenant_1",
+          knowledgeBaseIds: ["kb_1", "kb_1"]
+        },
+        query: " Dify retrieval ",
+        top_k: 3
+      })
+    ).toMatchObject({
+      query: "Dify retrieval",
+      knowledgeBaseIds: ["kb_1"],
+      topK: 3,
+      candidateLimit: 20
+    });
+
+    expect(() =>
+      normalizeRetrievalAppSearchInput({
+        app: { tenantId: "tenant_1", knowledgeBaseIds: [] },
+        query: "Dify"
+      })
+    ).toThrow("app.knowledgeBaseIds");
   });
 });

@@ -42,6 +42,16 @@ export type RetrievalSearchInput = {
   filters?: unknown;
 };
 
+export type RetrievalAppSearchInput = {
+  app: {
+    tenantId: string;
+    knowledgeBaseIds: string[];
+  };
+  query: unknown;
+  top_k?: unknown;
+  filters?: unknown;
+};
+
 export type RetrievalSearchFilters = {
   tags: string[];
 };
@@ -147,9 +157,67 @@ export class RetrievalService {
     const allowed = await this.finalPermissionFilter(userId, candidates, normalized.topK);
     const paths = await this.resolveDocumentPaths(allowed);
 
+    return this.toSearchResponse(normalized.query, normalized.topK, allowed, paths);
+  }
+
+  async searchAppScope(input: RetrievalAppSearchInput): Promise<RetrievalSearchResponse> {
+    const normalized = normalizeRetrievalAppSearchInput(input);
+    const tenantId = input.app.tenantId;
+    const activeKnowledgeBaseIds = await this.resolveActiveAppKnowledgeBaseIds(
+      tenantId,
+      normalized.knowledgeBaseIds
+    );
+
+    if (activeKnowledgeBaseIds.length === 0) {
+      return {
+        query: normalized.query,
+        top_k: normalized.topK,
+        results: []
+      };
+    }
+
+    let candidates: MilvusSearchChunkResult[];
+    try {
+      candidates = await this.milvus.searchScopedChunks({
+        query: normalized.query,
+        tenantId,
+        knowledgeBaseIds: activeKnowledgeBaseIds,
+        filters: normalized.filters,
+        limit: normalized.candidateLimit
+      });
+    } catch (error) {
+      if (error instanceof MilvusError && error.code === "SEARCH_INDEX_NOT_READY") {
+        throw new RetrievalError(
+          "SEARCH_INDEX_NOT_READY",
+          "Search index is not ready. Rebuild the active Milvus index first.",
+          503
+        );
+      }
+      if (error instanceof MilvusError) {
+        throw new RetrievalError("SEARCH_FAILED", error.message, error.statusCode);
+      }
+      throw error;
+    }
+
+    const allowed = await this.finalAppScopeFilter(
+      tenantId,
+      activeKnowledgeBaseIds,
+      candidates,
+      normalized.topK
+    );
+    const paths = await this.resolveDocumentPaths(allowed);
+    return this.toSearchResponse(normalized.query, normalized.topK, allowed, paths);
+  }
+
+  private toSearchResponse(
+    query: string,
+    topK: number,
+    allowed: MilvusSearchChunkResult[],
+    paths: Map<string, string[]>
+  ): RetrievalSearchResponse {
     return {
-      query: normalized.query,
-      top_k: normalized.topK,
+      query,
+      top_k: topK,
       results: allowed.map((candidate) => ({
         chunk_id: candidate.chunk_id,
         document_id: candidate.document_id,
@@ -189,6 +257,121 @@ export class RetrievalService {
     }
 
     return allowed;
+  }
+
+  private async finalAppScopeFilter(
+    tenantId: string,
+    knowledgeBaseIds: string[],
+    candidates: MilvusSearchChunkResult[],
+    topK: number
+  ): Promise<MilvusSearchChunkResult[]> {
+    const sortedCandidates = candidates
+      .filter((candidate) => candidate.chunk_id && candidate.document_id)
+      .sort((a, b) => b.score - a.score);
+    if (sortedCandidates.length === 0) {
+      return [];
+    }
+
+    const allowedKnowledgeBaseIds = new Set(knowledgeBaseIds);
+    const chunkIds = unique(sortedCandidates.map((candidate) => candidate.chunk_id));
+    const chunks = await this.prisma.documentChunk.findMany({
+      where: {
+        id: { in: chunkIds },
+        tenant_id: tenantId,
+        knowledge_base_id: { in: knowledgeBaseIds }
+      },
+      select: {
+        id: true,
+        document_id: true,
+        knowledge_base_id: true,
+        version_id: true
+      }
+    });
+    const documentIds = unique(chunks.map((chunk) => chunk.document_id));
+    const [documents, knowledgeBases] = await Promise.all([
+      this.prisma.document.findMany({
+        where: {
+          id: { in: documentIds },
+          tenant_id: tenantId,
+          knowledge_base_id: { in: knowledgeBaseIds },
+          status: "published"
+        },
+        select: {
+          id: true,
+          knowledge_base_id: true,
+          current_version_id: true,
+          status: true
+        }
+      }),
+      this.prisma.knowledgeBase.findMany({
+        where: {
+          id: { in: knowledgeBaseIds },
+          tenant_id: tenantId,
+          status: "active"
+        },
+        select: {
+          id: true
+        }
+      })
+    ]);
+
+    const documentById = new Map(documents.map((document) => [document.id, document]));
+    const activeKnowledgeBaseIds = new Set(knowledgeBases.map((knowledgeBase) => knowledgeBase.id));
+    const validChunkIds = new Set(
+      chunks
+        .filter((chunk) => {
+          const document = documentById.get(chunk.document_id);
+          return (
+            document?.status === "published" &&
+            document.current_version_id === chunk.version_id &&
+            document.knowledge_base_id === chunk.knowledge_base_id &&
+            allowedKnowledgeBaseIds.has(chunk.knowledge_base_id) &&
+            activeKnowledgeBaseIds.has(chunk.knowledge_base_id)
+          );
+        })
+        .map((chunk) => chunk.id)
+    );
+
+    const allowed: MilvusSearchChunkResult[] = [];
+    const seenChunkIds = new Set<string>();
+    for (const candidate of sortedCandidates) {
+      if (
+        seenChunkIds.has(candidate.chunk_id) ||
+        !allowedKnowledgeBaseIds.has(candidate.knowledge_base_id) ||
+        !validChunkIds.has(candidate.chunk_id)
+      ) {
+        continue;
+      }
+
+      seenChunkIds.add(candidate.chunk_id);
+      allowed.push(candidate);
+      if (allowed.length >= topK) {
+        break;
+      }
+    }
+
+    return allowed;
+  }
+
+  private async resolveActiveAppKnowledgeBaseIds(
+    tenantId: string,
+    knowledgeBaseIds: string[]
+  ): Promise<string[]> {
+    if (knowledgeBaseIds.length === 0) {
+      return [];
+    }
+
+    const knowledgeBases = await this.prisma.knowledgeBase.findMany({
+      where: {
+        id: { in: knowledgeBaseIds },
+        tenant_id: tenantId,
+        status: "active"
+      },
+      select: { id: true }
+    });
+
+    const activeIds = new Set(knowledgeBases.map((knowledgeBase) => knowledgeBase.id));
+    return knowledgeBaseIds.filter((knowledgeBaseId) => activeIds.has(knowledgeBaseId));
   }
 
   private async resolveDocumentPaths(
@@ -239,21 +422,28 @@ export class RetrievalService {
 export function normalizeRetrievalSearchInput(
   input: RetrievalSearchInput
 ): NormalizedRetrievalSearchInput {
-  if (typeof input.query !== "string") {
-    throw new RetrievalError("INVALID_INPUT", "query is required.", 400);
-  }
-
-  const query = input.query.trim();
-  if (!query) {
-    throw new RetrievalError("INVALID_INPUT", "query is required.", 400);
-  }
-  if (query.length > MAX_QUERY_LENGTH) {
-    throw new RetrievalError("INVALID_INPUT", "query is too long.", 400, {
-      max_length: MAX_QUERY_LENGTH
-    });
-  }
-
+  const query = normalizeQuery(input.query);
   const knowledgeBaseIds = normalizeStringArray(input.knowledge_base_ids, "knowledge_base_ids");
+  const topK = normalizeTopK(input.top_k);
+  const filters = normalizeSearchFilters(input.filters);
+
+  return {
+    query,
+    knowledgeBaseIds,
+    topK,
+    candidateLimit: calculateCandidateLimit(topK),
+    filters
+  };
+}
+
+export function normalizeRetrievalAppSearchInput(
+  input: RetrievalAppSearchInput
+): NormalizedRetrievalSearchInput {
+  const query = normalizeQuery(input.query);
+  const knowledgeBaseIds = normalizeStringArray(input.app.knowledgeBaseIds, "app.knowledgeBaseIds");
+  if (knowledgeBaseIds.length === 0) {
+    throw new RetrievalError("INVALID_INPUT", "app.knowledgeBaseIds is required.", 400);
+  }
   const topK = normalizeTopK(input.top_k);
   const filters = normalizeSearchFilters(input.filters);
 
@@ -286,6 +476,24 @@ function normalizeTopK(value: unknown): number {
   }
 
   return Math.min(value, MAX_SEARCH_TOP_K);
+}
+
+function normalizeQuery(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new RetrievalError("INVALID_INPUT", "query is required.", 400);
+  }
+
+  const query = value.trim();
+  if (!query) {
+    throw new RetrievalError("INVALID_INPUT", "query is required.", 400);
+  }
+  if (query.length > MAX_QUERY_LENGTH) {
+    throw new RetrievalError("INVALID_INPUT", "query is too long.", 400, {
+      max_length: MAX_QUERY_LENGTH
+    });
+  }
+
+  return query;
 }
 
 function normalizeStringArray(value: unknown, fieldName: string): string[] {

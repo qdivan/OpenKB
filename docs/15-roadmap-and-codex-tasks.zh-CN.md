@@ -131,6 +131,12 @@
 - scoped API key。
 - knowledge_id mapping。
 - metadata_condition。
+- Dify 兼容错误格式 `{ error_code, error_msg }`。
+- app-scoped retrieval，不模拟用户、不模拟管理员。
+- `knowledge_id` 必须映射到内部 KB，并被当前 API key allow list 显式授权。
+- 返回前执行 PostgreSQL final scope check；Milvus 只做候选索引。
+- 审计 `dify.retrieval`，`actor_type=api_key` 且 metadata 标记 `api_key_type=dify`，不记录 raw API key。
+- 不新增数据库 migration，不保存 embedding/rerank provider key。
 
 ## Phase 11 — 部署
 

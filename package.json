@@ -16,6 +16,8 @@
     "db:test:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/db-test-up.ps1",
     "dev:seed": "pnpm --filter @openkb/db dev:seed",
     "dev": "turbo run dev --parallel",
+    "dify:key:create": "pnpm --filter @openkb/dify-adapter dify:key:create",
+    "dify:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dify-test.ps1",
     "docs:check": "node -e \"require('node:fs').accessSync('docs/18-decision-overrides-v0.3.zh-CN.md'); require('node:fs').accessSync('docs/22-v0.3.3-clarifications.zh-CN.md'); console.log('OpenKB docs are present.')\"",
     "format:check": "prettier --check .",
     "import:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/import-test.ps1",

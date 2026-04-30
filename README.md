@@ -2,7 +2,7 @@
 
 OpenKB 是一个 Markdown-first、语雀式权限与编辑体验、面向私有化部署的开源知识库系统。项目目标是把团队知识库、用户级权限、文件导入、Milvus 检索索引、MCP Server 和 Dify 第三方知识库适配统一在一套可自托管架构里。
 
-当前代码已推进到 Phase 9.2.1：MCP 写工具与本地测试地基修复。仓库仍处于早期开发阶段，适合本地开发、架构验证和后续功能迭代。
+当前代码已推进到 Phase 10：Dify External Knowledge Adapter。仓库仍处于早期开发阶段，适合本地开发、架构验证和后续功能迭代。
 
 ## 已实现
 
@@ -18,6 +18,7 @@ OpenKB 是一个 Markdown-first、语雀式权限与编辑体验、面向私有�
 - Milvus schema builder、BM25/text-only collection、blue/green rebuild job、alias switch、index worker
 - `@openkb/retrieval`、`POST /api/search`、`/app/search` 站内搜索，返回前执行 PostgreSQL 最终权限检查
 - Streamable HTTP MCP Server、user-bound PAT、`kb.*` read/write tools/resources、MCP audit logs
+- Dify External Knowledge `/retrieval`、scoped API key、`knowledge_id` mapping、metadata_condition、Dify audit logs
 
 ## 目录结构
 
@@ -26,7 +27,7 @@ apps/
   web/            Next.js Web 工作台
   api/            NestJS + Fastify API
   mcp-server/     MCP Server 占位
-  dify-adapter/   Dify Adapter 占位
+  dify-adapter/   Dify External Knowledge Adapter
 workers/
   import-worker/
   index-worker/
@@ -75,6 +76,7 @@ pnpm import:test
 pnpm index:test
 pnpm retrieval:test
 pnpm mcp:test
+pnpm dify:test
 ```
 
 `content:test` 是轻量内容 API 回归，只启动 PostgreSQL，不依赖 Milvus。`retrieval:test` 和 `mcp:test` 会启动 PostgreSQL + Milvus，用于验证 BM25/text-only 检索和 MCP 链路。
@@ -105,6 +107,7 @@ API: http://localhost:4000/health
 Search: http://localhost:3001/app/search
 MCP: http://localhost:4100/mcp
 MCP protected resource: http://localhost:4100/.well-known/oauth-protected-resource
+Dify: http://localhost:4200/retrieval
 ```
 
 MCP PAT 创建：
@@ -114,6 +117,17 @@ $env:DATABASE_URL="postgresql://openkb:openkb@localhost:55432/openkb_test?schema
 $env:MCP_PAT_USER_EMAIL="admin@openkb.local"
 $env:MCP_PAT_NAME="Local MCP PAT"
 pnpm mcp:pat:create
+```
+
+Dify External Knowledge API key 创建：
+
+```powershell
+$env:DATABASE_URL="postgresql://openkb:openkb@localhost:55432/openkb_test?schema=public"
+$env:DIFY_KEY_CREATED_BY_EMAIL="admin@openkb.local"
+$env:DIFY_API_KEY_NAME="Local Dify Key"
+$env:DIFY_KNOWLEDGE_ID="openkb-demo"
+$env:DIFY_KNOWLEDGE_BASE_ID="<internal knowledge_base_id>"
+pnpm dify:key:create
 ```
 
 ### CPU-only 本地环境
@@ -137,6 +151,5 @@ Qwen Embedding、Reranker、MinerU 属于可选外部服务；OpenKB 默认测�
 ## 后续路线
 
 ```text
-Phase 10 Dify Adapter
 Phase 11 Docker Compose / Helm
 ```

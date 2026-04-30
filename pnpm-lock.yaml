@@ -83,6 +83,18 @@ importers:
 
   apps/dify-adapter:
     dependencies:
+      '@openkb/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@openkb/milvus':
+        specifier: workspace:^
+        version: link:../../packages/milvus
+      '@openkb/permissions':
+        specifier: workspace:^
+        version: link:../../packages/permissions
+      '@openkb/retrieval':
+        specifier: workspace:^
+        version: link:../../packages/retrieval
       '@openkb/shared':
         specifier: workspace:*
         version: link:../../packages/shared

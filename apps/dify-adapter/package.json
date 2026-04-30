@@ -4,12 +4,19 @@
   "version": "0.3.3",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "dify:key:create": "tsx src/key-cli.ts",
+    "dify:test": "vitest run --config vitest.dify.config.ts",
     "dev": "tsx watch src/main.ts",
     "lint": "tsc --noEmit",
     "start": "node dist/main.js",
+    "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@openkb/db": "workspace:^",
+    "@openkb/milvus": "workspace:^",
+    "@openkb/permissions": "workspace:^",
+    "@openkb/retrieval": "workspace:^",
     "@openkb/shared": "workspace:*"
   }
 }

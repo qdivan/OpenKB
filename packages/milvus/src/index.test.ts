@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertNoProviderSecrets,
   buildChunkSearchFilter,
+  buildScopedChunkSearchFilter,
   buildOpenKBMilvusSchema,
   createCollectionName,
   MILVUS_CHUNK_ID_FIELD,
@@ -72,5 +73,20 @@ describe("@openkb/milvus schema", () => {
     );
     expect(filter).toContain('knowledge_base_id in ["kb-1", "kb-2"]');
     expect(filter).toContain('json_contains_any(metadata["tags"], ["mcp", "quote\\"tag"])');
+  });
+
+  it("builds app-scoped filters without user access principals", () => {
+    const filter = buildScopedChunkSearchFilter({
+      tenantId: "tenant-a",
+      knowledgeBaseIds: ["kb-1"],
+      filters: { tags: ["dify"] }
+    });
+
+    expect(filter).toContain('tenant_id == "tenant-a"');
+    expect(filter).toContain("is_current == true");
+    expect(filter).toContain('doc_status == "published"');
+    expect(filter).toContain('knowledge_base_id in ["kb-1"]');
+    expect(filter).toContain('json_contains_any(metadata["tags"], ["dify"])');
+    expect(filter).not.toContain("access_principals");
   });
 });
