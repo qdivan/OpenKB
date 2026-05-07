@@ -111,11 +111,12 @@ kb.list_documents
   "query": "string",
   "knowledge_base_ids": ["optional"],
   "top_k": 5,
+  "context_mode": "parent_child",
   "filters": {}
 }
 ```
 
-输出只包含当前用户可读结果。
+`context_mode` 可选，支持 `chunk`、`parent_child`、`paragraph_parent_child`、`full_text`。输出只包含当前用户可读且已发布、当前版本的结果，并返回 match/parent chunk metadata。
 
 ### kb.get_document_markdown
 

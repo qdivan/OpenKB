@@ -35,10 +35,12 @@ OpenKB v0.x 不保存 embedding/rerank API key，也不实现知识库级模型�
 流程：
 
 ```text
-新建 collection -> 新 schema + Function + index -> 插入当前 chunks raw text -> Milvus 生成 embedding -> load + validate -> alias switch -> 旧 collection rollback window
+新建 collection -> 新 schema + index -> 从 PostgreSQL 读取当前 chunks -> 当前 v0.3.x 由 OpenKB 生成 dense_vector 并写入 Milvus -> load + validate -> alias switch -> 旧 collection rollback window
 ```
 
 禁止在旧 collection 混写新向量。即使维度一样，也建议新建 collection，避免向量空间混杂。
+
+长期 Milvus TEXTEMBEDDING Function 演进时，可以改成 OpenKB 写 raw text、Milvus 生成 embedding；但仍必须遵守新 collection、健康检查、alias switch 和 rollback window。
 
 ## 6. 权限最终判断仍在 PostgreSQL
 

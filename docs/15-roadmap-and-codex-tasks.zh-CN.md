@@ -75,7 +75,8 @@
 
 - packages/milvus。
 - 创建 collection schema。
-- TEXTEMBEDDING/BM25/RERANK Function 配置代码。
+- BM25 Function 配置代码。
+- 当前 v0.3.x 使用 OpenKB 通过环境变量直连 embedding/rerank HTTP endpoint，写入普通 `dense_vector` 字段；Milvus TEXTEMBEDDING/RERANK Function 或 Model Ranker 是后续可选演进。
 - rebuild job。
 - alias switch。
 - health check。
@@ -147,4 +148,31 @@
 - Milvus standalone/external。
 - MinIO/Postgres/Redis。
 
-Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、Helm 最小 chart、环境变量整理、健康检查和部署文档。Phase 12 已开始接入真实 embedding/rerank/hybrid。后续不要把生产 SMTP、完整 MCP OAuth、复杂 OCR、实时协同或完整 admin UI 等产品增强混入部署闭环。
+Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、Helm 最小 chart、环境变量整理、健康检查和部署文档。后续不要把生产 SMTP、完整 MCP OAuth、复杂 OCR、实时协同或完整 admin UI 等产品增强混入部署闭环。
+
+## Phase 12 — 真实模型检索
+
+输出：
+
+- OpenAI-compatible embedding client。
+- rerank client。
+- `bm25`、`dense`、`dense_rerank`、`hybrid`、`hybrid_rerank` 模式。
+- Admin retrieval settings 页面。
+- index-worker 批量生成 dense vector。
+- rerank 在最终权限过滤后执行，失败时降级。
+
+当前代码已完成 Phase 12 的最小闭环。
+
+## Phase 13 — 知识库体验和父子检索
+
+输出：
+
+- 知识库 Dashboard：文档数、chunk 数、索引状态、最近导入和重建。
+- KB 级切片设置：`general` / `parent_child`、段落父块 / 全文父块、分隔符、max chars、overlap。
+- 切片可视化：按文档展示 `general` / `parent` / `child` chunk。
+- 检索测试台：支持临时 `context_mode`、top_k，展示命中子块、父块上下文、raw score、rerank score。
+- 段落父子检索和全文父块：子块入 Milvus，父块回 PostgreSQL 回填上下文。
+- 发布/取消发布闭环：新建文档默认 draft，发布后经 Milvus index rebuild 进入检索。
+- Web/MCP/Dify 结果 metadata 附加 parent/child 信息。
+
+当前代码已完成 Phase 13 的最小闭环。后续仍需补强知识库设置页的信息架构、当前文档切片侧栏、检索结果解释 UI、分享/协作面板和复杂导入 adapter。

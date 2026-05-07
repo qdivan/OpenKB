@@ -129,12 +129,34 @@ export type SearchResult = {
   score: number;
   metadata: Record<string, unknown>;
   updated_at: string;
+  context_mode?: RetrievalContextMode;
+  match_chunk?: SearchChunkContext;
+  parent_chunk?: SearchChunkContext | null;
 };
 
 export type SearchResponse = {
   query: string;
   top_k: number;
+  context_mode?: RetrievalContextMode;
   results: SearchResult[];
+};
+
+export type RetrievalContextMode =
+  | "chunk"
+  | "parent_child"
+  | "paragraph_parent_child"
+  | "full_text";
+
+export type SearchChunkContext = {
+  chunk_id: string;
+  chunk_type: string;
+  heading_path: string[];
+  content: string;
+  token_count?: number | null;
+  start_line?: number | null;
+  end_line?: number | null;
+  start_char?: number | null;
+  end_char?: number | null;
 };
 
 export type RetrievalMode = "bm25" | "dense" | "dense_rerank" | "hybrid" | "hybrid_rerank";
@@ -206,6 +228,85 @@ export type IndexRebuildJob = {
   started_at: string;
   finished_at: string | null;
   error: string | null;
+};
+
+export type ChunkSettings = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  mode: "general" | "parent_child";
+  parent_mode: "paragraph" | "full_doc";
+  parent_delimiter: string;
+  child_delimiter: string;
+  parent_max_characters: number;
+  child_max_characters: number;
+  child_overlap_characters: number;
+  revision: number;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DocumentChunk = {
+  id: string;
+  document_id: string;
+  version_id: string;
+  ordinal: number;
+  chunk_type: "general" | "parent" | "child";
+  parent_chunk_id: string | null;
+  settings_revision: number;
+  start_line: number | null;
+  end_line: number | null;
+  start_char: number | null;
+  end_char: number | null;
+  parent_ordinal: number | null;
+  child_ordinal: number | null;
+  heading_path: string[];
+  content_text: string;
+  content_markdown: string;
+  token_count: number | null;
+  metadata: unknown;
+  created_at: string;
+};
+
+export type ChunkRebuildJob = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  settings_revision: number;
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  requested_by: string;
+  error: string | null;
+  metadata: unknown;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+export type KnowledgeBaseOverview = {
+  knowledge_base: KnowledgeBase;
+  documents: {
+    total: number;
+    pages: number;
+    folders: number;
+    published: number;
+    draft: number;
+  };
+  chunks: {
+    total: number;
+    general: number;
+    parent: number;
+    child: number;
+    stale: number;
+  };
+  chunk_settings: ChunkSettings;
+  latest_import_jobs: ImportJob[];
+  latest_chunk_rebuild_job: ChunkRebuildJob | null;
+  latest_index_rebuild_job: IndexRebuildJob | null;
+  needs_chunk_rebuild: boolean;
+  needs_index_rebuild: boolean;
 };
 
 export type UpdateDocumentInput = {
@@ -367,11 +468,67 @@ export function searchKnowledge(input: {
   knowledge_base_ids?: string[];
   top_k?: number;
   filters?: Record<string, unknown>;
+  context_mode?: RetrievalContextMode;
 }) {
   return apiFetch<SearchResponse>("/api/search", {
     method: "POST",
     body: JSON.stringify(input)
   });
+}
+
+export function getKnowledgeBaseOverview(id: string) {
+  return apiFetch<KnowledgeBaseOverview>(`/api/knowledge-bases/${id}/overview`);
+}
+
+export function getChunkSettings(id: string) {
+  return apiFetch<ChunkSettings>(`/api/knowledge-bases/${id}/chunk-settings`);
+}
+
+export function updateChunkSettings(
+  id: string,
+  input: Partial<
+    Pick<
+      ChunkSettings,
+      | "mode"
+      | "parent_mode"
+      | "parent_delimiter"
+      | "child_delimiter"
+      | "parent_max_characters"
+      | "child_max_characters"
+      | "child_overlap_characters"
+    >
+  >
+) {
+  return apiFetch<ChunkSettings>(`/api/knowledge-bases/${id}/chunk-settings`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listKnowledgeBaseChunks(
+  id: string,
+  input: { document_id?: string; type?: string; limit?: number } = {}
+) {
+  const params = new URLSearchParams();
+  if (input.document_id) params.set("document_id", input.document_id);
+  if (input.type) params.set("type", input.type);
+  if (input.limit) params.set("limit", String(input.limit));
+  const query = params.toString();
+  return apiFetch<DocumentChunk[]>(`/api/knowledge-bases/${id}/chunks${query ? `?${query}` : ""}`);
+}
+
+export function createChunkRebuildJob(id: string) {
+  return apiFetch<ChunkRebuildJob>(`/api/knowledge-bases/${id}/chunk-rebuild-jobs`, {
+    method: "POST"
+  });
+}
+
+export function publishDocument(id: string) {
+  return apiFetch<DocumentDetail>(`/api/documents/${id}/publish`, { method: "POST" });
+}
+
+export function unpublishDocument(id: string) {
+  return apiFetch<DocumentDetail>(`/api/documents/${id}/unpublish`, { method: "POST" });
 }
 
 export function getRetrievalSettings() {

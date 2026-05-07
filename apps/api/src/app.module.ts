@@ -6,6 +6,7 @@ import { RetrievalService } from "@openkb/retrieval";
 import { AdminController } from "./auth/admin.controller";
 import { AuthController } from "./auth/auth.controller";
 import { AssetController } from "./content/asset.controller";
+import { ChunkRebuildJobController } from "./content/chunk-rebuild-job.controller";
 import { CollaborationController } from "./content/collaboration.controller";
 import { ContentService } from "./content/content.service";
 import { DocumentController } from "./content/document.controller";
@@ -32,6 +33,7 @@ import { SearchController } from "./search/search.controller";
     DocumentController,
     UploadController,
     AssetController,
+    ChunkRebuildJobController,
     ImportJobController,
     CollaborationController,
     ShareController,

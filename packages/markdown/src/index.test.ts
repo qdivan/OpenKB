@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   chunkMarkdown,
+  chunkMarkdownForIndex,
   convertImportFile,
   MarkdownConversionError,
   resolveImportConverter
@@ -90,5 +91,66 @@ Details`);
         content_text: "B Details"
       })
     ]);
+  });
+
+  it("builds hierarchical parent and child chunks with stable ordinals and ranges", () => {
+    const chunks = chunkMarkdownForIndex(
+      `# Guide
+
+Intro paragraph about OpenKB.
+
+Second paragraph with retrieval details.
+
+## Details
+
+Child chunks keep searchable text.`,
+      {
+        mode: "parent_child",
+        parent_mode: "paragraph",
+        parent_delimiter: "\n\n",
+        child_delimiter: "\n\n",
+        parent_max_characters: 70,
+        child_max_characters: 44,
+        child_overlap_characters: 8,
+        settings_revision: 3
+      }
+    );
+    const parents = chunks.filter((chunk) => chunk.chunk_type === "parent");
+    const children = chunks.filter((chunk) => chunk.chunk_type === "child");
+
+    expect(chunks.map((chunk) => chunk.ordinal)).toEqual(chunks.map((_, index) => index));
+    expect(parents.length).toBeGreaterThan(1);
+    expect(children.length).toBeGreaterThanOrEqual(parents.length);
+    expect(parents[0]).toMatchObject({
+      chunk_type: "parent",
+      parent_ordinal: 0,
+      child_ordinal: null,
+      settings_revision: 3,
+      start_line: 1,
+      start_char: 0
+    });
+    expect(children[0]).toMatchObject({
+      chunk_type: "child",
+      parent_ordinal: 0,
+      child_ordinal: 0,
+      settings_revision: 3
+    });
+    expect(children.every((chunk) => typeof chunk.parent_local_id === "string")).toBe(true);
+  });
+
+  it("supports full document parent context with multiple searchable children", () => {
+    const chunks = chunkMarkdownForIndex("One long paragraph. ".repeat(16), {
+      mode: "parent_child",
+      parent_mode: "full_doc",
+      child_max_characters: 80,
+      child_overlap_characters: 12
+    });
+    const parents = chunks.filter((chunk) => chunk.chunk_type === "parent");
+    const children = chunks.filter((chunk) => chunk.chunk_type === "child");
+
+    expect(parents).toHaveLength(1);
+    expect(children.length).toBeGreaterThan(1);
+    expect(children.every((chunk) => chunk.parent_ordinal === 0)).toBe(true);
+    expect(parents[0]?.content_text).toContain("One long paragraph");
   });
 });

@@ -278,6 +278,15 @@ document_chunks (
   document_id uuid not null,
   version_id uuid not null,
   ordinal int not null,
+  chunk_type text not null default 'general',
+  parent_chunk_id uuid null,
+  settings_revision int not null default 1,
+  start_line int null,
+  end_line int null,
+  start_char int null,
+  end_char int null,
+  parent_ordinal int null,
+  child_ordinal int null,
   heading_path text[] not null default '{}',
   content_text text not null,
   content_markdown text not null,
@@ -285,6 +294,39 @@ document_chunks (
   metadata jsonb not null default '{}',
   created_at timestamptz not null,
   unique (version_id, ordinal)
+)
+
+knowledge_base_chunk_settings (
+  id uuid primary key,
+  tenant_id uuid not null,
+  workspace_id uuid not null,
+  knowledge_base_id uuid not null unique,
+  mode text not null check (mode in ('general', 'parent_child')),
+  parent_mode text not null check (parent_mode in ('paragraph', 'full_doc')),
+  parent_delimiter text not null default E'\n\n',
+  child_delimiter text not null default E'\n\n',
+  parent_max_characters int not null,
+  child_max_characters int not null,
+  child_overlap_characters int not null,
+  revision int not null default 1,
+  updated_by uuid not null,
+  created_at timestamptz not null,
+  updated_at timestamptz not null
+)
+
+chunk_rebuild_jobs (
+  id uuid primary key,
+  tenant_id uuid not null,
+  workspace_id uuid not null,
+  knowledge_base_id uuid not null,
+  settings_revision int not null,
+  status text not null check (status in ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
+  requested_by uuid not null,
+  error text null,
+  metadata jsonb not null default '{}',
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  finished_at timestamptz null
 )
 
 milvus_index_profiles (

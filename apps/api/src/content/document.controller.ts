@@ -57,6 +57,32 @@ export class DocumentController {
     }
   }
 
+  @Post(":id/publish")
+  async publish(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.publishDocument(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post(":id/unpublish")
+  async unpublish(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.unpublishDocument(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Delete(":id")
   async delete(
     @Param("id") id: string,

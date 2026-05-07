@@ -51,6 +51,15 @@ type ChunkRow = {
   document_id: string;
   version_id: string;
   ordinal: number;
+  chunk_type: string;
+  parent_chunk_id: string | null;
+  settings_revision: number;
+  start_line: number | null;
+  end_line: number | null;
+  start_char: number | null;
+  end_char: number | null;
+  parent_ordinal: number | null;
+  child_ordinal: number | null;
   heading_path: string[];
   content_text: string;
   content_markdown: string;
@@ -282,6 +291,15 @@ async function readCurrentChunks(
       c.document_id::text,
       c.version_id::text,
       c.ordinal,
+      c.chunk_type,
+      c.parent_chunk_id::text,
+      c.settings_revision,
+      c.start_line,
+      c.end_line,
+      c.start_char,
+      c.end_char,
+      c.parent_ordinal,
+      c.child_ordinal,
       c.heading_path,
       c.content_text,
       c.content_markdown,
@@ -294,9 +312,10 @@ async function readCurrentChunks(
     FROM document_chunks c
     JOIN documents d ON d.id = c.document_id
     JOIN knowledge_bases kb ON kb.id = c.knowledge_base_id
-    WHERE d.status <> 'deleted'
+    WHERE d.status = 'published'
       AND kb.status = 'active'
       AND d.current_version_id = c.version_id
+      AND c.chunk_type IN ('general', 'child')
       ${tenantFilter}
     ORDER BY c.created_at ASC, c.id ASC
     LIMIT ${limit}
@@ -338,7 +357,7 @@ function toMilvusChunkRecord(
     heading_path: row.heading_path ?? [],
     content_text: truncate(row.content_text, 65_535),
     content_markdown: truncate(row.content_markdown, 65_535),
-    metadata: normalizeMetadata(row.metadata, row.ordinal, row.token_count),
+    metadata: normalizeMetadata(row),
     access_principals: accessPrincipals,
     created_at: row.created_at.getTime(),
     updated_at: row.document_updated_at.getTime()
@@ -349,17 +368,22 @@ function toMilvusChunkRecord(
   return record;
 }
 
-function normalizeMetadata(
-  metadata: unknown,
-  ordinal: number,
-  tokenCount: number | null
-): Record<string, unknown> {
+function normalizeMetadata(row: ChunkRow): Record<string, unknown> {
   return {
-    ...(typeof metadata === "object" && metadata !== null
-      ? (metadata as Record<string, unknown>)
+    ...(typeof row.metadata === "object" && row.metadata !== null
+      ? (row.metadata as Record<string, unknown>)
       : {}),
-    ordinal,
-    token_count: tokenCount
+    ordinal: row.ordinal,
+    token_count: row.token_count,
+    chunk_type: row.chunk_type,
+    parent_chunk_id: row.parent_chunk_id,
+    settings_revision: row.settings_revision,
+    start_line: row.start_line,
+    end_line: row.end_line,
+    start_char: row.start_char,
+    end_char: row.end_char,
+    parent_ordinal: row.parent_ordinal,
+    child_ordinal: row.child_ordinal
   };
 }
 

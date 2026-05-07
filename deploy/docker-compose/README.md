@@ -42,11 +42,13 @@ milvus-standalone: 19530 / 9091
 Start from a native Docker environment:
 
 ```bash
-docker compose -f deploy/docker-compose/compose.yml build
-docker compose -f deploy/docker-compose/compose.yml up -d postgres redis minio-assets milvus-etcd milvus-minio milvus-standalone
-docker compose -f deploy/docker-compose/compose.yml run --rm migrate
-docker compose -f deploy/docker-compose/compose.yml run --rm seed-dev
-docker compose -f deploy/docker-compose/compose.yml up -d
+cp .env.example .env
+
+docker compose --env-file .env -f deploy/docker-compose/compose.yml build
+docker compose --env-file .env -f deploy/docker-compose/compose.yml up -d postgres redis minio-assets milvus-etcd milvus-minio milvus-standalone
+docker compose --env-file .env -f deploy/docker-compose/compose.yml run --rm migrate
+docker compose --env-file .env -f deploy/docker-compose/compose.yml run --rm seed-dev
+docker compose --env-file .env -f deploy/docker-compose/compose.yml up -d
 ```
 
 Health checks:
@@ -73,6 +75,7 @@ S3_ACCESS_KEY_ID
 S3_SECRET_ACCESS_KEY
 APP_BASE_URL
 NEXT_PUBLIC_API_BASE_URL
+OPENKB_NODE_IMAGE
 CORS_ORIGINS
 OPENKB_ALLOW_LOCAL_CORS
 AUTH_COOKIE_SECURE

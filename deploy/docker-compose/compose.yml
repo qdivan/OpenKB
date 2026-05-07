@@ -4,6 +4,7 @@ x-openkb-build: &openkb-build
   context: ../..
   dockerfile: Dockerfile
   args:
+    NODE_IMAGE: ${OPENKB_NODE_IMAGE:-node:20-bookworm-slim}
     NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
 
 x-openkb-env: &openkb-env

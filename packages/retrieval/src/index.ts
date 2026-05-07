@@ -25,9 +25,16 @@ export const RETRIEVAL_MODES = [
   "hybrid",
   "hybrid_rerank"
 ] as const;
+export const RETRIEVAL_CONTEXT_MODES = [
+  "chunk",
+  "parent_child",
+  "paragraph_parent_child",
+  "full_text"
+] as const;
 
 export type RetrievalErrorCode = "INVALID_INPUT" | "SEARCH_FAILED" | "SEARCH_INDEX_NOT_READY";
 export type RetrievalMode = (typeof RETRIEVAL_MODES)[number];
+export type RetrievalContextMode = (typeof RETRIEVAL_CONTEXT_MODES)[number];
 
 export class RetrievalError extends Error {
   constructor(
@@ -54,6 +61,7 @@ export type RetrievalSearchInput = {
   knowledge_base_ids?: unknown;
   top_k?: unknown;
   filters?: unknown;
+  context_mode?: unknown;
 };
 
 export type RetrievalAppSearchInput = {
@@ -64,6 +72,7 @@ export type RetrievalAppSearchInput = {
   query: unknown;
   top_k?: unknown;
   filters?: unknown;
+  context_mode?: unknown;
 };
 
 export type RetrievalSearchFilters = {
@@ -76,6 +85,19 @@ export type NormalizedRetrievalSearchInput = {
   topK: number;
   candidateLimit: number;
   filters: RetrievalSearchFilters;
+  requestedContextMode?: RetrievalContextMode;
+};
+
+export type RetrievalChunkContext = {
+  chunk_id: string;
+  chunk_type: string;
+  heading_path: string[];
+  content: string;
+  token_count?: number | null;
+  start_line?: number | null;
+  end_line?: number | null;
+  start_char?: number | null;
+  end_char?: number | null;
 };
 
 export type RetrievalSearchResult = {
@@ -90,11 +112,15 @@ export type RetrievalSearchResult = {
   score: number;
   metadata: Record<string, unknown>;
   updated_at: string;
+  context_mode?: RetrievalContextMode;
+  match_chunk?: RetrievalChunkContext;
+  parent_chunk?: RetrievalChunkContext | null;
 };
 
 export type RetrievalSearchResponse = {
   query: string;
   top_k: number;
+  context_mode?: RetrievalContextMode;
   results: RetrievalSearchResult[];
 };
 
@@ -111,6 +137,13 @@ export type RetrievalServiceOptions = {
   permissions?: PermissionService;
   modelClient?: OpenKBModelClient;
   env?: NodeJS.ProcessEnv;
+};
+
+type ContextualCandidate = MilvusSearchChunkResult & {
+  contextMode: RetrievalContextMode;
+  resultContent: string;
+  matchChunk: RetrievalChunkContext;
+  parentChunk: RetrievalChunkContext | null;
 };
 
 export type RetrievalPackageStatus = {
@@ -185,14 +218,24 @@ export class RetrievalService {
       throw error;
     }
 
-    const allowed = await this.finalPermissionFilter(userId, candidates, normalized.candidateLimit);
-    const ranked = (await this.applyRerank(normalized.query, allowed, mode.effectiveMode)).slice(
-      0,
-      normalized.topK
+    const allowed = await this.finalPermissionFilter(
+      userId,
+      tenantId,
+      candidates,
+      normalized.candidateLimit
     );
-    const paths = await this.resolveDocumentPaths(ranked);
+    const ranked = await this.applyRerank(normalized.query, allowed, mode.effectiveMode);
+    const contextMode = await this.resolveContextMode(
+      tenantId,
+      normalized.knowledgeBaseIds,
+      normalized.requestedContextMode
+    );
+    const contextual = (
+      await this.expandResultContext(ranked, contextMode, normalized.candidateLimit)
+    ).slice(0, normalized.topK);
+    const paths = await this.resolveDocumentPaths(contextual);
 
-    return this.toSearchResponse(normalized.query, normalized.topK, ranked, paths);
+    return this.toSearchResponse(normalized.query, normalized.topK, contextual, paths, contextMode);
   }
 
   async searchAppScope(input: RetrievalAppSearchInput): Promise<RetrievalSearchResponse> {
@@ -244,12 +287,17 @@ export class RetrievalService {
       candidates,
       normalized.candidateLimit
     );
-    const ranked = (await this.applyRerank(normalized.query, allowed, mode.effectiveMode)).slice(
-      0,
-      normalized.topK
+    const ranked = await this.applyRerank(normalized.query, allowed, mode.effectiveMode);
+    const contextMode = await this.resolveContextMode(
+      tenantId,
+      activeKnowledgeBaseIds,
+      normalized.requestedContextMode
     );
-    const paths = await this.resolveDocumentPaths(ranked);
-    return this.toSearchResponse(normalized.query, normalized.topK, ranked, paths);
+    const contextual = (
+      await this.expandResultContext(ranked, contextMode, normalized.candidateLimit)
+    ).slice(0, normalized.topK);
+    const paths = await this.resolveDocumentPaths(contextual);
+    return this.toSearchResponse(normalized.query, normalized.topK, contextual, paths, contextMode);
   }
 
   async resolveSearchMode(tenantId: string): Promise<RetrievalModeResolution> {
@@ -300,12 +348,14 @@ export class RetrievalService {
   private toSearchResponse(
     query: string,
     topK: number,
-    allowed: MilvusSearchChunkResult[],
-    paths: Map<string, string[]>
+    allowed: ContextualCandidate[],
+    paths: Map<string, string[]>,
+    contextMode: RetrievalContextMode
   ): RetrievalSearchResponse {
     return {
       query,
       top_k: topK,
+      context_mode: contextMode,
       results: allowed.map((candidate) => ({
         chunk_id: candidate.chunk_id,
         document_id: candidate.document_id,
@@ -314,24 +364,82 @@ export class RetrievalService {
         title: candidate.title,
         path: paths.get(candidate.document_id) ?? [candidate.title],
         heading_path: candidate.heading_path,
-        content: trimResultContent(candidate.content_text),
+        content: trimResultContent(candidate.resultContent),
         score: candidate.score,
         metadata: candidate.metadata,
-        updated_at: toIsoString(candidate.updated_at)
+        updated_at: toIsoString(candidate.updated_at),
+        context_mode: candidate.contextMode,
+        match_chunk: candidate.matchChunk,
+        parent_chunk: candidate.parentChunk
       }))
     };
   }
 
   private async finalPermissionFilter(
     userId: string,
+    tenantId: string,
     candidates: MilvusSearchChunkResult[],
     limit: number
   ): Promise<MilvusSearchChunkResult[]> {
+    const sortedCandidates = candidates
+      .filter((candidate) => candidate.chunk_id && candidate.document_id)
+      .sort((a, b) => b.score - a.score);
+    if (sortedCandidates.length === 0) {
+      return [];
+    }
+
+    const chunkIds = unique(sortedCandidates.map((candidate) => candidate.chunk_id));
+    const chunks = await this.prisma.documentChunk.findMany({
+      where: { id: { in: chunkIds }, tenant_id: tenantId },
+      select: {
+        id: true,
+        tenant_id: true,
+        document_id: true,
+        knowledge_base_id: true,
+        version_id: true
+      }
+    });
+    const documentIds = unique(chunks.map((chunk) => chunk.document_id));
+    const knowledgeBaseIds = unique(chunks.map((chunk) => chunk.knowledge_base_id));
+    const [documents, knowledgeBases] = await Promise.all([
+      this.prisma.document.findMany({
+        where: { id: { in: documentIds }, tenant_id: tenantId, status: "published" },
+        select: {
+          id: true,
+          knowledge_base_id: true,
+          current_version_id: true,
+          status: true
+        }
+      }),
+      this.prisma.knowledgeBase.findMany({
+        where: { id: { in: knowledgeBaseIds }, tenant_id: tenantId, status: "active" },
+        select: { id: true }
+      })
+    ]);
+
+    const documentById = new Map(documents.map((document) => [document.id, document]));
+    const activeKnowledgeBaseIds = new Set(knowledgeBases.map((knowledgeBase) => knowledgeBase.id));
+    const validChunkIds = new Set(
+      chunks
+        .filter((chunk) => {
+          const document = documentById.get(chunk.document_id);
+          return (
+            document?.status === "published" &&
+            document.current_version_id === chunk.version_id &&
+            document.knowledge_base_id === chunk.knowledge_base_id &&
+            activeKnowledgeBaseIds.has(chunk.knowledge_base_id)
+          );
+        })
+        .map((chunk) => chunk.id)
+    );
     const allowed: MilvusSearchChunkResult[] = [];
     const seenChunkIds = new Set<string>();
 
-    for (const candidate of candidates.sort((a, b) => b.score - a.score)) {
+    for (const candidate of sortedCandidates) {
       if (!candidate.chunk_id || !candidate.document_id || seenChunkIds.has(candidate.chunk_id)) {
+        continue;
+      }
+      if (!validChunkIds.has(candidate.chunk_id)) {
         continue;
       }
 
@@ -504,6 +612,160 @@ export class RetrievalService {
     }
 
     return pathByDocumentId;
+  }
+
+  private async resolveContextMode(
+    tenantId: string,
+    knowledgeBaseIds: string[],
+    requested?: RetrievalContextMode
+  ): Promise<RetrievalContextMode> {
+    if (requested) {
+      return requested;
+    }
+    if (knowledgeBaseIds.length !== 1) {
+      return "chunk";
+    }
+    const setting = await this.prisma.knowledgeBaseChunkSetting.findFirst({
+      where: {
+        tenant_id: tenantId,
+        knowledge_base_id: knowledgeBaseIds[0]
+      },
+      select: { mode: true, parent_mode: true }
+    });
+    if (setting?.mode !== "parent_child") {
+      return "chunk";
+    }
+    return setting.parent_mode === "full_doc" ? "full_text" : "parent_child";
+  }
+
+  private async expandResultContext(
+    candidates: MilvusSearchChunkResult[],
+    contextMode: RetrievalContextMode,
+    limit: number
+  ): Promise<ContextualCandidate[]> {
+    if (candidates.length === 0) {
+      return [];
+    }
+    if (contextMode === "chunk") {
+      return candidates.map((candidate) => this.toContextualCandidate(candidate, contextMode));
+    }
+    if (contextMode === "full_text") {
+      return this.expandFullTextContext(candidates, limit);
+    }
+
+    const parentIds = unique(
+      candidates.flatMap((candidate) => {
+        const parentChunkId = getMetadataString(candidate.metadata, "parent_chunk_id");
+        return parentChunkId ? [parentChunkId] : [];
+      })
+    );
+    if (parentIds.length === 0) {
+      return candidates.map((candidate) => this.toContextualCandidate(candidate, contextMode));
+    }
+
+    const parents = await this.prisma.documentChunk.findMany({
+      where: { id: { in: parentIds }, chunk_type: "parent" }
+    });
+    const parentById = new Map(parents.map((parent) => [parent.id, parent]));
+    const seen = new Set<string>();
+    const expanded: ContextualCandidate[] = [];
+
+    for (const candidate of candidates) {
+      const parentChunkId = getMetadataString(candidate.metadata, "parent_chunk_id");
+      const parent = parentChunkId ? parentById.get(parentChunkId) : undefined;
+      const key = parent?.id ?? candidate.chunk_id;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      expanded.push(this.toContextualCandidate(candidate, contextMode, parent ?? null));
+      if (expanded.length >= limit) {
+        break;
+      }
+    }
+
+    return expanded;
+  }
+
+  private async expandFullTextContext(
+    candidates: MilvusSearchChunkResult[],
+    limit: number
+  ): Promise<ContextualCandidate[]> {
+    const documentIds = unique(candidates.map((candidate) => candidate.document_id));
+    const documents = await this.prisma.document.findMany({
+      where: { id: { in: documentIds }, status: "published" },
+      select: { id: true, current_version_id: true }
+    });
+    const versionIds = unique(
+      documents.flatMap((document) =>
+        document.current_version_id ? [document.current_version_id] : []
+      )
+    );
+    const versions = await this.prisma.documentVersion.findMany({
+      where: { id: { in: versionIds } },
+      select: { id: true, markdown: true }
+    });
+    const versionById = new Map(versions.map((version) => [version.id, version]));
+    const documentById = new Map(documents.map((document) => [document.id, document]));
+    const seenDocuments = new Set<string>();
+    const expanded: ContextualCandidate[] = [];
+
+    for (const candidate of candidates) {
+      if (seenDocuments.has(candidate.document_id)) {
+        continue;
+      }
+      seenDocuments.add(candidate.document_id);
+      const versionId = documentById.get(candidate.document_id)?.current_version_id;
+      const markdown = versionId ? versionById.get(versionId)?.markdown : undefined;
+      expanded.push(this.toContextualCandidate(candidate, "full_text", null, markdown));
+      if (expanded.length >= limit) {
+        break;
+      }
+    }
+
+    return expanded;
+  }
+
+  private toContextualCandidate(
+    candidate: MilvusSearchChunkResult,
+    contextMode: RetrievalContextMode,
+    parent?: {
+      id: string;
+      chunk_type: string;
+      heading_path: string[];
+      content_text: string;
+      token_count: number | null;
+      start_line: number | null;
+      end_line: number | null;
+      start_char: number | null;
+      end_char: number | null;
+    } | null,
+    fullText?: string
+  ): ContextualCandidate {
+    const matchChunk = toRetrievalChunkContext(candidate);
+    const parentChunk = parent ? toDatabaseChunkContext(parent) : null;
+    const resultContent =
+      contextMode === "full_text"
+        ? (fullText ?? candidate.content_text)
+        : parentChunk
+          ? parentChunk.content
+          : candidate.content_text;
+    return {
+      ...candidate,
+      metadata: {
+        ...candidate.metadata,
+        openkb_retrieval: {
+          ...toRecord(candidate.metadata.openkb_retrieval),
+          context_mode: contextMode,
+          match_chunk_id: candidate.chunk_id,
+          parent_chunk_id: parentChunk?.chunk_id ?? null
+        }
+      },
+      contextMode,
+      resultContent,
+      matchChunk,
+      parentChunk
+    };
   }
 
   private async embedQueryIfNeeded(
@@ -717,7 +979,8 @@ export function normalizeRetrievalSearchInput(
     knowledgeBaseIds,
     topK,
     candidateLimit: calculateCandidateLimit(topK),
-    filters
+    filters,
+    requestedContextMode: normalizeRetrievalContextMode(input.context_mode)
   };
 }
 
@@ -737,7 +1000,8 @@ export function normalizeRetrievalAppSearchInput(
     knowledgeBaseIds,
     topK,
     candidateLimit: calculateCandidateLimit(topK),
-    filters
+    filters,
+    requestedContextMode: normalizeRetrievalContextMode(input.context_mode)
   };
 }
 
@@ -779,6 +1043,16 @@ function normalizeQuery(value: unknown): string {
   }
 
   return query;
+}
+
+export function normalizeRetrievalContextMode(value: unknown): RetrievalContextMode | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (RETRIEVAL_CONTEXT_MODES.includes(value as RetrievalContextMode)) {
+    return value as RetrievalContextMode;
+  }
+  throw new RetrievalError("INVALID_INPUT", "context_mode is not supported.", 400);
 }
 
 function normalizeStringArray(value: unknown, fieldName: string): string[] {
@@ -825,7 +1099,7 @@ function unique(values: string[]): string[] {
 
 function trimResultContent(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length > 600 ? `${compact.slice(0, 597)}...` : compact;
+  return compact.length > 4000 ? `${compact.slice(0, 3997)}...` : compact;
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -837,4 +1111,52 @@ function toRecord(value: unknown): Record<string, unknown> {
 function toIsoString(epochMs: number): string {
   const date = new Date(epochMs);
   return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
+}
+
+function toRetrievalChunkContext(candidate: MilvusSearchChunkResult): RetrievalChunkContext {
+  return {
+    chunk_id: candidate.chunk_id,
+    chunk_type: getMetadataString(candidate.metadata, "chunk_type") ?? "general",
+    heading_path: candidate.heading_path,
+    content: trimResultContent(candidate.content_text),
+    token_count: getMetadataNumber(candidate.metadata, "token_count"),
+    start_line: getMetadataNumber(candidate.metadata, "start_line"),
+    end_line: getMetadataNumber(candidate.metadata, "end_line"),
+    start_char: getMetadataNumber(candidate.metadata, "start_char"),
+    end_char: getMetadataNumber(candidate.metadata, "end_char")
+  };
+}
+
+function toDatabaseChunkContext(chunk: {
+  id: string;
+  chunk_type: string;
+  heading_path: string[];
+  content_text: string;
+  token_count: number | null;
+  start_line: number | null;
+  end_line: number | null;
+  start_char: number | null;
+  end_char: number | null;
+}): RetrievalChunkContext {
+  return {
+    chunk_id: chunk.id,
+    chunk_type: chunk.chunk_type,
+    heading_path: chunk.heading_path,
+    content: trimResultContent(chunk.content_text),
+    token_count: chunk.token_count,
+    start_line: chunk.start_line,
+    end_line: chunk.end_line,
+    start_char: chunk.start_char,
+    end_char: chunk.end_char
+  };
+}
+
+function getMetadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value ? value : null;
+}
+
+function getMetadataNumber(metadata: Record<string, unknown>, key: string): number | null {
+  const value = metadata[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

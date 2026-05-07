@@ -29,7 +29,8 @@ export class SearchController {
         query: input.query,
         knowledge_base_ids: input.knowledge_base_ids,
         top_k: input.top_k,
-        filters: input.filters
+        filters: input.filters,
+        context_mode: input.context_mode
       });
     } catch (error) {
       return sendJsonError(error, reply);

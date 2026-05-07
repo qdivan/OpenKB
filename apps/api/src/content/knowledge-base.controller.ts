@@ -58,6 +58,101 @@ export class KnowledgeBaseController {
     }
   }
 
+  @Get(":id/overview")
+  async overview(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.content.getKnowledgeBaseOverview(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get(":id/chunk-settings")
+  async chunkSettings(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.getChunkSettings(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Put(":id/chunk-settings")
+  async updateChunkSettings(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.updateChunkSettings(
+        getSessionToken(request, this.auth),
+        id,
+        body as never
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post(":id/chunk-preview")
+  async chunkPreview(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.previewChunks(
+        getSessionToken(request, this.auth),
+        id,
+        body as never
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get(":id/chunks")
+  async chunks(
+    @Param("id") id: string,
+    @Query("document_id") documentId: string | undefined,
+    @Query("type") type: string | undefined,
+    @Query("limit") limit: string | undefined,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.content.listKnowledgeBaseChunks(getSessionToken(request, this.auth), id, {
+        document_id: documentId,
+        type,
+        limit
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post(":id/chunk-rebuild-jobs")
+  async createChunkRebuildJob(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.content.createChunkRebuildJob(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Put(":id")
   async update(
     @Param("id") id: string,

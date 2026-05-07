@@ -51,16 +51,21 @@ Content-Type: application/json
         "document_id": "doc_1",
         "chunk_id": "chunk_1",
         "knowledge_base_id": "kb_1",
+        "context_mode": "parent_child",
+        "match_chunk_id": "chunk_1",
+        "parent_chunk_id": "parent_chunk_1",
         "path": "/OpenKB Demo/Getting Started/MCP 接入说明",
         "url": "https://kb.example.com/app/kb/kb_1/docs/doc_1",
-        "raw_score": 1.42
+        "raw_score": 1.42,
+        "rerank_score": 0.87,
+        "rerank_failed": false
       }
     }
   ]
 }
 ```
 
-`metadata` 必须是 object，不能是 `null`。`score` 返回给 Dify 前 clamp 到 `[0, 1]`，原始分数放入 `metadata.raw_score`。
+`metadata` 必须是 object，不能是 `null`。`score` 返回给 Dify 前 clamp 到 `[0, 1]`，原始分数放入 `metadata.raw_score`。启用父子或全文上下文时，`content` 返回父块/全文安全截断内容，`metadata.match_chunk_id` 保留实际命中的 child/general chunk。
 
 ## 3. API Key 范围
 
@@ -93,6 +98,7 @@ validate bearer api key
   -> RetrievalService bm25/dense/hybrid search
   -> PostgreSQL final scope check
   -> rerank authorized candidates if active
+  -> parent/full-text context expansion inside scoped KB
   -> metadata_condition post-filter
   -> return Dify records
 ```

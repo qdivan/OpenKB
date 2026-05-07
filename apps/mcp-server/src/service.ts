@@ -92,6 +92,7 @@ export class McpContentService {
       knowledge_base_ids?: unknown;
       top_k?: unknown;
       filters?: unknown;
+      context_mode?: unknown;
     },
     meta: McpRequestMeta = {}
   ) {
@@ -103,7 +104,8 @@ export class McpContentService {
       query: input.query,
       knowledge_base_ids: input.knowledge_base_ids,
       top_k: topK,
-      filters: input.filters
+      filters: input.filters,
+      context_mode: input.context_mode
     });
 
     await this.audit(context, "mcp.tool.call", {

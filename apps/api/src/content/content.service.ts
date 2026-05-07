@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { AuthService, type AuthenticatedUser } from "@openkb/auth";
@@ -15,12 +15,18 @@ import {
 } from "@openkb/db";
 import { normalizeMarkdownSource, validateMarkdownSource } from "@openkb/editor";
 import {
+  chunkMarkdownForIndex,
+  type HierarchicalMarkdownChunk,
+  type MarkdownChunkingSettings
+} from "@openkb/markdown";
+import {
   PermissionService,
   type ContentObjectType,
   type PermissionObjectType
 } from "@openkb/permissions";
 
 import { ContentError } from "./errors";
+import { toImportJobDto } from "./import.service";
 
 type CreateWorkspaceInput = {
   name?: string;
@@ -44,6 +50,21 @@ type UpdateKnowledgeBaseInput = {
   slug?: string;
   visibility?: string;
   status?: string;
+};
+
+type UpdateChunkSettingsInput = {
+  mode?: string;
+  parent_mode?: string;
+  parent_delimiter?: string;
+  child_delimiter?: string;
+  parent_max_characters?: number;
+  child_max_characters?: number;
+  child_overlap_characters?: number;
+};
+
+type ChunkPreviewInput = UpdateChunkSettingsInput & {
+  markdown?: string;
+  document_id?: string;
 };
 
 type CreateDocumentInput = {
@@ -264,6 +285,16 @@ export class ContentService {
           created_at: now
         }
       });
+      await tx.knowledgeBaseChunkSetting.create({
+        data: {
+          tenant_id: me.tenantId,
+          workspace_id: created.workspace_id,
+          knowledge_base_id: created.id,
+          mode: "parent_child",
+          parent_mode: "paragraph",
+          updated_by: me.user.id
+        }
+      });
       await this.writeAuditLog(tx, me, "knowledge_base.create", "knowledge_base", created.id);
       return created;
     });
@@ -328,6 +359,285 @@ export class ContentService {
     });
 
     return documents.map(toDocumentDto);
+  }
+
+  async getKnowledgeBaseOverview(sessionToken: string | null, knowledgeBaseId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "knowledge_base", knowledgeBaseId);
+    const knowledgeBase = await this.prisma.knowledgeBase.findUnique({
+      where: { id: knowledgeBaseId }
+    });
+    if (!knowledgeBase) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Knowledge base was not found.", 404);
+    }
+
+    const [
+      documents,
+      currentDocuments,
+      latestImportJobs,
+      latestChunkRebuildJob,
+      latestIndexRebuildJob,
+      settings
+    ] = await Promise.all([
+      this.prisma.document.groupBy({
+        by: ["type", "status"],
+        where: { knowledge_base_id: knowledgeBaseId, status: { not: "deleted" } },
+        _count: { _all: true }
+      }),
+      this.prisma.document.findMany({
+        where: { knowledge_base_id: knowledgeBaseId, status: { not: "deleted" } },
+        select: { current_version_id: true, status: true, updated_at: true }
+      }),
+      this.prisma.importJob.findMany({
+        where: { knowledge_base_id: knowledgeBaseId },
+        orderBy: { created_at: "desc" },
+        take: 5
+      }),
+      this.prisma.chunkRebuildJob.findFirst({
+        where: { knowledge_base_id: knowledgeBaseId },
+        orderBy: { created_at: "desc" }
+      }),
+      this.prisma.indexRebuildJob.findFirst({
+        where: { OR: [{ tenant_id: knowledgeBase.tenant_id }, { tenant_id: null }] },
+        orderBy: { started_at: "desc" }
+      }),
+      this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase)
+    ]);
+
+    const currentVersionIds = currentDocuments.flatMap((document) =>
+      document.current_version_id ? [document.current_version_id] : []
+    );
+    const publishedVersionIds = currentDocuments.flatMap((document) =>
+      document.status === "published" && document.current_version_id
+        ? [document.current_version_id]
+        : []
+    );
+    const [chunksByType, staleChunkCount, latestPublishedSearchableChunk] = await Promise.all([
+      this.prisma.documentChunk.groupBy({
+        by: ["chunk_type"],
+        where: { knowledge_base_id: knowledgeBaseId, version_id: { in: currentVersionIds } },
+        _count: { _all: true }
+      }),
+      this.prisma.documentChunk.count({
+        where: {
+          knowledge_base_id: knowledgeBaseId,
+          version_id: { in: currentVersionIds },
+          settings_revision: { lt: settings.revision }
+        }
+      }),
+      this.prisma.documentChunk.findFirst({
+        where: {
+          knowledge_base_id: knowledgeBaseId,
+          version_id: { in: publishedVersionIds },
+          chunk_type: { in: ["general", "child"] }
+        },
+        orderBy: { created_at: "desc" },
+        select: { created_at: true }
+      })
+    ]);
+    const latestPublishedDocumentAt =
+      currentDocuments
+        .filter((document) => document.status === "published")
+        .map((document) => document.updated_at)
+        .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+    const latestIndexAt =
+      latestIndexRebuildJob?.status === "succeeded"
+        ? (latestIndexRebuildJob.finished_at ?? latestIndexRebuildJob.started_at)
+        : null;
+    const newestPublishedIndexInputAt =
+      [latestPublishedSearchableChunk?.created_at ?? null, latestPublishedDocumentAt]
+        .filter((value): value is Date => Boolean(value))
+        .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+    const needsIndexRebuild =
+      staleChunkCount > 0 ||
+      Boolean(
+        newestPublishedIndexInputAt &&
+        (!latestIndexAt || newestPublishedIndexInputAt > latestIndexAt)
+      );
+
+    return {
+      knowledge_base: toKnowledgeBaseDto(knowledgeBase),
+      documents: {
+        total: sumGroupCounts(documents),
+        pages: sumGroupCounts(documents.filter((item) => item.type === "page")),
+        folders: sumGroupCounts(documents.filter((item) => item.type === "folder")),
+        published: sumGroupCounts(documents.filter((item) => item.status === "published")),
+        draft: sumGroupCounts(documents.filter((item) => item.status === "draft"))
+      },
+      chunks: {
+        total: sumGroupCounts(chunksByType),
+        general: sumGroupCounts(chunksByType.filter((item) => item.chunk_type === "general")),
+        parent: sumGroupCounts(chunksByType.filter((item) => item.chunk_type === "parent")),
+        child: sumGroupCounts(chunksByType.filter((item) => item.chunk_type === "child")),
+        stale: staleChunkCount
+      },
+      chunk_settings: toChunkSettingsDto(settings),
+      latest_import_jobs: latestImportJobs.map(toImportJobDto),
+      latest_chunk_rebuild_job: latestChunkRebuildJob
+        ? toChunkRebuildJobDto(latestChunkRebuildJob)
+        : null,
+      latest_index_rebuild_job: latestIndexRebuildJob
+        ? {
+            id: latestIndexRebuildJob.id,
+            tenant_id: latestIndexRebuildJob.tenant_id,
+            target_collection: latestIndexRebuildJob.target_collection,
+            target_alias: latestIndexRebuildJob.target_alias,
+            status: latestIndexRebuildJob.status,
+            started_by: latestIndexRebuildJob.started_by,
+            started_at: latestIndexRebuildJob.started_at.toISOString(),
+            finished_at: latestIndexRebuildJob.finished_at
+              ? latestIndexRebuildJob.finished_at.toISOString()
+              : null,
+            error: latestIndexRebuildJob.error
+          }
+        : null,
+      needs_chunk_rebuild: staleChunkCount > 0,
+      needs_index_rebuild: needsIndexRebuild
+    };
+  }
+
+  async getChunkSettings(sessionToken: string | null, knowledgeBaseId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "knowledge_base", knowledgeBaseId);
+    const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
+    const settings = await this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase);
+    return toChunkSettingsDto(settings);
+  }
+
+  async updateChunkSettings(
+    sessionToken: string | null,
+    knowledgeBaseId: string,
+    input: UpdateChunkSettingsInput
+  ) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanManage(me.user.id, "knowledge_base", knowledgeBaseId);
+    rejectForbiddenChunkSettingKeys(input);
+    const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
+    const current = await this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase);
+    const patch = normalizeChunkSettingsInput(input);
+    const updated = await this.prisma.knowledgeBaseChunkSetting.update({
+      where: { knowledge_base_id: knowledgeBaseId },
+      data: {
+        ...patch,
+        revision: current.revision + 1,
+        updated_by: me.user.id,
+        updated_at: new Date()
+      }
+    });
+    await this.writeAuditLog(
+      this.prisma,
+      me,
+      "knowledge_base.chunk_settings.update",
+      "knowledge_base",
+      knowledgeBaseId
+    );
+    return toChunkSettingsDto(updated);
+  }
+
+  async previewChunks(
+    sessionToken: string | null,
+    knowledgeBaseId: string,
+    input: ChunkPreviewInput
+  ) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "knowledge_base", knowledgeBaseId);
+    rejectForbiddenChunkSettingKeys(input);
+    const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
+    const current = await this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase);
+    const patch = normalizeChunkSettingsInput(input);
+    let markdown = typeof input.markdown === "string" ? input.markdown : "";
+    if (!markdown && input.document_id) {
+      await this.permissions.requireCanRead(me.user.id, "document", input.document_id);
+      const document = await this.prisma.document.findUnique({ where: { id: input.document_id } });
+      if (
+        !document ||
+        document.knowledge_base_id !== knowledgeBaseId ||
+        !document.current_version_id
+      ) {
+        throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+      }
+      const version = await this.prisma.documentVersion.findUnique({
+        where: { id: document.current_version_id }
+      });
+      markdown = version?.markdown ?? "";
+    }
+    const chunks = chunkMarkdownForIndex(markdown, {
+      ...toMarkdownChunkingSettings({ ...current, ...patch, revision: current.revision }),
+      settings_revision: current.revision
+    }).slice(0, 80);
+    return { chunks: chunks.map(toPreviewChunkDto), total: chunks.length };
+  }
+
+  async listKnowledgeBaseChunks(
+    sessionToken: string | null,
+    knowledgeBaseId: string,
+    input: { document_id?: string; type?: string; limit?: string | number | undefined }
+  ) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "knowledge_base", knowledgeBaseId);
+    const type = normalizeOptionalChunkType(input.type);
+    const limit = clampNumber(input.limit, 100, 1, 500);
+    const currentDocuments = await this.prisma.document.findMany({
+      where: {
+        knowledge_base_id: knowledgeBaseId,
+        status: { not: "deleted" },
+        ...(input.document_id ? { id: input.document_id } : {})
+      },
+      select: { current_version_id: true }
+    });
+    const currentVersionIds = currentDocuments.flatMap((document) =>
+      document.current_version_id ? [document.current_version_id] : []
+    );
+    if (currentVersionIds.length === 0) {
+      return [];
+    }
+    const chunks = await this.prisma.documentChunk.findMany({
+      where: {
+        knowledge_base_id: knowledgeBaseId,
+        version_id: { in: currentVersionIds },
+        ...(input.document_id ? { document_id: input.document_id } : {}),
+        ...(type ? { chunk_type: type } : {})
+      },
+      orderBy: [{ document_id: "asc" }, { ordinal: "asc" }],
+      take: limit
+    });
+    return chunks.map(toDocumentChunkDto);
+  }
+
+  async createChunkRebuildJob(sessionToken: string | null, knowledgeBaseId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanManage(me.user.id, "knowledge_base", knowledgeBaseId);
+    const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
+    const settings = await this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase);
+    const job = await this.prisma.chunkRebuildJob.create({
+      data: {
+        tenant_id: knowledgeBase.tenant_id,
+        workspace_id: knowledgeBase.workspace_id,
+        knowledge_base_id: knowledgeBase.id,
+        settings_revision: settings.revision,
+        status: "pending",
+        requested_by: me.user.id,
+        metadata: {}
+      }
+    });
+    await this.writeAuditLog(
+      this.prisma,
+      me,
+      "chunk_rebuild_job.create",
+      "chunk_rebuild_job",
+      job.id
+    );
+    return toChunkRebuildJobDto(job);
+  }
+
+  async getChunkRebuildJob(sessionToken: string | null, jobId: string) {
+    const me = await this.requireMe(sessionToken);
+    const job = await this.prisma.chunkRebuildJob.findUnique({ where: { id: jobId } });
+    if (!job) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Chunk rebuild job was not found.", 404);
+    }
+    await this.permissions.requireCanRead(me.user.id, "knowledge_base", job.knowledge_base_id);
+    return toChunkRebuildJobDto(job);
   }
 
   async createDocument(sessionToken: string | null, input: CreateDocumentInput) {
@@ -497,6 +807,52 @@ export class ContentService {
       await this.writeAuditLog(tx, me, "document.update", "document", documentId);
     });
 
+    return this.getDocument(sessionToken, documentId);
+  }
+
+  async publishDocument(sessionToken: string | null, documentId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanEdit(me.user.id, "document", documentId);
+    const document = await this.prisma.document.findUnique({ where: { id: documentId } });
+    if (!document || document.status === "deleted") {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    if (document.type !== "page" || !document.current_version_id) {
+      throw new ContentError(
+        "INVALID_INPUT",
+        "Only page documents with content can be published.",
+        400
+      );
+    }
+    await this.ensureChunksForDocumentVersion(this.prisma, me, document.id);
+    await this.prisma.document.update({
+      where: { id: documentId },
+      data: {
+        status: "published",
+        updated_by: me.user.id,
+        updated_at: new Date()
+      }
+    });
+    await this.writeAuditLog(this.prisma, me, "document.publish", "document", documentId);
+    return this.getDocument(sessionToken, documentId);
+  }
+
+  async unpublishDocument(sessionToken: string | null, documentId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanEdit(me.user.id, "document", documentId);
+    const document = await this.prisma.document.findUnique({ where: { id: documentId } });
+    if (!document || document.status === "deleted") {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    await this.prisma.document.update({
+      where: { id: documentId },
+      data: {
+        status: "draft",
+        updated_by: me.user.id,
+        updated_at: new Date()
+      }
+    });
+    await this.writeAuditLog(this.prisma, me, "document.unpublish", "document", documentId);
     return this.getDocument(sessionToken, documentId);
   }
 
@@ -895,6 +1251,7 @@ export class ContentService {
         created_at: now
       }
     });
+    await this.replaceChunksForDocumentVersion(tx, me, documentId, version.id, markdown, now);
 
     return tx.document.update({
       where: { id: documentId },
@@ -904,6 +1261,129 @@ export class ContentService {
         updated_at: now
       }
     });
+  }
+
+  private async ensureChunksForDocumentVersion(
+    tx: Prisma.TransactionClient | PrismaClient,
+    me: AuthenticatedUser,
+    documentId: string
+  ) {
+    const document = await tx.document.findUnique({ where: { id: documentId } });
+    if (!document?.current_version_id) {
+      return;
+    }
+    const existing = await tx.documentChunk.count({
+      where: { version_id: document.current_version_id }
+    });
+    if (existing > 0) {
+      return;
+    }
+    const version = await tx.documentVersion.findUnique({
+      where: { id: document.current_version_id }
+    });
+    if (!version) {
+      return;
+    }
+    await this.replaceChunksForDocumentVersion(
+      tx,
+      me,
+      documentId,
+      version.id,
+      version.markdown,
+      new Date()
+    );
+  }
+
+  private async replaceChunksForDocumentVersion(
+    tx: Prisma.TransactionClient | PrismaClient,
+    me: AuthenticatedUser,
+    documentId: string,
+    versionId: string,
+    markdown: string,
+    now: Date
+  ) {
+    const document = await tx.document.findUnique({ where: { id: documentId } });
+    if (!document || document.type !== "page") {
+      return;
+    }
+    const knowledgeBase = await tx.knowledgeBase.findUnique({
+      where: { id: document.knowledge_base_id }
+    });
+    if (!knowledgeBase) {
+      return;
+    }
+    const settings = await this.getOrCreateChunkSettings(tx, me, knowledgeBase);
+    const rows = materializeDocumentChunks(
+      chunkMarkdownForIndex(markdown, toMarkdownChunkingSettings(settings))
+    ).map((chunk) => ({
+      id: chunk.id,
+      tenant_id: document.tenant_id,
+      workspace_id: document.workspace_id,
+      knowledge_base_id: document.knowledge_base_id,
+      document_id: document.id,
+      version_id: versionId,
+      ordinal: chunk.ordinal,
+      chunk_type: chunk.chunk_type,
+      parent_chunk_id: chunk.parent_chunk_id,
+      settings_revision: settings.revision,
+      start_line: chunk.start_line,
+      end_line: chunk.end_line,
+      start_char: chunk.start_char,
+      end_char: chunk.end_char,
+      parent_ordinal: chunk.parent_ordinal,
+      child_ordinal: chunk.child_ordinal,
+      heading_path: chunk.heading_path,
+      content_text: chunk.content_text,
+      content_markdown: chunk.content_markdown,
+      token_count: chunk.token_count,
+      metadata: chunk.metadata as Prisma.InputJsonValue,
+      created_at: now
+    }));
+
+    await tx.documentChunk.deleteMany({ where: { version_id: versionId } });
+    if (rows.length > 0) {
+      await tx.documentChunk.createMany({ data: rows });
+    }
+  }
+
+  private async getOrCreateChunkSettings(
+    tx: Prisma.TransactionClient | PrismaClient,
+    me: AuthenticatedUser,
+    knowledgeBase: {
+      id: string;
+      tenant_id: string;
+      workspace_id: string;
+    }
+  ) {
+    const existing = await tx.knowledgeBaseChunkSetting.findUnique({
+      where: { knowledge_base_id: knowledgeBase.id }
+    });
+    if (existing) {
+      return existing;
+    }
+    const legacyChunkCount = await tx.documentChunk.count({
+      where: { knowledge_base_id: knowledgeBase.id, chunk_type: "general" }
+    });
+    return tx.knowledgeBaseChunkSetting.create({
+      data: {
+        tenant_id: knowledgeBase.tenant_id,
+        workspace_id: knowledgeBase.workspace_id,
+        knowledge_base_id: knowledgeBase.id,
+        mode: legacyChunkCount > 0 ? "general" : "parent_child",
+        parent_mode: "paragraph",
+        updated_by: me.user.id
+      }
+    });
+  }
+
+  private async requireKnowledgeBase(knowledgeBaseId: string) {
+    const knowledgeBase = await this.prisma.knowledgeBase.findUnique({
+      where: { id: knowledgeBaseId }
+    });
+    if (!knowledgeBase || knowledgeBase.status !== "active") {
+      throw new ContentError("OBJECT_NOT_FOUND", "Knowledge base was not found.", 404);
+    }
+    return knowledgeBase;
   }
 
   private async getCollaboratorOrThrow(collaboratorId: string) {
@@ -1349,4 +1829,270 @@ function toShareLinkDto(shareLink: {
     created_by: shareLink.created_by,
     created_at: shareLink.created_at.toISOString()
   };
+}
+
+type MaterializedChunk = HierarchicalMarkdownChunk & {
+  id: string;
+  parent_chunk_id: string | null;
+};
+
+function materializeDocumentChunks(chunks: HierarchicalMarkdownChunk[]): MaterializedChunk[] {
+  const parentIdByLocalId = new Map<string, string>();
+  const ids = chunks.map(() => randomUUID());
+  chunks.forEach((chunk, index) => {
+    if (chunk.chunk_type === "parent" && chunk.parent_local_id) {
+      parentIdByLocalId.set(chunk.parent_local_id, ids[index]!);
+    }
+  });
+
+  return chunks.map((chunk, index) => ({
+    ...chunk,
+    id: ids[index]!,
+    parent_chunk_id:
+      chunk.chunk_type === "child" && chunk.parent_local_id
+        ? (parentIdByLocalId.get(chunk.parent_local_id) ?? null)
+        : null
+  }));
+}
+
+function toMarkdownChunkingSettings(input: {
+  mode: string;
+  parent_mode: string;
+  parent_delimiter: string;
+  child_delimiter: string;
+  parent_max_characters: number;
+  child_max_characters: number;
+  child_overlap_characters: number;
+  revision: number;
+}): MarkdownChunkingSettings {
+  return {
+    mode: input.mode === "general" ? "general" : "parent_child",
+    parent_mode: input.parent_mode === "full_doc" ? "full_doc" : "paragraph",
+    parent_delimiter: input.parent_delimiter,
+    child_delimiter: input.child_delimiter,
+    parent_max_characters: input.parent_max_characters,
+    child_max_characters: input.child_max_characters,
+    child_overlap_characters: input.child_overlap_characters,
+    settings_revision: input.revision
+  };
+}
+
+function normalizeChunkSettingsInput(input: UpdateChunkSettingsInput) {
+  const next: {
+    mode?: string;
+    parent_mode?: string;
+    parent_delimiter?: string;
+    child_delimiter?: string;
+    parent_max_characters?: number;
+    child_max_characters?: number;
+    child_overlap_characters?: number;
+  } = {};
+  if (input.mode !== undefined) {
+    next.mode =
+      input.mode === "general" || input.mode === "parent_child" ? input.mode : failInput();
+  }
+  if (input.parent_mode !== undefined) {
+    next.parent_mode =
+      input.parent_mode === "paragraph" || input.parent_mode === "full_doc"
+        ? input.parent_mode
+        : failInput();
+  }
+  if (input.parent_delimiter !== undefined) {
+    next.parent_delimiter = requireShortText(input.parent_delimiter, "parent_delimiter");
+  }
+  if (input.child_delimiter !== undefined) {
+    next.child_delimiter = requireShortText(input.child_delimiter, "child_delimiter");
+  }
+  if (input.parent_max_characters !== undefined) {
+    next.parent_max_characters = clampNumber(input.parent_max_characters, 4000, 200, 65_535);
+  }
+  if (input.child_max_characters !== undefined) {
+    next.child_max_characters = clampNumber(input.child_max_characters, 900, 100, 65_535);
+  }
+  if (input.child_overlap_characters !== undefined) {
+    next.child_overlap_characters = clampNumber(input.child_overlap_characters, 120, 0, 10_000);
+  }
+  const childMax = next.child_max_characters ?? input.child_max_characters;
+  const overlap = next.child_overlap_characters ?? input.child_overlap_characters;
+  if (typeof childMax === "number" && typeof overlap === "number" && overlap >= childMax) {
+    throw new ContentError(
+      "INVALID_INPUT",
+      "child_overlap_characters must be lower than child_max_characters.",
+      400
+    );
+  }
+  return next;
+}
+
+function rejectForbiddenChunkSettingKeys(value: unknown): void {
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+  const forbidden = Object.keys(value as Record<string, unknown>).find((key) =>
+    /(model|provider|embedding|rerank|endpoint|api[_-]?key|secret|token)/i.test(key)
+  );
+  if (forbidden) {
+    throw new ContentError("INVALID_INPUT", `Chunk settings cannot include ${forbidden}.`, 400);
+  }
+}
+
+function normalizeOptionalChunkType(value: unknown): "general" | "parent" | "child" | null {
+  return value === "general" || value === "parent" || value === "child" ? value : null;
+}
+
+function toChunkSettingsDto(settings: {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  mode: string;
+  parent_mode: string;
+  parent_delimiter: string;
+  child_delimiter: string;
+  parent_max_characters: number;
+  child_max_characters: number;
+  child_overlap_characters: number;
+  revision: number;
+  updated_by: string;
+  created_at: Date;
+  updated_at: Date;
+}) {
+  return {
+    id: settings.id,
+    tenant_id: settings.tenant_id,
+    workspace_id: settings.workspace_id,
+    knowledge_base_id: settings.knowledge_base_id,
+    mode: settings.mode,
+    parent_mode: settings.parent_mode,
+    parent_delimiter: settings.parent_delimiter,
+    child_delimiter: settings.child_delimiter,
+    parent_max_characters: settings.parent_max_characters,
+    child_max_characters: settings.child_max_characters,
+    child_overlap_characters: settings.child_overlap_characters,
+    revision: settings.revision,
+    updated_by: settings.updated_by,
+    created_at: settings.created_at.toISOString(),
+    updated_at: settings.updated_at.toISOString()
+  };
+}
+
+function toChunkRebuildJobDto(job: {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  settings_revision: number;
+  status: string;
+  requested_by: string;
+  error: string | null;
+  metadata: Prisma.JsonValue;
+  created_at: Date;
+  updated_at: Date;
+  finished_at: Date | null;
+}) {
+  return {
+    id: job.id,
+    tenant_id: job.tenant_id,
+    workspace_id: job.workspace_id,
+    knowledge_base_id: job.knowledge_base_id,
+    settings_revision: job.settings_revision,
+    status: job.status,
+    requested_by: job.requested_by,
+    error: job.error,
+    metadata: job.metadata,
+    created_at: job.created_at.toISOString(),
+    updated_at: job.updated_at.toISOString(),
+    finished_at: job.finished_at ? job.finished_at.toISOString() : null
+  };
+}
+
+function toDocumentChunkDto(chunk: {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  document_id: string;
+  version_id: string;
+  ordinal: number;
+  chunk_type: string;
+  parent_chunk_id: string | null;
+  settings_revision: number;
+  start_line: number | null;
+  end_line: number | null;
+  start_char: number | null;
+  end_char: number | null;
+  parent_ordinal: number | null;
+  child_ordinal: number | null;
+  heading_path: string[];
+  content_text: string;
+  content_markdown: string;
+  token_count: number | null;
+  metadata: Prisma.JsonValue;
+  created_at: Date;
+}) {
+  return {
+    id: chunk.id,
+    tenant_id: chunk.tenant_id,
+    workspace_id: chunk.workspace_id,
+    knowledge_base_id: chunk.knowledge_base_id,
+    document_id: chunk.document_id,
+    version_id: chunk.version_id,
+    ordinal: chunk.ordinal,
+    chunk_type: chunk.chunk_type,
+    parent_chunk_id: chunk.parent_chunk_id,
+    settings_revision: chunk.settings_revision,
+    start_line: chunk.start_line,
+    end_line: chunk.end_line,
+    start_char: chunk.start_char,
+    end_char: chunk.end_char,
+    parent_ordinal: chunk.parent_ordinal,
+    child_ordinal: chunk.child_ordinal,
+    heading_path: chunk.heading_path,
+    content_text: chunk.content_text,
+    content_markdown: chunk.content_markdown,
+    token_count: chunk.token_count,
+    metadata: chunk.metadata,
+    created_at: chunk.created_at.toISOString()
+  };
+}
+
+function toPreviewChunkDto(chunk: HierarchicalMarkdownChunk) {
+  return {
+    ordinal: chunk.ordinal,
+    chunk_type: chunk.chunk_type,
+    parent_ordinal: chunk.parent_ordinal,
+    child_ordinal: chunk.child_ordinal,
+    heading_path: chunk.heading_path,
+    content_text: chunk.content_text,
+    content_markdown: chunk.content_markdown,
+    token_count: chunk.token_count,
+    start_line: chunk.start_line,
+    end_line: chunk.end_line,
+    start_char: chunk.start_char,
+    end_char: chunk.end_char,
+    metadata: chunk.metadata
+  };
+}
+
+function sumGroupCounts(items: Array<{ _count: { _all: number } }>): number {
+  return items.reduce((sum, item) => sum + item._count._all, 0);
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.trunc(number), min), max);
+}
+
+function requireShortText(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length > 64) {
+    throw new ContentError("INVALID_INPUT", `${field} is invalid.`, 400);
+  }
+  return value;
+}
+
+function failInput(): never {
+  throw new ContentError("INVALID_INPUT", "Chunk settings are invalid.", 400);
 }

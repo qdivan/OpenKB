@@ -154,6 +154,7 @@ export class DifyAdapterService {
     const url = this.config.resultBaseUrl
       ? `${this.config.resultBaseUrl}/app/kb/${result.knowledge_base_id}/docs/${result.document_id}`
       : `/app/kb/${result.knowledge_base_id}/docs/${result.document_id}`;
+    const retrievalMetadata = toRecord(result.metadata.openkb_retrieval);
     return {
       content: result.content,
       score,
@@ -165,10 +166,21 @@ export class DifyAdapterService {
         knowledge_base_id: result.knowledge_base_id,
         workspace_id: result.workspace_id,
         heading_path: result.heading_path,
+        context_mode: result.context_mode ?? retrievalMetadata.context_mode ?? null,
+        match_chunk_id: result.match_chunk?.chunk_id ?? result.chunk_id,
+        parent_chunk_id: result.parent_chunk?.chunk_id ?? null,
         path,
         url,
         updated_at: result.updated_at,
-        raw_score: result.score
+        raw_score:
+          typeof retrievalMetadata.raw_score === "number"
+            ? retrievalMetadata.raw_score
+            : result.score,
+        rerank_score:
+          typeof retrievalMetadata.rerank_score === "number"
+            ? retrievalMetadata.rerank_score
+            : null,
+        rerank_failed: retrievalMetadata.rerank_failed === true
       }
     };
   }
@@ -275,4 +287,10 @@ function normalizeScoreThreshold(value: unknown, field: string): number {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

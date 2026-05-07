@@ -307,7 +307,7 @@ curl -b cookie.txt -H 'Content-Type: application/json' \
 6. 确认公网无法访问数据库、Redis、MinIO Console、Milvus、etcd。
 7. 如启用 embedding/rerank，进入 `/app/admin/retrieval` 执行 probe，创建 index rebuild job，等待 index-worker 完成。
 8. 只在需要时创建 Dify key 和 MCP PAT，并记录创建人、scope、过期时间。
-9. 执行一次导入、索引 rebuild、搜索、MCP/Dify 检索烟测。
+9. 执行一次 Dashboard 查看、导入、发布、chunk rebuild、index rebuild、Retrieval Lab、搜索、MCP/Dify 检索烟测。
 
 ## 6. 安全验收清单
 

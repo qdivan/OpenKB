@@ -37,6 +37,24 @@ export type WorkspaceInvitationRole = (typeof WORKSPACE_INVITATION_ROLES)[number
 
 export const SHARE_LINK_PERMISSION = "view" as const;
 
+export const CHUNK_TYPES = ["general", "parent", "child"] as const;
+export type ChunkType = (typeof CHUNK_TYPES)[number];
+
+export const KNOWLEDGE_BASE_CHUNK_MODES = ["general", "parent_child"] as const;
+export type KnowledgeBaseChunkMode = (typeof KNOWLEDGE_BASE_CHUNK_MODES)[number];
+
+export const KNOWLEDGE_BASE_CHUNK_PARENT_MODES = ["paragraph", "full_doc"] as const;
+export type KnowledgeBaseChunkParentMode = (typeof KNOWLEDGE_BASE_CHUNK_PARENT_MODES)[number];
+
+export const CHUNK_REBUILD_JOB_STATUSES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled"
+] as const;
+export type ChunkRebuildJobStatus = (typeof CHUNK_REBUILD_JOB_STATUSES)[number];
+
 export type DatabaseStatus = {
   packageName: typeof DB_PACKAGE_NAME;
   runtime: typeof DATABASE_RUNTIME;

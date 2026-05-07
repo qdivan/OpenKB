@@ -30,6 +30,18 @@ describe("@openkb/retrieval input helpers", () => {
       candidateLimit: 100,
       filters: { tags: [] }
     });
+    expect(
+      normalizeRetrievalSearchInput({
+        user,
+        query: "docs",
+        context_mode: "parent_child"
+      })
+    ).toMatchObject({
+      requestedContextMode: "parent_child"
+    });
+    expect(() =>
+      normalizeRetrievalSearchInput({ user, query: "docs", context_mode: "invalid" })
+    ).toThrow("context_mode");
 
     expect(calculateCandidateLimit(1)).toBe(20);
     expect(calculateCandidateLimit(10)).toBe(50);
@@ -162,6 +174,27 @@ describe("@openkb/retrieval input helpers", () => {
           function_metadata: { dense_vector: true, embedding_model: "embedding-model" }
         })
       },
+      knowledgeBaseChunkSetting: {
+        findFirst: async () => null
+      },
+      documentChunk: {
+        findMany: async () => [
+          {
+            id: "chunk_allowed",
+            tenant_id: "tenant_1",
+            document_id: "doc_allowed",
+            knowledge_base_id: "kb_1",
+            version_id: "version_1"
+          },
+          {
+            id: "chunk_denied",
+            tenant_id: "tenant_1",
+            document_id: "doc_denied",
+            knowledge_base_id: "kb_1",
+            version_id: "version_1"
+          }
+        ]
+      },
       knowledgeBase: {
         findMany: async () => [{ id: "kb_1", title: "KB" }]
       },
@@ -171,7 +204,9 @@ describe("@openkb/retrieval input helpers", () => {
             id: "doc_allowed",
             parent_id: null,
             knowledge_base_id: "kb_1",
-            title: "Allowed"
+            title: "Allowed",
+            current_version_id: "version_1",
+            status: "published"
           }
         ]
       },
@@ -226,9 +261,102 @@ describe("@openkb/retrieval input helpers", () => {
       rerank_score: 0.99
     });
   });
+
+  it("expands authorized child matches to parent context after filtering", async () => {
+    const prisma = {
+      retrievalSetting: { findFirst: async () => ({ mode: "bm25" }) },
+      milvusIndexProfile: { findFirst: async () => null },
+      knowledgeBaseChunkSetting: { findFirst: async () => null },
+      documentChunk: {
+        findMany: async (args: { where?: { chunk_type?: string } }) =>
+          args.where?.chunk_type === "parent"
+            ? [
+                {
+                  id: "parent_1",
+                  chunk_type: "parent",
+                  heading_path: ["Guide"],
+                  content_text: "Parent paragraph context",
+                  token_count: 4,
+                  start_line: 1,
+                  end_line: 5,
+                  start_char: 0,
+                  end_char: 40
+                }
+              ]
+            : [
+                {
+                  id: "child_1",
+                  tenant_id: "tenant_1",
+                  document_id: "doc_1",
+                  knowledge_base_id: "kb_1",
+                  version_id: "version_1"
+                }
+              ]
+      },
+      knowledgeBase: {
+        findMany: async () => [{ id: "kb_1", title: "KB" }]
+      },
+      document: {
+        findMany: async () => [
+          {
+            id: "doc_1",
+            parent_id: null,
+            knowledge_base_id: "kb_1",
+            title: "Guide",
+            current_version_id: "version_1",
+            status: "published"
+          }
+        ]
+      },
+      $disconnect: async () => undefined
+    };
+    const service = new RetrievalService({
+      prisma: prisma as never,
+      milvus: {
+        config: { activeAlias: "openkb_chunks_active" },
+        searchChunks: async () => [
+          makeCandidate("child_1", "doc_1", "child match", 0.8, {
+            parent_chunk_id: "parent_1"
+          })
+        ]
+      } as never,
+      permissions: {
+        requireCanRead: async () => undefined,
+        getAccessPrincipals: async () => ["user:u1"],
+        canRead: async () => true
+      } as never,
+      modelClient: {
+        embeddingConfigured: false,
+        rerankConfigured: false,
+        config: { embedding: { dim: 2048 }, rerank: {} }
+      } as never,
+      env: {}
+    });
+
+    const response = await service.search({
+      user,
+      query: "guide",
+      knowledge_base_ids: ["kb_1"],
+      context_mode: "parent_child"
+    });
+
+    expect(response.context_mode).toBe("parent_child");
+    expect(response.results[0]).toMatchObject({
+      chunk_id: "child_1",
+      content: "Parent paragraph context",
+      match_chunk: { chunk_id: "child_1", content: "child match" },
+      parent_chunk: { chunk_id: "parent_1", content: "Parent paragraph context" }
+    });
+  });
 });
 
-function makeCandidate(chunkId: string, documentId: string, content: string, score: number) {
+function makeCandidate(
+  chunkId: string,
+  documentId: string,
+  content: string,
+  score: number,
+  metadata: Record<string, unknown> = {}
+) {
   return {
     id: chunkId,
     chunk_id: chunkId,
@@ -241,7 +369,7 @@ function makeCandidate(chunkId: string, documentId: string, content: string, sco
     heading_path: [],
     content_text: content,
     content_markdown: content,
-    metadata: {},
+    metadata,
     updated_at: 0,
     score
   };

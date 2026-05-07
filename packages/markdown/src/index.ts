@@ -12,6 +12,9 @@ import {
 export const MARKDOWN_PACKAGE_NAME = "@openkb/markdown";
 export const MARKDOWN_DIALECT_OWNER = "milkdown";
 export const DEFAULT_CHUNK_MAX_CHARACTERS = 1800;
+export const DEFAULT_PARENT_CHUNK_MAX_CHARACTERS = 4000;
+export const DEFAULT_CHILD_CHUNK_MAX_CHARACTERS = 900;
+export const DEFAULT_CHILD_CHUNK_OVERLAP_CHARACTERS = 120;
 
 export type ImportConverterName = "markdown" | "text" | "html" | "csv";
 export type RequestedImportConverter = "auto" | ImportConverterName;
@@ -44,7 +47,35 @@ export type MarkdownChunk = {
   metadata: {
     start_line: number;
     end_line: number;
+    [key: string]: unknown;
   };
+};
+
+export type MarkdownChunkType = "general" | "parent" | "child";
+export type MarkdownChunkingMode = "general" | "parent_child";
+export type MarkdownParentChunkMode = "paragraph" | "full_doc";
+
+export type MarkdownChunkingSettings = {
+  mode?: MarkdownChunkingMode;
+  parent_mode?: MarkdownParentChunkMode;
+  parent_delimiter?: string;
+  child_delimiter?: string;
+  parent_max_characters?: number;
+  child_max_characters?: number;
+  child_overlap_characters?: number;
+  settings_revision?: number;
+};
+
+export type HierarchicalMarkdownChunk = MarkdownChunk & {
+  chunk_type: MarkdownChunkType;
+  parent_ordinal: number | null;
+  child_ordinal: number | null;
+  settings_revision: number;
+  start_line: number | null;
+  end_line: number | null;
+  start_char: number | null;
+  end_char: number | null;
+  parent_local_id: string | null;
 };
 
 export type MarkdownConversionErrorCode =
@@ -225,6 +256,389 @@ export function chunkMarkdown(
   }
 
   return chunks;
+}
+
+export function chunkMarkdownForIndex(
+  markdownInput: string,
+  settings: MarkdownChunkingSettings = {}
+): HierarchicalMarkdownChunk[] {
+  const mode = settings.mode ?? "parent_child";
+  const settingsRevision = positiveInt(settings.settings_revision, 1);
+
+  if (mode === "general") {
+    return chunkMarkdown(markdownInput, {
+      maxCharacters: positiveInt(settings.child_max_characters, DEFAULT_CHUNK_MAX_CHARACTERS)
+    }).map((chunk) => ({
+      ...chunk,
+      chunk_type: "general",
+      parent_ordinal: null,
+      child_ordinal: null,
+      settings_revision: settingsRevision,
+      start_line: chunk.metadata.start_line,
+      end_line: chunk.metadata.end_line,
+      start_char: null,
+      end_char: null,
+      parent_local_id: null
+    }));
+  }
+
+  return chunkMarkdownParentChild(markdownInput, {
+    parentMode: settings.parent_mode ?? "paragraph",
+    parentDelimiter: normalizeChunkDelimiter(settings.parent_delimiter),
+    childDelimiter: normalizeChunkDelimiter(settings.child_delimiter),
+    parentMaxCharacters: positiveInt(
+      settings.parent_max_characters,
+      DEFAULT_PARENT_CHUNK_MAX_CHARACTERS
+    ),
+    childMaxCharacters: positiveInt(
+      settings.child_max_characters,
+      DEFAULT_CHILD_CHUNK_MAX_CHARACTERS
+    ),
+    childOverlapCharacters: Math.max(
+      0,
+      Math.min(
+        positiveInt(settings.child_overlap_characters, DEFAULT_CHILD_CHUNK_OVERLAP_CHARACTERS),
+        positiveInt(settings.child_max_characters, DEFAULT_CHILD_CHUNK_MAX_CHARACTERS) - 1
+      )
+    ),
+    settingsRevision
+  });
+}
+
+function chunkMarkdownParentChild(
+  markdownInput: string,
+  options: {
+    parentMode: MarkdownParentChunkMode;
+    parentDelimiter: string;
+    childDelimiter: string;
+    parentMaxCharacters: number;
+    childMaxCharacters: number;
+    childOverlapCharacters: number;
+    settingsRevision: number;
+  }
+): HierarchicalMarkdownChunk[] {
+  const markdown = normalizeMarkdownSource(markdownInput);
+  const parentChunks =
+    options.parentMode === "full_doc"
+      ? [
+          {
+            ordinal: 0,
+            heading_path: [],
+            content_text: extractMarkdownPlainText(markdown),
+            content_markdown: markdown,
+            token_count: estimateTokenCount(extractMarkdownPlainText(markdown)),
+            metadata: {
+              start_line: 1,
+              end_line: Math.max(markdown.split("\n").length, 1),
+              start_char: 0,
+              end_char: markdown.length
+            }
+          }
+        ]
+      : chunkMarkdownByDelimiter(markdown, options.parentDelimiter, options.parentMaxCharacters);
+
+  const chunks: HierarchicalMarkdownChunk[] = [];
+  let ordinal = 0;
+  let searchCursor = 0;
+
+  for (const parent of parentChunks) {
+    const parentRange =
+      typeof parent.metadata.start_char === "number" && typeof parent.metadata.end_char === "number"
+        ? {
+            startChar: parent.metadata.start_char,
+            endChar: parent.metadata.end_char
+          }
+        : findMarkdownRange(markdown, parent.content_markdown, searchCursor);
+    searchCursor = Math.max(searchCursor, parentRange.endChar ?? searchCursor);
+    const parentOrdinal = chunks.filter((chunk) => chunk.chunk_type === "parent").length;
+    const parentLocalId = `parent:${parentOrdinal}`;
+    chunks.push({
+      ...parent,
+      ordinal,
+      chunk_type: "parent",
+      parent_ordinal: parentOrdinal,
+      child_ordinal: null,
+      settings_revision: options.settingsRevision,
+      start_line: parent.metadata.start_line,
+      end_line: parent.metadata.end_line,
+      start_char: parentRange.startChar,
+      end_char: parentRange.endChar,
+      parent_local_id: parentLocalId,
+      metadata: {
+        ...parent.metadata,
+        chunk_type: "parent",
+        parent_ordinal: parentOrdinal,
+        settings_revision: options.settingsRevision
+      }
+    });
+    ordinal += 1;
+
+    const childSegments = splitChildMarkdown(
+      parent.content_markdown,
+      options.childDelimiter,
+      options.childMaxCharacters,
+      options.childOverlapCharacters
+    );
+    for (const [childOrdinal, childMarkdown] of childSegments.entries()) {
+      const contentText = extractMarkdownPlainText(childMarkdown);
+      const childRange = findMarkdownRange(
+        markdown,
+        childMarkdown,
+        (parentRange.startChar ?? searchCursor) +
+          Math.min(parent.content_markdown.length, childOrdinal)
+      );
+      chunks.push({
+        ordinal,
+        heading_path: parent.heading_path,
+        content_text: contentText,
+        content_markdown: childMarkdown,
+        token_count: estimateTokenCount(contentText),
+        metadata: {
+          start_line: parent.metadata.start_line,
+          end_line: parent.metadata.end_line,
+          chunk_type: "child",
+          parent_ordinal: parentOrdinal,
+          child_ordinal: childOrdinal,
+          settings_revision: options.settingsRevision
+        },
+        chunk_type: "child",
+        parent_ordinal: parentOrdinal,
+        child_ordinal: childOrdinal,
+        settings_revision: options.settingsRevision,
+        start_line: parent.metadata.start_line,
+        end_line: parent.metadata.end_line,
+        start_char: childRange.startChar,
+        end_char: childRange.endChar,
+        parent_local_id: parentLocalId
+      });
+      ordinal += 1;
+    }
+  }
+
+  return chunks.length > 0 ? chunks : chunkMarkdownForIndex("", { mode: "general" });
+}
+
+type MarkdownSegment = {
+  content: string;
+  startChar: number;
+  endChar: number;
+  startLine: number;
+  endLine: number;
+};
+
+function chunkMarkdownByDelimiter(
+  markdown: string,
+  delimiter: string,
+  maxCharacters: number
+): MarkdownChunk[] {
+  const segments = splitMarkdownSegments(markdown, delimiter).filter((segment) =>
+    segment.content.trim()
+  );
+  const outline = extractMarkdownOutline(markdown);
+  const chunks: MarkdownChunk[] = [];
+  let group: MarkdownSegment[] = [];
+
+  const flush = () => {
+    if (group.length === 0) {
+      return;
+    }
+    const first = group[0]!;
+    const last = group[group.length - 1]!;
+    const content = markdown.slice(first.startChar, last.endChar).trim();
+    const contentText = extractMarkdownPlainText(content);
+    chunks.push({
+      ordinal: chunks.length,
+      heading_path: headingPathAtLine(outline, first.startLine),
+      content_text: contentText,
+      content_markdown: content,
+      token_count: estimateTokenCount(contentText),
+      metadata: {
+        start_line: first.startLine,
+        end_line: last.endLine,
+        start_char: first.startChar,
+        end_char: last.endChar
+      }
+    });
+    group = [];
+  };
+
+  for (const segment of segments) {
+    const first = group[0] ?? segment;
+    const nextContent = markdown.slice(first.startChar, segment.endChar).trim();
+    if (group.length > 0 && nextContent.length > maxCharacters) {
+      flush();
+    }
+    group.push(segment);
+  }
+  flush();
+
+  if (chunks.length === 0) {
+    return [
+      {
+        ordinal: 0,
+        heading_path: [],
+        content_text: "",
+        content_markdown: "",
+        token_count: 0,
+        metadata: { start_line: 1, end_line: 1, start_char: 0, end_char: 0 }
+      }
+    ];
+  }
+
+  return chunks;
+}
+
+function splitChildMarkdown(
+  markdown: string,
+  delimiter: string,
+  maxCharacters: number,
+  overlapCharacters: number
+): string[] {
+  const blocks = splitMarkdownSegments(markdown, delimiter)
+    .map((block) => block.content.trim())
+    .filter(Boolean);
+  const sourceBlocks = blocks.length > 0 ? blocks : [markdown.trim()].filter(Boolean);
+  const chunks: string[] = [];
+  let buffer: string[] = [];
+
+  const flush = () => {
+    const content = buffer.join("\n\n").trim();
+    if (!content) {
+      buffer = [];
+      return;
+    }
+    chunks.push(content);
+    buffer = [];
+  };
+
+  for (const block of sourceBlocks) {
+    if (block.length > maxCharacters) {
+      flush();
+      for (let index = 0; index < block.length; index += maxCharacters - overlapCharacters) {
+        chunks.push(block.slice(index, index + maxCharacters).trim());
+      }
+      continue;
+    }
+
+    const next = [...buffer, block].join("\n\n");
+    if (next.length > maxCharacters && buffer.length > 0) {
+      const previous = buffer.join("\n\n");
+      flush();
+      if (overlapCharacters > 0 && previous.length > overlapCharacters) {
+        buffer.push(previous.slice(-overlapCharacters), block);
+      } else {
+        buffer.push(block);
+      }
+    } else {
+      buffer.push(block);
+    }
+  }
+
+  flush();
+  return chunks.length > 0 ? chunks : [""];
+}
+
+function splitMarkdownSegments(markdown: string, delimiter: string): MarkdownSegment[] {
+  const ranges: Array<{ start: number; end: number }> = [];
+  if (delimiter === "\n\n") {
+    const separator = /\n{2,}/g;
+    let start = 0;
+    let match: RegExpExecArray | null;
+    while ((match = separator.exec(markdown))) {
+      ranges.push({ start, end: match.index });
+      start = match.index + match[0].length;
+    }
+    ranges.push({ start, end: markdown.length });
+  } else {
+    let start = 0;
+    for (;;) {
+      const next = markdown.indexOf(delimiter, start);
+      if (next < 0) {
+        ranges.push({ start, end: markdown.length });
+        break;
+      }
+      ranges.push({ start, end: next });
+      start = next + delimiter.length;
+    }
+  }
+
+  const segments = ranges.flatMap((range) => {
+    const trimmed = trimMarkdownRange(markdown, range.start, range.end);
+    if (trimmed.start >= trimmed.end) {
+      return [];
+    }
+    return [
+      {
+        content: markdown.slice(trimmed.start, trimmed.end),
+        startChar: trimmed.start,
+        endChar: trimmed.end,
+        startLine: lineNumberAtChar(markdown, trimmed.start),
+        endLine: lineNumberAtChar(markdown, Math.max(trimmed.end - 1, trimmed.start))
+      }
+    ];
+  });
+
+  return segments.length > 0
+    ? segments
+    : [{ content: "", startChar: 0, endChar: 0, startLine: 1, endLine: 1 }];
+}
+
+function trimMarkdownRange(markdown: string, start: number, end: number) {
+  let nextStart = start;
+  let nextEnd = end;
+  while (nextStart < nextEnd && /\s/.test(markdown[nextStart] ?? "")) {
+    nextStart += 1;
+  }
+  while (nextEnd > nextStart && /\s/.test(markdown[nextEnd - 1] ?? "")) {
+    nextEnd -= 1;
+  }
+  return { start: nextStart, end: nextEnd };
+}
+
+function lineNumberAtChar(markdown: string, charIndex: number): number {
+  return markdown.slice(0, Math.max(0, charIndex)).split("\n").length;
+}
+
+function headingPathAtLine(
+  outline: Array<{ level: number; title: string; line: number }>,
+  line: number
+): string[] {
+  let path: string[] = [];
+  for (const item of outline) {
+    if (item.line > line) {
+      break;
+    }
+    path = nextHeadingPath(path, item.level, item.title);
+  }
+  return path;
+}
+
+function findMarkdownRange(
+  markdown: string,
+  needle: string,
+  fromIndex: number
+): { startChar: number | null; endChar: number | null } {
+  if (!needle) {
+    return { startChar: fromIndex, endChar: fromIndex };
+  }
+  const start = markdown.indexOf(needle, Math.max(0, fromIndex));
+  if (start < 0) {
+    const fallback = markdown.indexOf(needle);
+    if (fallback < 0) {
+      return { startChar: null, endChar: null };
+    }
+    return { startChar: fallback, endChar: fallback + needle.length };
+  }
+  return { startChar: start, endChar: start + needle.length };
+}
+
+function positiveInt(value: number | null | undefined, fallback: number): number {
+  return Number.isInteger(value) && Number(value) > 0 ? Number(value) : fallback;
+}
+
+function normalizeChunkDelimiter(value: string | undefined): string {
+  const normalized = value?.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+  return normalized && normalized.length > 0 ? normalized : "\n\n";
 }
 
 function convertMarkdown(content: string, filename: string): ImportConversionResult {

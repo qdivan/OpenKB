@@ -1,6 +1,8 @@
 # 13 — 部署
 
-Phase 11 的目标是把 Phase 1-10 已实现的服务组合成最小可运行部署形态。部署层只负责配置、启动、健康检查和依赖编排；不新增业务能力，不新增知识库级模型配置，不在 OpenKB DB 中保存 embedding/rerank provider API key。
+Phase 11 已完成最小可部署闭环：生产/自托管 Docker Compose、Helm 最小 chart、环境变量整理、健康检查和公网测试安全基线。Phase 12 已在代码中接入真实 embedding、rerank 和 hybrid retrieval。Phase 13 已加入知识库 Dashboard、父子切片、全文上下文、检索测试台和发布闭环。
+
+部署层只负责配置、启动、健康检查和依赖编排；不新增知识库级模型配置，不在 OpenKB DB 中保存 embedding/rerank provider API key。
 
 ## 1. Docker Compose
 
@@ -245,6 +247,8 @@ DIFY_REQUEST_MAX_BYTES
 DIFY_RESULT_BASE_URL
 ```
 
+Compose 构建还支持 `OPENKB_NODE_IMAGE` 覆盖 Node.js base image，例如在镜像源受限环境使用内部 registry mirror。
+
 `AUTH_COOKIE_SECURE` 默认为 `auto`：当 `WEB_BASE_URL`/`APP_BASE_URL` 是
 HTTPS 时自动写入 `Secure` cookie，本地 `http://localhost` compose 不写入
 `Secure`，避免登录后浏览器不回传 session cookie。
@@ -257,7 +261,7 @@ HTTPS 时自动写入 `Secure` cookie，本地 `http://localhost` compose 不写
 
 ## 6. 验证范围
 
-Phase 11 最小验证：
+部署闭环验证：
 
 ```bash
 pnpm docs:check
@@ -278,13 +282,32 @@ helm template openkb deploy/helm/openkb --values deploy/helm/openkb/values.yaml
 
 ```text
 登录
+知识库 Dashboard Overview/Chunks/Retrieval Lab/Settings
 上传/导入
 import worker 转 Markdown
+发布文档
+可选：修改 chunk settings 并触发 chunk rebuild
 触发 index rebuild
 搜索
 MCP PAT + kb.search
 Dify scoped key + /retrieval
 ```
+
+启用真实模型后，还需要验证：
+
+```text
+/app/admin/retrieval probe embedding/rerank
+创建 rebuild job
+index-worker 写入 dense_vector
+bm25
+dense
+dense_rerank
+hybrid
+hybrid_rerank
+rerank 服务停止时搜索降级返回，并在 metadata 标记 rerank_failed
+```
+
+公网测试平台部署前，部署人员必须向项目负责人确认域名、TLS、管理员账号、数据库、S3、Milvus、模型 endpoint/model、Dify/MCP 是否开放公网、上传策略、备份和日志保留。完整清单见 `docs/24-public-test-platform-deployment.zh-CN.md`。
 
 ## 7. Phase 11 之后
 
@@ -297,3 +320,4 @@ Dify scoped key + /retrieval
 - 实时协同。
 - 生产级完整 Admin UI。
 - 监控、日志聚合、备份恢复、升级/回滚演练。
+- 当前文档切片侧栏、全局搜索更完整的命中解释和发布后索引引导。

@@ -180,6 +180,28 @@ model KnowledgeBase {
   @@map("knowledge_bases")
 }
 
+model KnowledgeBaseChunkSetting {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                  String   @db.Uuid
+  workspace_id               String   @db.Uuid
+  knowledge_base_id          String   @unique @db.Uuid
+  mode                       String   @default("parent_child")
+  parent_mode                String   @default("paragraph")
+  parent_delimiter           String   @default("\n\n")
+  child_delimiter            String   @default("\n\n")
+  parent_max_characters      Int      @default(4000)
+  child_max_characters       Int      @default(900)
+  child_overlap_characters   Int      @default(120)
+  revision                   Int      @default(1)
+  updated_by                 String   @db.Uuid
+  created_at                 DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@map("knowledge_base_chunk_settings")
+}
+
 model Document {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id         String   @db.Uuid
@@ -343,6 +365,15 @@ model DocumentChunk {
   document_id       String   @db.Uuid
   version_id        String   @db.Uuid
   ordinal           Int
+  chunk_type        String   @default("general")
+  parent_chunk_id   String?  @db.Uuid
+  settings_revision Int      @default(1)
+  start_line        Int?
+  end_line          Int?
+  start_char        Int?
+  end_char          Int?
+  parent_ordinal    Int?
+  child_ordinal     Int?
   heading_path      String[] @default([])
   content_text      String
   content_markdown  String
@@ -355,7 +386,30 @@ model DocumentChunk {
   @@index([workspace_id])
   @@index([knowledge_base_id])
   @@index([document_id])
+  @@index([parent_chunk_id])
+  @@index([chunk_type])
   @@map("document_chunks")
+}
+
+model ChunkRebuildJob {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String    @db.Uuid
+  workspace_id      String    @db.Uuid
+  knowledge_base_id String    @db.Uuid
+  settings_revision Int
+  status            String
+  requested_by      String    @db.Uuid
+  error             String?
+  metadata          Json      @default("{}")
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  finished_at       DateTime? @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([status])
+  @@map("chunk_rebuild_jobs")
 }
 
 model MilvusIndexProfile {

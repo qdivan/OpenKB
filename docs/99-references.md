@@ -40,3 +40,6 @@ The Yuque MCP references above are public server/API references used for capabil
 
 - Dify External Knowledge API: https://docs.dify.ai/en/use-dify/knowledge/external-knowledge-api
 - Dify Connect to External Knowledge Base: https://docs.dify.ai/en/use-dify/knowledge/connect-external-knowledge-base
+- Dify Chunking and Cleaning Text: https://docs.dify.ai/en/use-dify/knowledge/create-knowledge/chunking-and-cleaning-text
+- Dify Indexing Methods: https://docs.dify.ai/en/use-dify/knowledge/create-knowledge/setting-indexing-methods
+- Dify Retrieval Test: https://docs.dify.ai/en/use-dify/knowledge/test-retrieval

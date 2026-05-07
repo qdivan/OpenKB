@@ -18,14 +18,16 @@
 在仓库根目录执行：
 
 ```bash
-docker compose -f deploy/docker-compose/compose.yml build
+cp .env.example .env
 
-docker compose -f deploy/docker-compose/compose.yml up -d \
+docker compose --env-file .env -f deploy/docker-compose/compose.yml build
+
+docker compose --env-file .env -f deploy/docker-compose/compose.yml up -d \
   postgres redis minio-assets milvus-etcd milvus-minio milvus-standalone
 
-docker compose -f deploy/docker-compose/compose.yml run --rm migrate
-docker compose -f deploy/docker-compose/compose.yml run --rm seed-dev
-docker compose -f deploy/docker-compose/compose.yml up -d
+docker compose --env-file .env -f deploy/docker-compose/compose.yml run --rm migrate
+docker compose --env-file .env -f deploy/docker-compose/compose.yml run --rm seed-dev
+docker compose --env-file .env -f deploy/docker-compose/compose.yml up -d
 ```
 
 启动后访问：
@@ -47,7 +49,7 @@ Password: OpenKB-dev-123456
 ## 3. 检查服务
 
 ```bash
-docker compose -f deploy/docker-compose/compose.yml ps
+docker compose --env-file .env -f deploy/docker-compose/compose.yml ps
 curl http://localhost:4000/health
 curl http://localhost:4100/health
 curl http://localhost:4200/health
@@ -84,12 +86,13 @@ docker compose -f deploy/docker-compose/compose.yml up -d
 推荐按下面顺序走一遍：
 
 1. 登录 `http://localhost:3000`。
-2. 打开默认知识库和默认文档，切换 Read / Edit / Source。
-3. 导入一个 Markdown 或文本文件。
-4. 等 import worker 把任务处理成 succeeded。
-5. 触发或等待索引重建，进入搜索页检索导入内容。
-6. 如需测试 MCP，创建 PAT 后调用 `http://localhost:4100/mcp`。
-7. 如需测试 Dify，创建 scoped key 后调用 `http://localhost:4200/retrieval`。
+2. 打开默认知识库，先查看 Dashboard 的 Overview、Chunks、Retrieval Lab、Settings。
+3. 打开默认文档，切换 Read / Edit / Source，保存后点击 Publish。
+4. 导入一个 Markdown 或文本文件，等 import worker 把任务处理成 succeeded。
+5. 如需调整切片，回到 Dashboard 的 Settings 保存 chunk settings，再点击 Rebuild chunks。
+6. 登录 `/app/admin/retrieval` 创建 Milvus rebuild job；重建完成后，进入 Dashboard Retrieval Lab 或搜索页检索导入内容。
+7. 如需测试 MCP，创建 PAT 后调用 `http://localhost:4100/mcp`，可传 `context_mode`。
+8. 如需测试 Dify，创建 scoped key 后调用 `http://localhost:4200/retrieval`，返回 metadata 会包含 match/parent chunk 信息。
 
 如需测试真实 embedding/rerank，可在 `.env` 中加入：
 

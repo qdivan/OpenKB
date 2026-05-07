@@ -1,10 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import {
-  chunkMarkdown,
+  chunkMarkdownForIndex,
   convertImportFile,
   MarkdownConversionError,
+  type HierarchicalMarkdownChunk,
   type ImportConversionWarning,
   type RequestedImportConverter
 } from "@openkb/markdown";
@@ -27,6 +28,10 @@ type ClaimedJob = {
   id: string;
 };
 
+type ClaimedChunkRebuildJob = {
+  id: string;
+};
+
 export async function runImportOnce(options: ImportWorkerOptions = {}): Promise<ImportRunResult> {
   const prisma = options.prisma ?? createDatabaseClient();
   const storage = options.storage ?? createObjectStorage();
@@ -35,7 +40,31 @@ export async function runImportOnce(options: ImportWorkerOptions = {}): Promise<
   try {
     const claimed = await claimNextImportJob(prisma);
     if (!claimed) {
-      return { processed: false };
+      const chunkJob = await claimNextChunkRebuildJob(prisma);
+      if (!chunkJob) {
+        return { processed: false };
+      }
+      try {
+        await processClaimedChunkRebuildJob(prisma, chunkJob.id);
+        return { processed: true, job_id: chunkJob.id, status: "succeeded" };
+      } catch (error) {
+        const code =
+          error instanceof WorkerImportError
+            ? error.code
+            : error instanceof Error
+              ? error.message
+              : "CHUNK_REBUILD_FAILED";
+        await prisma.chunkRebuildJob.update({
+          where: { id: chunkJob.id },
+          data: {
+            status: "failed",
+            error: code,
+            updated_at: new Date(),
+            finished_at: new Date()
+          }
+        });
+        return { processed: true, job_id: chunkJob.id, status: "failed", error: code };
+      }
     }
 
     try {
@@ -92,6 +121,26 @@ async function claimNextImportJob(prisma: PrismaClient): Promise<ClaimedJob | nu
   return rows[0] ?? null;
 }
 
+async function claimNextChunkRebuildJob(
+  prisma: PrismaClient
+): Promise<ClaimedChunkRebuildJob | null> {
+  const rows = await prisma.$queryRaw<ClaimedChunkRebuildJob[]>`
+    UPDATE chunk_rebuild_jobs
+    SET status = 'running', updated_at = now(), error = NULL
+    WHERE id = (
+      SELECT id
+      FROM chunk_rebuild_jobs
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    )
+    RETURNING id
+  `;
+
+  return rows[0] ?? null;
+}
+
 async function processClaimedImportJob(
   prisma: PrismaClient,
   storage: ObjectStorage,
@@ -114,7 +163,6 @@ async function processClaimedImportJob(
     content: source,
     converter: job.converter as RequestedImportConverter
   });
-  const chunks = chunkMarkdown(conversion.markdown);
   const now = new Date();
   const title = normalizeTitle(job.title ?? conversion.title);
 
@@ -176,6 +224,22 @@ async function processClaimedImportJob(
         created_at: now
       }
     });
+    const settings = await getOrCreateChunkSettings(tx, {
+      tenantId: job.tenant_id,
+      workspaceId: knowledgeBase.workspace_id,
+      knowledgeBaseId: knowledgeBase.id,
+      userId: job.created_by
+    });
+    const chunks = chunkMarkdownForIndex(conversion.markdown, {
+      mode: settings.mode === "general" ? "general" : "parent_child",
+      parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
+      parent_delimiter: settings.parent_delimiter,
+      child_delimiter: settings.child_delimiter,
+      parent_max_characters: settings.parent_max_characters,
+      child_max_characters: settings.child_max_characters,
+      child_overlap_characters: settings.child_overlap_characters,
+      settings_revision: settings.revision
+    });
 
     await tx.document.update({
       where: { id: document.id },
@@ -211,13 +275,23 @@ async function processClaimedImportJob(
       }
     });
     await tx.documentChunk.createMany({
-      data: chunks.map((chunk) => ({
+      data: materializeDocumentChunks(chunks).map((chunk) => ({
+        id: chunk.id,
         tenant_id: job.tenant_id,
         workspace_id: knowledgeBase.workspace_id,
         knowledge_base_id: knowledgeBase.id,
         document_id: document.id,
         version_id: version.id,
         ordinal: chunk.ordinal,
+        chunk_type: chunk.chunk_type,
+        parent_chunk_id: chunk.parent_chunk_id,
+        settings_revision: settings.revision,
+        start_line: chunk.start_line,
+        end_line: chunk.end_line,
+        start_char: chunk.start_char,
+        end_char: chunk.end_char,
+        parent_ordinal: chunk.parent_ordinal,
+        child_ordinal: chunk.child_ordinal,
         heading_path: chunk.heading_path,
         content_text: chunk.content_text,
         content_markdown: chunk.content_markdown,
@@ -262,6 +336,122 @@ async function processClaimedImportJob(
       metadata: {
         document_id: document.id,
         version_id: version.id
+      }
+    });
+  });
+}
+
+async function processClaimedChunkRebuildJob(prisma: PrismaClient, jobId: string) {
+  const job = await prisma.chunkRebuildJob.findUnique({ where: { id: jobId } });
+  if (!job || job.status !== "running") {
+    throw new WorkerImportError("CHUNK_REBUILD_JOB_NOT_FOUND", "Chunk rebuild job was not found.");
+  }
+  const settings = await prisma.knowledgeBaseChunkSetting.findUnique({
+    where: { knowledge_base_id: job.knowledge_base_id }
+  });
+  if (!settings) {
+    throw new WorkerImportError("CHUNK_SETTINGS_NOT_FOUND", "Chunk settings were not found.");
+  }
+
+  const documents = await prisma.document.findMany({
+    where: {
+      knowledge_base_id: job.knowledge_base_id,
+      tenant_id: job.tenant_id,
+      type: "page",
+      status: { not: "deleted" },
+      current_version_id: { not: null }
+    },
+    orderBy: { created_at: "asc" }
+  });
+  const versionIds = documents.flatMap((document) =>
+    document.current_version_id ? [document.current_version_id] : []
+  );
+  const versions = await prisma.documentVersion.findMany({
+    where: { id: { in: versionIds } }
+  });
+  const versionById = new Map(versions.map((version) => [version.id, version]));
+  let chunkCount = 0;
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.documentChunk.deleteMany({
+      where: {
+        knowledge_base_id: job.knowledge_base_id,
+        version_id: { in: versionIds }
+      }
+    });
+
+    for (const document of documents) {
+      const version = document.current_version_id
+        ? versionById.get(document.current_version_id)
+        : null;
+      if (!version) {
+        continue;
+      }
+      const chunks = materializeDocumentChunks(
+        chunkMarkdownForIndex(version.markdown, {
+          mode: settings.mode === "general" ? "general" : "parent_child",
+          parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
+          parent_delimiter: settings.parent_delimiter,
+          child_delimiter: settings.child_delimiter,
+          parent_max_characters: settings.parent_max_characters,
+          child_max_characters: settings.child_max_characters,
+          child_overlap_characters: settings.child_overlap_characters,
+          settings_revision: settings.revision
+        })
+      );
+      chunkCount += chunks.length;
+      if (chunks.length === 0) {
+        continue;
+      }
+      await tx.documentChunk.createMany({
+        data: chunks.map((chunk) => ({
+          id: chunk.id,
+          tenant_id: document.tenant_id,
+          workspace_id: document.workspace_id,
+          knowledge_base_id: document.knowledge_base_id,
+          document_id: document.id,
+          version_id: version.id,
+          ordinal: chunk.ordinal,
+          chunk_type: chunk.chunk_type,
+          parent_chunk_id: chunk.parent_chunk_id,
+          settings_revision: settings.revision,
+          start_line: chunk.start_line,
+          end_line: chunk.end_line,
+          start_char: chunk.start_char,
+          end_char: chunk.end_char,
+          parent_ordinal: chunk.parent_ordinal,
+          child_ordinal: chunk.child_ordinal,
+          heading_path: chunk.heading_path,
+          content_text: chunk.content_text,
+          content_markdown: chunk.content_markdown,
+          token_count: chunk.token_count,
+          metadata: chunk.metadata as Prisma.InputJsonValue,
+          created_at: now
+        }))
+      });
+    }
+
+    await tx.chunkRebuildJob.update({
+      where: { id: job.id },
+      data: {
+        status: "succeeded",
+        error: null,
+        metadata: { document_count: documents.length, chunk_count: chunkCount },
+        updated_at: now,
+        finished_at: now
+      }
+    });
+    await writeAuditLog(tx, {
+      tenantId: job.tenant_id,
+      actorUserId: job.requested_by,
+      action: "chunk_rebuild_job.succeeded",
+      objectType: "chunk_rebuild_job",
+      objectId: job.id,
+      metadata: {
+        knowledge_base_id: job.knowledge_base_id,
+        settings_revision: settings.revision,
+        chunk_count: chunkCount
       }
     });
   });
@@ -356,6 +546,60 @@ function slugFromTitle(title: string): string {
 
 function markdownHash(markdown: string): string {
   return createHash("sha256").update(markdown).digest("hex");
+}
+
+type MaterializedChunk = HierarchicalMarkdownChunk & {
+  id: string;
+  parent_chunk_id: string | null;
+};
+
+function materializeDocumentChunks(chunks: HierarchicalMarkdownChunk[]): MaterializedChunk[] {
+  const ids = chunks.map(() => randomUUID());
+  const parentIdByLocalId = new Map<string, string>();
+  chunks.forEach((chunk, index) => {
+    if (chunk.chunk_type === "parent" && chunk.parent_local_id) {
+      parentIdByLocalId.set(chunk.parent_local_id, ids[index]!);
+    }
+  });
+
+  return chunks.map((chunk, index) => ({
+    ...chunk,
+    id: ids[index]!,
+    parent_chunk_id:
+      chunk.chunk_type === "child" && chunk.parent_local_id
+        ? (parentIdByLocalId.get(chunk.parent_local_id) ?? null)
+        : null
+  }));
+}
+
+async function getOrCreateChunkSettings(
+  tx: Prisma.TransactionClient,
+  input: {
+    tenantId: string;
+    workspaceId: string;
+    knowledgeBaseId: string;
+    userId: string;
+  }
+) {
+  const existing = await tx.knowledgeBaseChunkSetting.findUnique({
+    where: { knowledge_base_id: input.knowledgeBaseId }
+  });
+  if (existing) {
+    return existing;
+  }
+  const legacyChunkCount = await tx.documentChunk.count({
+    where: { knowledge_base_id: input.knowledgeBaseId, chunk_type: "general" }
+  });
+  return tx.knowledgeBaseChunkSetting.create({
+    data: {
+      tenant_id: input.tenantId,
+      workspace_id: input.workspaceId,
+      knowledge_base_id: input.knowledgeBaseId,
+      mode: legacyChunkCount > 0 ? "general" : "parent_child",
+      parent_mode: "paragraph",
+      updated_by: input.userId
+    }
+  });
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {

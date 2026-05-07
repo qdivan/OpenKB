@@ -51,6 +51,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 
+import { KnowledgeBaseDashboard } from "@/components/workbench/knowledge-base-dashboard";
 import { MilkdownEditor } from "@/components/workbench/milkdown-editor";
 import {
   ApiRequestError,
@@ -69,8 +70,10 @@ import {
   listImportJobs,
   listWorkspaces,
   logout,
+  publishDocument,
   updateDocument,
   updateWorkspace,
+  unpublishDocument,
   uploadFile,
   type AuthMe,
   type DocumentDetail,
@@ -293,11 +296,9 @@ export function WorkbenchClient({
       setDocuments(treeDocuments);
       setImportJobs(jobs);
 
-      const targetDocument =
-        treeDocuments.find((document) => document.id === preferredDocumentId) ??
-        treeDocuments.find((document) => document.type === "page") ??
-        treeDocuments[0] ??
-        null;
+      const targetDocument = preferredDocumentId
+        ? (treeDocuments.find((document) => document.id === preferredDocumentId) ?? null)
+        : null;
 
       if (targetDocument) {
         await openDocument(targetDocument.id);
@@ -801,6 +802,35 @@ export function WorkbenchClient({
     }
   }
 
+  async function handleTogglePublishDocument() {
+    if (!currentDocument || currentDocument.type !== "page") {
+      return;
+    }
+    if (hasUnsavedChanges || saveState === "saving") {
+      setMessage("Save the document before changing publish state.");
+      return;
+    }
+
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const updated =
+        currentDocument.status === "published"
+          ? await unpublishDocument(currentDocument.id)
+          : await publishDocument(currentDocument.id);
+      setCurrentDocument(updated);
+      setSavedTitle(updated.title);
+      setSavedMarkdown(updated.currentVersion?.markdown ?? "");
+      setBaseVersionId(updated.currentVersion?.id ?? null);
+      setDocuments((items) => updateDocumentInList(items, updated));
+      setMessage(updated.status === "published" ? "Document published." : "Document unpublished.");
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleLogout() {
     if (!confirmDiscardDraft()) {
       return;
@@ -1129,6 +1159,20 @@ export function WorkbenchClient({
                       </ModeButton>
                       <div className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
                         <span className={saveStateClass(saveState)}>{statusText}</span>
+                        {currentDocument.type === "page" ? (
+                          <button
+                            className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
+                              currentDocument.status === "published"
+                                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                            }`}
+                            disabled={isBusy || saveState === "saving"}
+                            onClick={() => void handleTogglePublishDocument()}
+                            type="button"
+                          >
+                            {currentDocument.status === "published" ? "Published" : "Publish"}
+                          </button>
+                        ) : null}
                         <button
                           className="icon-button"
                           disabled={saveState === "saving"}
@@ -1161,6 +1205,7 @@ export function WorkbenchClient({
                     />
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                       <span>{currentDocument.type}</span>
+                      <span>{currentDocument.status}</span>
                       <span>Version {currentDocument.currentVersion?.version_no ?? 0}</span>
                       <span>{currentDocument.role ?? "viewer"}</span>
                     </div>
@@ -1216,6 +1261,14 @@ export function WorkbenchClient({
                     )}
                   </div>
                 </div>
+              ) : selectedKnowledgeBaseId ? (
+                <KnowledgeBaseDashboard
+                  documents={documents}
+                  knowledgeBaseId={selectedKnowledgeBaseId}
+                  onCreateDocument={() => void handleCreateDocument("page")}
+                  onError={handleApiError}
+                  onOpenDocument={(documentId) => void selectDocument(documentId)}
+                />
               ) : (
                 <EmptyMain
                   hasKnowledgeBase={Boolean(selectedKnowledgeBaseId)}
@@ -1712,6 +1765,7 @@ function updateDocumentInList(
           ...document,
           title: updated.title,
           current_version_id: updated.current_version_id,
+          status: updated.status,
           updated_at: updated.updated_at
         }
       : document

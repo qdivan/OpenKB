@@ -10,9 +10,18 @@ Markdown + assets + metadata + source file reference
 
 Markdown 必须通过 Milkdown 当前启用插件的 parse/serialize 校验。
 
-## 2. 支持文件
+## 2. 当前支持文件
 
-v0.x 支持：
+当前代码已启用的转换器：
+
+```text
+Markdown
+Text
+HTML
+CSV
+```
+
+以下类型属于后续 adapter 范围，当前代码会识别为需要 MinerU/MarkItDown/Pandoc/OCR adapter，但不会承诺可转换：
 
 ```text
 PDF
@@ -20,9 +29,9 @@ DOCX
 PPTX
 XLSX
 图片
-HTML
-CSV
 ```
+
+测试和部署验收时，不要把 Office/PDF/OCR 当成 v0.3.x 已完成能力。
 
 ## 3. 转换器接口
 
@@ -42,7 +51,7 @@ type ConvertResult = {
 };
 ```
 
-## 4. 推荐转换器
+## 4. 后续推荐转换器
 
 - MinerU：PDF、扫描 PDF、图片、复杂版面。
 - MarkItDown：Office、HTML、CSV 等轻量转换。
@@ -60,8 +69,9 @@ upload file
   -> markdown + assets
   -> Milkdown parse/serialize validation
   -> create document/version
-  -> chunking job
-  -> index rebuild/upsert job
+  -> generate chunks with current KB chunk settings
+  -> user publishes document when ready
+  -> admin Milvus index rebuild indexes published current-version chunks
 ```
 
 ## 6. 复杂内容处理

@@ -54,11 +54,21 @@ POST   /api/knowledge-bases
 GET    /api/knowledge-bases/:id
 PUT    /api/knowledge-bases/:id
 
+GET    /api/knowledge-bases/:id/overview
 GET    /api/knowledge-bases/:id/tree
+GET    /api/knowledge-bases/:id/chunk-settings
+PUT    /api/knowledge-bases/:id/chunk-settings
+POST   /api/knowledge-bases/:id/chunk-preview
+GET    /api/knowledge-bases/:id/chunks
+POST   /api/knowledge-bases/:id/chunk-rebuild-jobs
+GET    /api/chunk-rebuild-jobs/:id
+
 POST   /api/documents
 GET    /api/documents/:id
 PUT    /api/documents/:id
 DELETE /api/documents/:id
+POST   /api/documents/:id/publish
+POST   /api/documents/:id/unpublish
 GET    /api/documents/:id/versions
 POST   /api/documents/:id/versions
 POST   /api/documents/:id/restore/:versionId
@@ -117,13 +127,14 @@ POST /api/search
   "query": "MCP 怎么接入",
   "knowledge_base_ids": ["kb_1"],
   "top_k": 10,
+  "context_mode": "parent_child",
   "filters": {
     "tags": ["mcp"]
   }
 }
 ```
 
-响应只能包含当前用户有权限访问的结果。
+`context_mode` 可选，支持 `chunk`、`parent_child`、`paragraph_parent_child`、`full_text`。响应只能包含当前用户有权限访问且已发布、当前版本的结果；rerank 必须发生在最终权限过滤之后，父块/全文回填发生在 rerank 之后。
 
 ## 6. 导入
 

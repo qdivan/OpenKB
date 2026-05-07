@@ -219,6 +219,7 @@ type RetrievalInput = {
   knowledgeBaseIds?: string[];
   topK: number;
   filters?: Record<string, unknown>;
+  contextMode?: "chunk" | "parent_child" | "paragraph_parent_child" | "full_text";
 };
 ```
 
@@ -233,6 +234,15 @@ type RetrievalResult = {
   content: string;
   score: number;
   metadata: Record<string, unknown>;
+  contextMode?: string;
+  matchChunk?: {
+    chunkId: string;
+    content: string;
+  };
+  parentChunk?: {
+    chunkId: string;
+    content: string;
+  } | null;
 };
 ```
 
@@ -244,8 +254,9 @@ resolve caller identity
   -> resolve retrieval mode
   -> embed query if dense/hybrid is active
   -> Milvus search active alias with filters
-  -> PostgreSQL final permission check
+  -> PostgreSQL final permission check for published current-version documents
   -> rerank authorized candidates if rerank mode is active
+  -> expand parent/full-text context when context mode requests it
   -> trim/top_k
   -> return
 ```
@@ -266,3 +277,31 @@ resolve caller identity
 ```
 
 不提供知识库级模型配置页面。
+
+## 11. 父子检索和全文上下文
+
+Phase 13 已实现 Dify-like 的上下文模式：
+
+```text
+chunk
+parent_child
+paragraph_parent_child
+full_text
+```
+
+当前数据流：
+
+```text
+Markdown/current version
+  -> 读取知识库 chunk settings
+  -> 生成段落 parent chunk 或 full-doc parent chunk
+  -> 生成 child chunk
+  -> child chunk 写入 Milvus 做 BM25/dense/hybrid
+  -> 搜索命中 child chunk
+  -> PostgreSQL final permission check for published current-version docs
+  -> rerank authorized child candidates
+  -> 回 PostgreSQL 取 parent context
+  -> 返回 child match + parent context + score metadata
+```
+
+Milvus 只索引 `general` 和 `child` chunk；`parent` chunk 只保存在 PostgreSQL，用于知识库 Dashboard、切片可视化和上下文回填。知识库 owner/manager 可以调整切片设置和触发 chunk rebuild，但不能配置 embedding/rerank endpoint、模型、维度或 Milvus collection。

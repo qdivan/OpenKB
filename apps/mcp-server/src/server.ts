@@ -36,7 +36,8 @@ const searchInputSchema = {
     .object({
       tags: z.array(z.string()).optional()
     })
-    .optional()
+    .optional(),
+  context_mode: z.enum(["chunk", "parent_child", "paragraph_parent_child", "full_text"]).optional()
 };
 
 const documentInputSchema = {
@@ -150,7 +151,8 @@ export function createOpenKBMcpServer(
             query: input.query,
             knowledge_base_ids: input.knowledge_base_ids,
             top_k: input.top_k,
-            filters: input.filters
+            filters: input.filters,
+            context_mode: input.context_mode
           },
           meta
         )
