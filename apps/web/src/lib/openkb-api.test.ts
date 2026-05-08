@@ -3,12 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiRequestError,
   apiFetch,
+  clearAdminModelSecret,
   createAdminUser,
   isUnauthorized,
   listAdminUsers,
   probeAdminModel,
   searchKnowledge,
-  setAdminUserTenantRole
+  setAdminUserTenantRole,
+  updateAdminModelSetting
 } from "./openkb-api";
 
 describe("OpenKB API client", () => {
@@ -163,6 +165,69 @@ describe("OpenKB API client", () => {
           embedding_batch_size: 8,
           api_key: "temporary-key"
         })
+      })
+    );
+  });
+
+  it("builds admin model save and secret clear requests", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            kind: "language",
+            provider: "openai_responses",
+            source: "db",
+            enabled: true
+          })
+        )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateAdminModelSetting("language", {
+      provider: "openai_responses",
+      enabled: true,
+      endpoint: "https://api.openai.com/v1/responses",
+      model: "gpt-4.1-mini",
+      llm_max_output_tokens: 64,
+      llm_temperature: 0.2,
+      api_key: "new-secret"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/admin/models/language",
+      expect.objectContaining({
+        credentials: "include",
+        method: "PUT",
+        body: JSON.stringify({
+          provider: "openai_responses",
+          enabled: true,
+          endpoint: "https://api.openai.com/v1/responses",
+          model: "gpt-4.1-mini",
+          llm_max_output_tokens: 64,
+          llm_temperature: 0.2,
+          api_key: "new-secret"
+        })
+      })
+    );
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          kind: "language",
+          provider: "openai_responses",
+          source: "env",
+          enabled: false
+        })
+      )
+    );
+
+    await clearAdminModelSecret("language");
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/models/language/secret",
+      expect.objectContaining({
+        credentials: "include",
+        method: "DELETE"
       })
     );
   });

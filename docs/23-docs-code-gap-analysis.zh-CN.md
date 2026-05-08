@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-截至 2026-05-08，本机代码已经推进到 `v0.3.x / Phase 14`。
+截至 2026-05-08，本机代码已经推进到 `v0.3.x / Phase 15.1` 稳定化收口。Phase 15.1 之前的主线提交为 `889fd09 feat: add admin models and workbench polish`。
 
 已完成的主线：
 
@@ -12,22 +12,27 @@
 - Phase 12/15 真实检索与模型配置：OpenKB 可通过环境变量或 system-admin 实例级加密 DB 配置直连 embedding/rerank/LLM 模型服务，支持 BM25、dense、hybrid、rerank，不保存明文 provider key，不做知识库级模型配置。
 - Phase 13 知识库体验：KB Dashboard、Chunks、Retrieval Lab、KB 级切片设置、父子切片、全文上下文、chunk rebuild job、发布/取消发布闭环。
 - Phase 14 Admin 用户管理：创建账号、密码重置链接、激活/停用/软删除、租户角色、会话撤销和审计入口。
-- Web、API、MCP Server、Dify Adapter、import worker、index worker 均已接入 Phase 13/14 最小闭环。
+- Phase 15 Admin Models 配置中心：`system_admin` 可管理实例级 embedding、rerank、language model endpoint/model 和加密 secret；不做知识库级模型配置。
+- Phase 15.1 稳定化：本地源码开发端口固定为 Web `3100` / API `4101`，并补充文档状态、i18n/Models/工作台回归和浏览器冷/热启动验证。
+- Web、API、MCP Server、Dify Adapter、import worker、index worker 均已接入 Phase 15 最小闭环。
 
-仍建议后续优先补：
+Phase 16-20 建议后续优先补：
 
-- Workspace/KB/document 分享协作面板、邀请审批、密码分享、关闭/重置链接 UI。
-- Dify key Web 管理、MCP PAT/OAuth UI、轮换和撤销体验。
-- 当前文档切片侧栏、全局搜索 parent/child 命中解释、发布后 index rebuild 引导。
-- PDF/DOCX/PPTX/XLSX/图片 OCR/MinerU/MarkItDown/Pandoc adapter。
+- Phase 16：Workspace/KB/document 分享协作面板、邀请审批、密码分享、member-only、关闭/重置链接 UI 和 `/share/:token` 只读页。
+- Phase 17：Dify key Web 管理、MCP PAT/OAuth UI、Milvus/rebuild jobs 管理、完整 audit logs 和 auth settings 页面。
+- Phase 18：当前文档切片侧栏、文档版本列表/恢复、全局搜索 parent/child 命中解释、发布后 index rebuild 引导。
+- Phase 19：PDF/DOCX/PPTX/XLSX/图片 OCR/MinerU/MarkItDown/Pandoc adapter。
+- Phase 20：生产 SMTP、CSRF 防护、备份/恢复、监控、TLS/Ingress、完整 MCP OAuth 和密钥轮换策略。
 
 ## 工作树状态
 
-Phase 14 已在 Phase 13 基础上补齐 Admin 用户管理；后续接手时需要同时关注账号权限和协作权限两条线。
+Phase 15.1 已在 Phase 15 Models 基础上做稳定化收口；后续接手时需要同时关注账号权限、协作权限、模型配置和检索链路四条线。
 
 关键新增内容：
 
 - Phase 14 Admin：`/app/admin`、`/app/admin/users`、`/password-reset`，以及账号创建、状态、角色、会话和审计 API。
+- Phase 15 Admin Models：`/app/admin/models`、模型配置 API、`model_settings`、`@openkb/model-client`、实例级加密 secret。
+- Phase 15.1 稳定化：`pnpm dev:local:web`、`pnpm dev:local:api`，Web `3100` / API `4101` 本地源码开发约定。
 - Prisma migration：`0005_phase13_chunk_experience`、`0006_phase13_legacy_chunk_settings`。
 - API：知识库 overview/chunk settings/chunk preview/chunks/chunk rebuild jobs，文档 publish/unpublish。
 - Web：`/app/kb/:kbId` 知识库 Dashboard，包含 Overview、Chunks、Retrieval Lab、Settings。
@@ -57,15 +62,15 @@ pnpm build
 pnpm test
 ```
 
-Phase 14 健康检查返回 `phase-14-admin-users`：
+本地源码开发健康检查：
 
-- API: `http://localhost:4000/health`
+- API: `http://localhost:4101/health`
 - MCP Server: `http://localhost:4100/health`
 - Dify Adapter: `http://localhost:4200/health`
 
 本机测试入口：
 
-- Web: `http://localhost:3000`
+- Web: `http://localhost:3100`
 - 账号：`admin@openkb.local`
 - 密码：`OpenKB-dev-123456`
 

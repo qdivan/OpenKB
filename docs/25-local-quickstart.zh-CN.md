@@ -13,6 +13,24 @@
 
 当前默认链路是 CPU-only：Milvus 使用 BM25/text-only，不启动 MinerU GPU 或 Qwen 模型服务。配置外部 embedding endpoint 并重建索引后，可在 Admin 页面切换 dense/hybrid/rerank。
 
+## 源码开发端口
+
+如果不是跑完整 Docker Compose，而是在本机直接改 Web/API 源码，推荐固定使用：
+
+```text
+Web: http://localhost:3100
+API: http://localhost:4101/health
+```
+
+分别开两个 PowerShell 终端：
+
+```powershell
+pnpm dev:local:api
+pnpm dev:local:web
+```
+
+这两个脚本会设置 `PORT`、`NEXT_PUBLIC_API_BASE_URL` 和 CORS，避免每次手写环境变量。注意：`next dev` 和 Web `next build` 都会使用 `apps/web/.next`，不要同时运行；需要执行 `pnpm --filter @openkb/web build` 或根 `pnpm build` 前，先停止 `pnpm dev:local:web`。
+
 ## 2. 启动
 
 在仓库根目录执行：

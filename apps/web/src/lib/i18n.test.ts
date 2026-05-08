@@ -39,4 +39,20 @@ describe("i18n helpers", () => {
       translate("zh-CN", "Email verified. Account status: {status}.", { status: "active" })
     ).toBe("邮箱已验证。账号状态：active。");
   });
+
+  it("covers Phase 15.1 workbench and admin stabilization labels", () => {
+    expect(translate("zh-CN", "Enter workbench")).toBe("进入工作台");
+    expect(translate("zh-CN", "Overview")).toBe("概览");
+    expect(translate("zh-CN", "Ready")).toBe("就绪");
+    expect(translate("zh-CN", "Probe")).toBe("检测");
+    expect(translate("zh-CN", "Search and index controls")).toBe("搜索与索引控制");
+    expect(translate("zh-CN", "Enable database setting")).toBe("启用数据库配置");
+    expect(translate("zh-CN", "No chunks for this document")).toBe("此文档暂无分块");
+    expect(translate("zh-CN", "Open document")).toBe("打开文档");
+    expect(translate("zh-CN", "status: {value}", { value: "active" })).toBe("状态：active");
+    expect(translate("zh-CN", "visibility: {value}", { value: "workspace" })).toBe(
+      "可见性：workspace"
+    );
+    expect(translate("zh-CN", "Embedding batch size help")).toContain("不是并行请求数");
+  });
 });

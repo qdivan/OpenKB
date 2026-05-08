@@ -36,7 +36,7 @@
 
 OpenKB 是一个开源、自托管的团队知识库。它关注写作体验、权限边界和可信检索：内容与权限以 PostgreSQL 为准，Milvus 只做检索索引，Web、MCP、Dify 返回结果前都会再次校验权限。
 
-当前版本处于 `v0.3.x / Phase 15`，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
+当前版本处于 `v0.3.x / Phase 15.1` 稳定化收口，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
 
 ## 特性
 
@@ -75,6 +75,15 @@ OpenKB-dev-123456
 
 更完整的端口覆盖、健康检查、真实模型配置和 MCP/Dify 冒烟测试见 [本地快速部署](docs/25-local-quickstart.zh-CN.md)。
 
+如果只做源码开发，推荐用两个终端固定本地端口：
+
+```powershell
+pnpm dev:local:api
+pnpm dev:local:web
+```
+
+此模式下 Web 使用 `http://localhost:3100`，API 使用 `http://localhost:4101`。不要在 `next dev` 运行时同时执行 Web `next build`，两者会争用同一个 `.next` 目录；构建前先停掉 Web dev server。
+
 ## 部署
 
 - Docker Compose: [deploy/docker-compose/README.md](deploy/docker-compose/README.md)
@@ -92,8 +101,9 @@ OpenKB-dev-123456
 - Phase 13：知识库 Dashboard、父子切片、全文上下文、检索测试台、发布闭环。
 - Phase 14：Admin 用户管理、账号状态、租户角色、密码重置链接、会话撤销和审计入口。
 - Phase 15：Admin Models 配置中心，支持 system_admin 管理实例级 embedding、rerank、language model endpoint/model 和加密 secret。
+- Phase 15.1：当前稳定化收口，补本地启动脚本、文档状态、i18n/Models/工作台回归和浏览器冷/热启动验证。
 
-下一批重点是 workspace/KB/document 协作面板、邀请审批、分享链接 UI、MCP/Dify key 管理、当前文档切片侧栏和复杂导入 adapter。当前本机开发移交见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
+下一批路线是 Phase 16-20：协作与分享 UI、Admin 运维管理 UI、文档版本与检索解释、复杂导入 adapter、生产增强。当前本机开发移交见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
 
 ## 开发验证
 

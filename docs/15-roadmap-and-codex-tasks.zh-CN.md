@@ -186,9 +186,67 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 - `system_admin` 可保存 endpoint/model 和加密 API key；`tenant_admin` 只能查看检索状态，不能保存 Models。
 - `OPENKB_CONFIG_ENCRYPTION_KEY` 作为 AES-256-GCM secret 解密密钥；缺失时不能保存或读取 DB secret。
 - 模型配置优先级：DB enabled 配置 > 环境变量 > 未配置。
-- Language model 第一版只做 OpenAI Responses API probe，不实现 LLM 问答生成。
+- Language model 第一版只做连通性检测，不实现 LLM 问答生成；请求格式支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。
 
 硬规则：
 - 数据库只保存密文、last4、更新时间和配置元数据。
 - 审计日志、DTO、日志 payload 都不能出现 raw API key。
 - embedding model 或 dim 变更后不自动重建 Milvus；Admin UI 显示 index rebuild required，并继续通过现有 rebuild job 执行 blue/green alias switch。
+
+## Phase 15.1 - 稳定化收口
+
+输出：
+- README、路线图、交接文档和本地快速部署文档同步到 Phase 15.1 现状。
+- 固定推荐本地源码开发端口：Web `3100`、API `4101`。
+- 补 `pnpm dev:local:web` 和 `pnpm dev:local:api`，并说明 `next dev` 与 `next build` 不要同时争用同一个 `.next`。
+- 回归 `/`、`/login`、`/app`、知识库 Dashboard、文档页、Admin Users、Admin Retrieval、Admin Models 的中文文案、loading skeleton、错误态和无 overlay 状态。
+- 巩固 Models 保存前校验、检测错误展示、secret 不回显、DB/env source 说明，以及 transient probe 不保存配置或 raw key。
+- 真实浏览器记录 dev 冷编译和热导航耗时；冷启动只记录，热导航要求主路径有即时反馈。
+
+边界：
+- 不新增数据库 migration。
+- 不修改模型权限规则。
+- 不新增协作、分享、版本、复杂导入或运维管理功能。
+
+## Phase 16 - 协作与分享 UI
+
+输出：
+- Workspace / KB / document 协作者面板。
+- 邀请链接创建、撤销、接受和审批入口。
+- 分享链接 UI：密码访问、member-only、关闭分享、重置链接。
+- `/share/:token` 最小只读页。
+- 分享链接 v0.x 继续只读，不加入编辑权限。
+
+## Phase 17 - Admin 运维管理 UI
+
+输出：
+- Dify key 管理、范围绑定、轮换和撤销。
+- MCP PAT / OAuth 管理入口。
+- Milvus collection、alias、rebuild jobs 管理页。
+- 完整 audit logs 页面。
+- Auth settings 页面。
+
+## Phase 18 - 文档版本与检索解释
+
+输出：
+- 文档版本列表、对比和 restore。
+- 当前文档 chunk 侧栏。
+- 搜索结果 parent / child 命中解释。
+- 发布后 index rebuild 引导。
+
+## Phase 19 - 复杂导入适配器
+
+输出：
+- PDF / DOCX / PPTX / XLSX / image 导入适配器。
+- MarkItDown / Pandoc / MinerU / OCR adapter 边界。
+- 工具不可用时返回明确 warnings，不静默失败。
+
+## Phase 20 - 生产增强
+
+输出：
+- 生产 SMTP。
+- CSRF 防护。
+- 备份 / 恢复。
+- 监控、TLS、Ingress。
+- 完整 MCP OAuth 授权码流程。
+- 密钥轮换策略和安全运维文档。
