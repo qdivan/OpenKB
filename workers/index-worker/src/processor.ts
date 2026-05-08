@@ -4,7 +4,8 @@ import {
   getOpenKBModelClientConfig,
   isEmbeddingConfigured,
   isRerankConfigured,
-  type OpenKBModelClient
+  type OpenKBModelClient,
+  type StoredModelSetting
 } from "@openkb/model-client";
 import {
   createCollectionName,
@@ -74,9 +75,20 @@ type ChunkRow = {
 export async function runRebuildOnce(options: IndexWorkerOptions = {}): Promise<IndexRunResult> {
   const prisma = options.prisma ?? createDatabaseClient();
   const permissions = options.permissions ?? new PermissionService({ prisma });
-  const milvus = options.milvus ?? createOpenKBMilvus(getMilvusConfig(options.env));
-  const modelClient =
-    options.modelClient ?? createOpenKBModelClient(getOpenKBModelClientConfig(options.env));
+  const modelSettings = options.modelClient
+    ? []
+    : await prisma.modelSetting.findMany({ where: { kind: { in: ["embedding", "rerank"] } } });
+  const modelConfig = options.modelClient
+    ? options.modelClient.config
+    : getOpenKBModelClientConfig(options.env, modelSettings.map(toStoredModelSetting));
+  const milvus =
+    options.milvus ??
+    createOpenKBMilvus({
+      ...getMilvusConfig(options.env),
+      vectorDim: modelConfig.embedding.dim,
+      enableDenseVector: isEmbeddingConfigured(modelConfig)
+    });
+  const modelClient = options.modelClient ?? createOpenKBModelClient(modelConfig);
   const shouldDisconnect = !options.prisma;
 
   try {
@@ -136,7 +148,7 @@ async function processRebuildJob(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<number> {
   const config = getMilvusConfig(env);
-  const modelConfig = getOpenKBModelClientConfig(env);
+  const modelConfig = modelClient.config;
   const embeddingConfigured = isEmbeddingConfigured(modelConfig);
   const rerankConfigured = isRerankConfigured(modelConfig);
   const now = new Date();
@@ -147,7 +159,7 @@ async function processRebuildJob(
       alias: job.target_alias,
       collection_name: job.target_collection,
       schema_version: config.schemaVersion,
-      vector_dim: config.vectorDim,
+      vector_dim: modelConfig.embedding.dim,
       embedding_function_name: embeddingConfigured ? "openkb_direct_embedding" : "disabled",
       bm25_function_name: config.enableBm25 ? "openkb_bm25" : null,
       rerank_function_name: rerankConfigured ? "openkb_direct_rerank" : null,
@@ -392,6 +404,36 @@ function toStableErrorCode(error: unknown): string {
     return error.code;
   }
   return "INDEX_REBUILD_FAILED";
+}
+
+function toStoredModelSetting(setting: {
+  kind: string;
+  provider: string;
+  endpoint: string | null;
+  model: string | null;
+  enabled: boolean;
+  timeout_ms: number | null;
+  embedding_dim: number | null;
+  embedding_batch_size: number | null;
+  llm_temperature: number | null;
+  llm_max_output_tokens: number | null;
+  encrypted_api_key: string | null;
+  api_key_last4: string | null;
+}): StoredModelSetting {
+  return {
+    kind: setting.kind as StoredModelSetting["kind"],
+    provider: setting.provider as StoredModelSetting["provider"],
+    endpoint: setting.endpoint,
+    model: setting.model,
+    enabled: setting.enabled,
+    timeout_ms: setting.timeout_ms,
+    embedding_dim: setting.embedding_dim,
+    embedding_batch_size: setting.embedding_batch_size,
+    llm_temperature: setting.llm_temperature,
+    llm_max_output_tokens: setting.llm_max_output_tokens,
+    encrypted_api_key: setting.encrypted_api_key,
+    api_key_last4: setting.api_key_last4
+  };
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {

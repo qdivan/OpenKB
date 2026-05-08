@@ -1,9 +1,12 @@
 "use client";
 
-import { ArrowLeft, Database, ShieldCheck, Users } from "lucide-react";
+import { ArrowLeft, BrainCircuit, Database, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, type ReactNode } from "react";
+
+import { LanguageSwitcher } from "@/components/language-switcher";
+import { useI18n } from "@/lib/i18n-provider";
 
 const adminNavItems = [
   {
@@ -19,6 +22,12 @@ const adminNavItems = [
     description: "Search and index controls"
   },
   {
+    href: "/app/admin/models",
+    icon: <BrainCircuit className="h-4 w-4" />,
+    label: "Models",
+    description: "Embedding, rerank, and LLM"
+  },
+  {
     href: "/app/admin/permission-boundary",
     icon: <ShieldCheck className="h-4 w-4" />,
     label: "Permission Boundary",
@@ -27,21 +36,37 @@ const adminNavItems = [
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const pathname = usePathname();
+  const router = useRouter();
+
+  const prefetchAdminRoute = useCallback(
+    (href: string) => {
+      router.prefetch(href);
+    },
+    [router]
+  );
+
+  useEffect(() => {
+    for (const item of adminNavItems) {
+      prefetchAdminRoute(item.href);
+    }
+  }, [prefetchAdminRoute]);
 
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-950">
       <header className="border-b border-zinc-200 bg-white">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
           <div className="flex min-w-0 items-center gap-3">
-            <Link className="icon-button" href="/app" title="Back to workspace">
+            <Link className="icon-button" href="/app" title={t("Back to workspace")}>
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">Admin</p>
-              <p className="truncate text-xs text-zinc-500">OpenKB control plane</p>
+              <p className="truncate text-sm font-semibold">{t("Admin")}</p>
+              <p className="truncate text-xs text-zinc-500">{t("OpenKB control plane")}</p>
             </div>
           </div>
+          <LanguageSwitcher compact />
         </div>
       </header>
 
@@ -59,13 +84,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   }`}
                   href={item.href}
                   key={item.href}
+                  onFocus={() => prefetchAdminRoute(item.href)}
+                  onMouseEnter={() => prefetchAdminRoute(item.href)}
                 >
                   <span className={`mt-0.5 ${active ? "text-emerald-700" : "text-zinc-500"}`}>
                     {item.icon}
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-sm font-semibold">{item.label}</span>
-                    <span className="block truncate text-xs text-zinc-500">{item.description}</span>
+                    <span className="block text-sm font-semibold">{t(item.label)}</span>
+                    <span className="block truncate text-xs text-zinc-500">
+                      {t(item.description)}
+                    </span>
                   </span>
                 </Link>
               );

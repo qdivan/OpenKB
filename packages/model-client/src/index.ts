@@ -1,13 +1,39 @@
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+
 export const MODEL_CLIENT_PACKAGE_NAME = "@openkb/model-client";
 export const DEFAULT_EMBEDDING_DIM = 2048;
 export const DEFAULT_EMBEDDING_BATCH_SIZE = 16;
 export const DEFAULT_EMBEDDING_TIMEOUT_MS = 30_000;
 export const DEFAULT_RERANK_TIMEOUT_MS = 15_000;
+export const DEFAULT_LANGUAGE_TIMEOUT_MS = 30_000;
+export const DEFAULT_LANGUAGE_MAX_OUTPUT_TOKENS = 64;
+export const DEFAULT_LANGUAGE_TEMPERATURE = 0;
+export const DEFAULT_LANGUAGE_ENDPOINT = "https://api.openai.com/v1/responses";
+export const DEFAULT_OPENAI_CHAT_COMPLETIONS_ENDPOINT =
+  "https://api.openai.com/v1/chat/completions";
+export const DEFAULT_ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages";
+
+export const MODEL_KINDS = ["embedding", "rerank", "language"] as const;
+export const MODEL_PROVIDERS = [
+  "openai_compatible",
+  "openai_responses",
+  "openai_chat_completions",
+  "anthropic_messages"
+] as const;
+export const LANGUAGE_MODEL_PROVIDERS = [
+  "openai_responses",
+  "openai_chat_completions",
+  "anthropic_messages"
+] as const;
+
+export type ModelKind = (typeof MODEL_KINDS)[number];
+export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
 
 export type ModelClientErrorCode =
   | "MODEL_NOT_CONFIGURED"
   | "MODEL_REQUEST_FAILED"
   | "MODEL_RESPONSE_INVALID"
+  | "MODEL_SECRET_UNAVAILABLE"
   | "EMBEDDING_DIM_MISMATCH";
 
 export class ModelClientError extends Error {
@@ -21,23 +47,56 @@ export class ModelClientError extends Error {
   }
 }
 
+export type StoredModelSetting = {
+  kind: ModelKind;
+  provider: ModelProvider;
+  endpoint: string | null;
+  model: string | null;
+  enabled: boolean;
+  timeout_ms: number | null;
+  embedding_dim: number | null;
+  embedding_batch_size: number | null;
+  llm_temperature: number | null;
+  llm_max_output_tokens: number | null;
+  encrypted_api_key: string | null;
+  api_key_last4?: string | null;
+};
+
 export type EmbeddingConfig = {
+  provider: "openai_compatible";
   endpoint?: string;
   model?: string;
+  apiKey?: string;
+  source: "env" | "db" | "none";
   dim: number;
   batchSize: number;
   timeoutMs: number;
 };
 
 export type RerankConfig = {
+  provider: "openai_compatible";
   endpoint?: string;
   model?: string;
+  apiKey?: string;
+  source: "env" | "db" | "none";
   timeoutMs: number;
+};
+
+export type LanguageConfig = {
+  provider: (typeof LANGUAGE_MODEL_PROVIDERS)[number];
+  endpoint?: string;
+  model?: string;
+  apiKey?: string;
+  source: "env" | "db" | "none";
+  timeoutMs: number;
+  maxOutputTokens: number;
+  temperature: number;
 };
 
 export type OpenKBModelClientConfig = {
   embedding: EmbeddingConfig;
   rerank: RerankConfig;
+  language: LanguageConfig;
 };
 
 export type RerankDocumentScore = {
@@ -85,6 +144,10 @@ export class OpenKBModelClient {
     return isRerankConfigured(this.config);
   }
 
+  get languageConfigured(): boolean {
+    return isLanguageConfigured(this.config);
+  }
+
   async embedText(text: string): Promise<number[]> {
     const embeddings = await this.embedTexts([text]);
     const embedding = embeddings[0];
@@ -129,7 +192,8 @@ export class OpenKBModelClient {
         query: input.query,
         documents: input.documents
       },
-      this.config.rerank.timeoutMs
+      this.config.rerank.timeoutMs,
+      this.config.rerank.apiKey
     );
     const results = parseRerankResults(body, input.documents.length);
     return results.sort((a, b) => b.relevance_score - a.relevance_score);
@@ -189,6 +253,32 @@ export class OpenKBModelClient {
     }
   }
 
+  async probeLanguageModel(sampleText = "Reply with OpenKB OK."): Promise<ModelProbeResult> {
+    if (!isLanguageConfigured(this.config)) {
+      return { configured: false, ok: false, error: "Language model is not configured." };
+    }
+
+    const startedAt = Date.now();
+    try {
+      const body = await this.requestLanguageProbe(sampleText);
+      const payload = assertRecord(body, "Language model response");
+      return {
+        configured: true,
+        ok: true,
+        model: typeof payload.model === "string" ? payload.model : this.config.language.model,
+        latency_ms: Date.now() - startedAt
+      };
+    } catch (error) {
+      return {
+        configured: true,
+        ok: false,
+        model: this.config.language.model,
+        latency_ms: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : "Language model probe failed."
+      };
+    }
+  }
+
   private async requestEmbeddingBatch(texts: string[]): Promise<number[][]> {
     const body = await postJson(
       this.fetchFn,
@@ -197,9 +287,61 @@ export class OpenKBModelClient {
         model: this.config.embedding.model,
         input: texts
       },
-      this.config.embedding.timeoutMs
+      this.config.embedding.timeoutMs,
+      this.config.embedding.apiKey
     );
     return parseEmbeddingResponse(body, texts.length, this.config.embedding.dim);
+  }
+
+  private async requestLanguageProbe(sampleText: string): Promise<unknown> {
+    const provider = this.config.language.provider;
+    if (provider === "openai_chat_completions") {
+      return postJson(
+        this.fetchFn,
+        this.config.language.endpoint,
+        compactRecord({
+          model: this.config.language.model,
+          messages: [{ role: "user", content: sampleText }],
+          max_tokens: this.config.language.maxOutputTokens,
+          temperature: this.config.language.temperature
+        }),
+        this.config.language.timeoutMs,
+        this.config.language.apiKey
+      );
+    }
+
+    if (provider === "anthropic_messages") {
+      return postJson(
+        this.fetchFn,
+        this.config.language.endpoint,
+        compactRecord({
+          model: this.config.language.model,
+          max_tokens: this.config.language.maxOutputTokens,
+          temperature: this.config.language.temperature,
+          messages: [{ role: "user", content: sampleText }]
+        }),
+        this.config.language.timeoutMs,
+        this.config.language.apiKey,
+        {
+          auth: "anthropic",
+          headers: { "anthropic-version": "2023-06-01" }
+        }
+      );
+    }
+
+    return postJson(
+      this.fetchFn,
+      this.config.language.endpoint,
+      compactRecord({
+        model: this.config.language.model,
+        input: sampleText,
+        store: false,
+        max_output_tokens: this.config.language.maxOutputTokens,
+        temperature: this.config.language.temperature
+      }),
+      this.config.language.timeoutMs,
+      this.config.language.apiKey
+    );
   }
 }
 
@@ -210,21 +352,14 @@ export function createOpenKBModelClient(
 }
 
 export function getOpenKBModelClientConfig(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  storedSettings: StoredModelSetting[] = []
 ): OpenKBModelClientConfig {
+  const settingByKind = new Map(storedSettings.map((setting) => [setting.kind, setting]));
   return {
-    embedding: {
-      endpoint: emptyToUndefined(env.OPENKB_EMBEDDING_ENDPOINT),
-      model: emptyToUndefined(env.OPENKB_EMBEDDING_MODEL),
-      dim: parsePositiveInt(env.OPENKB_EMBEDDING_DIM, DEFAULT_EMBEDDING_DIM),
-      batchSize: parsePositiveInt(env.OPENKB_EMBEDDING_BATCH_SIZE, DEFAULT_EMBEDDING_BATCH_SIZE),
-      timeoutMs: parsePositiveInt(env.OPENKB_EMBEDDING_TIMEOUT_MS, DEFAULT_EMBEDDING_TIMEOUT_MS)
-    },
-    rerank: {
-      endpoint: emptyToUndefined(env.OPENKB_RERANK_ENDPOINT),
-      model: emptyToUndefined(env.OPENKB_RERANK_MODEL),
-      timeoutMs: parsePositiveInt(env.OPENKB_RERANK_TIMEOUT_MS, DEFAULT_RERANK_TIMEOUT_MS)
-    }
+    embedding: resolveEmbeddingConfig(env, settingByKind.get("embedding")),
+    rerank: resolveRerankConfig(env, settingByKind.get("rerank")),
+    language: resolveLanguageConfig(env, settingByKind.get("language"))
   };
 }
 
@@ -234,6 +369,80 @@ export function isEmbeddingConfigured(config: OpenKBModelClientConfig): boolean 
 
 export function isRerankConfigured(config: OpenKBModelClientConfig): boolean {
   return Boolean(config.rerank.endpoint && config.rerank.model);
+}
+
+export function isLanguageConfigured(config: OpenKBModelClientConfig): boolean {
+  return Boolean(config.language.endpoint && config.language.model);
+}
+
+export function encryptModelSecret(
+  secret: string,
+  encryptionKey = process.env.OPENKB_CONFIG_ENCRYPTION_KEY
+): string {
+  const normalized = secret.trim();
+  if (!normalized) {
+    throw new ModelClientError("MODEL_SECRET_UNAVAILABLE", "Model API key cannot be empty.");
+  }
+
+  const key = deriveEncryptionKey(encryptionKey);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(normalized, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return ["v1", toBase64Url(iv), toBase64Url(tag), toBase64Url(ciphertext)].join(":");
+}
+
+export function decryptModelSecret(
+  encryptedSecret: string,
+  encryptionKey = process.env.OPENKB_CONFIG_ENCRYPTION_KEY
+): string {
+  const key = deriveEncryptionKey(encryptionKey);
+  const parts = encryptedSecret.split(":");
+  if (parts.length !== 4 || parts[0] !== "v1") {
+    throw new ModelClientError("MODEL_SECRET_UNAVAILABLE", "Model API key ciphertext is invalid.");
+  }
+
+  try {
+    const [, ivPart, tagPart, ciphertextPart] = parts as [string, string, string, string];
+    const iv = fromBase64Url(ivPart);
+    const tag = fromBase64Url(tagPart);
+    const ciphertext = fromBase64Url(ciphertextPart);
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  } catch {
+    throw new ModelClientError(
+      "MODEL_SECRET_UNAVAILABLE",
+      "Model API key cannot be decrypted with the current OPENKB_CONFIG_ENCRYPTION_KEY.",
+      500
+    );
+  }
+}
+
+export function getModelSecretLast4(secret: string): string {
+  const normalized = secret.trim();
+  return normalized.slice(-4);
+}
+
+export function normalizeModelProvider(
+  value: string | null | undefined,
+  kind: ModelKind
+): ModelProvider {
+  const normalized = value?.trim();
+  if (normalized === "openai") {
+    return kind === "language" ? "openai_responses" : "openai_compatible";
+  }
+  if ((MODEL_PROVIDERS as readonly string[]).includes(normalized ?? "")) {
+    return normalized as ModelProvider;
+  }
+  return kind === "language" ? "openai_responses" : "openai_compatible";
+}
+
+export function isModelProviderAllowedForKind(provider: ModelProvider, kind: ModelKind): boolean {
+  if (kind === "language") {
+    return (LANGUAGE_MODEL_PROVIDERS as readonly string[]).includes(provider);
+  }
+  return provider === "openai_compatible";
 }
 
 export function parseEmbeddingResponse(
@@ -312,11 +521,132 @@ export function parseRerankResults(body: unknown, documentCount: number): Rerank
   });
 }
 
+function resolveEmbeddingConfig(
+  env: NodeJS.ProcessEnv,
+  setting: StoredModelSetting | undefined
+): EmbeddingConfig {
+  if (setting?.enabled) {
+    return {
+      provider: "openai_compatible",
+      endpoint: emptyToUndefined(setting.endpoint ?? undefined),
+      model: emptyToUndefined(setting.model ?? undefined),
+      apiKey: decryptSettingApiKey(setting, env),
+      source: "db",
+      dim: positiveNumber(setting.embedding_dim, DEFAULT_EMBEDDING_DIM),
+      batchSize: positiveNumber(setting.embedding_batch_size, DEFAULT_EMBEDDING_BATCH_SIZE),
+      timeoutMs: positiveNumber(setting.timeout_ms, DEFAULT_EMBEDDING_TIMEOUT_MS)
+    };
+  }
+
+  const envConfig: EmbeddingConfig = {
+    provider: "openai_compatible",
+    endpoint: emptyToUndefined(env.OPENKB_EMBEDDING_ENDPOINT),
+    model: emptyToUndefined(env.OPENKB_EMBEDDING_MODEL),
+    apiKey: emptyToUndefined(env.OPENKB_EMBEDDING_API_KEY),
+    source: "env",
+    dim: parsePositiveInt(env.OPENKB_EMBEDDING_DIM, DEFAULT_EMBEDDING_DIM),
+    batchSize: parsePositiveInt(env.OPENKB_EMBEDDING_BATCH_SIZE, DEFAULT_EMBEDDING_BATCH_SIZE),
+    timeoutMs: parsePositiveInt(env.OPENKB_EMBEDDING_TIMEOUT_MS, DEFAULT_EMBEDDING_TIMEOUT_MS)
+  };
+  return isEmbeddingConfigConfigured(envConfig) ? envConfig : { ...envConfig, source: "none" };
+}
+
+function resolveRerankConfig(
+  env: NodeJS.ProcessEnv,
+  setting: StoredModelSetting | undefined
+): RerankConfig {
+  if (setting?.enabled) {
+    return {
+      provider: "openai_compatible",
+      endpoint: emptyToUndefined(setting.endpoint ?? undefined),
+      model: emptyToUndefined(setting.model ?? undefined),
+      apiKey: decryptSettingApiKey(setting, env),
+      source: "db",
+      timeoutMs: positiveNumber(setting.timeout_ms, DEFAULT_RERANK_TIMEOUT_MS)
+    };
+  }
+
+  const envConfig: RerankConfig = {
+    provider: "openai_compatible",
+    endpoint: emptyToUndefined(env.OPENKB_RERANK_ENDPOINT),
+    model: emptyToUndefined(env.OPENKB_RERANK_MODEL),
+    apiKey: emptyToUndefined(env.OPENKB_RERANK_API_KEY),
+    source: "env",
+    timeoutMs: parsePositiveInt(env.OPENKB_RERANK_TIMEOUT_MS, DEFAULT_RERANK_TIMEOUT_MS)
+  };
+  return isRerankConfigConfigured(envConfig) ? envConfig : { ...envConfig, source: "none" };
+}
+
+function resolveLanguageConfig(
+  env: NodeJS.ProcessEnv,
+  setting: StoredModelSetting | undefined
+): LanguageConfig {
+  if (setting?.enabled) {
+    const provider = normalizeLanguageProvider(setting.provider);
+    return {
+      provider,
+      endpoint:
+        emptyToUndefined(setting.endpoint ?? undefined) ?? defaultLanguageEndpoint(provider),
+      model: emptyToUndefined(setting.model ?? undefined),
+      apiKey: decryptSettingApiKey(setting, env),
+      source: "db",
+      timeoutMs: positiveNumber(setting.timeout_ms, DEFAULT_LANGUAGE_TIMEOUT_MS),
+      maxOutputTokens: positiveNumber(
+        setting.llm_max_output_tokens,
+        DEFAULT_LANGUAGE_MAX_OUTPUT_TOKENS
+      ),
+      temperature: finiteNumber(setting.llm_temperature, DEFAULT_LANGUAGE_TEMPERATURE)
+    };
+  }
+
+  const provider = normalizeLanguageProvider(env.OPENKB_LLM_REQUEST_FORMAT);
+  const envConfig: LanguageConfig = {
+    provider,
+    endpoint: emptyToUndefined(env.OPENKB_LLM_ENDPOINT) ?? defaultLanguageEndpoint(provider),
+    model: emptyToUndefined(env.OPENKB_LLM_MODEL),
+    apiKey: emptyToUndefined(env.OPENKB_LLM_API_KEY),
+    source: "env",
+    timeoutMs: parsePositiveInt(env.OPENKB_LLM_TIMEOUT_MS, DEFAULT_LANGUAGE_TIMEOUT_MS),
+    maxOutputTokens: parsePositiveInt(
+      env.OPENKB_LLM_MAX_OUTPUT_TOKENS,
+      DEFAULT_LANGUAGE_MAX_OUTPUT_TOKENS
+    ),
+    temperature: parseFloatNumber(env.OPENKB_LLM_TEMPERATURE, DEFAULT_LANGUAGE_TEMPERATURE)
+  };
+  return isLanguageConfigConfigured(envConfig) ? envConfig : { ...envConfig, source: "none" };
+}
+
+function decryptSettingApiKey(
+  setting: StoredModelSetting,
+  env: NodeJS.ProcessEnv
+): string | undefined {
+  return setting.encrypted_api_key
+    ? decryptModelSecret(setting.encrypted_api_key, env.OPENKB_CONFIG_ENCRYPTION_KEY)
+    : undefined;
+}
+
+function isEmbeddingConfigConfigured(config: EmbeddingConfig): boolean {
+  return Boolean(config.endpoint && config.model);
+}
+
+function isRerankConfigConfigured(config: RerankConfig): boolean {
+  return Boolean(config.endpoint && config.model);
+}
+
+function isLanguageConfigConfigured(config: LanguageConfig): boolean {
+  return Boolean(config.endpoint && config.model);
+}
+
 async function postJson(
   fetchFn: FetchLike,
   endpoint: string | undefined,
   payload: Record<string, unknown>,
-  timeoutMs: number
+  timeoutMs: number,
+  apiKey?: string,
+  options: {
+    auth?: "bearer" | "anthropic";
+    headers?: Record<string, string>;
+  } = {}
 ): Promise<unknown> {
   if (!endpoint) {
     throw new ModelClientError("MODEL_NOT_CONFIGURED", "Model endpoint is not configured.");
@@ -325,9 +655,20 @@ async function postJson(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      ...(options.headers ?? {})
+    };
+    if (apiKey) {
+      if (options.auth === "anthropic") {
+        headers["x-api-key"] = apiKey;
+      } else {
+        headers.authorization = `Bearer ${apiKey}`;
+      }
+    }
     const response = await fetchFn(endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
       signal: controller.signal
     });
@@ -386,12 +727,82 @@ function chunk<T>(values: T[], size: number): T[][] {
   return batches;
 }
 
+function deriveEncryptionKey(value: string | undefined): Buffer {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new ModelClientError(
+      "MODEL_SECRET_UNAVAILABLE",
+      "OPENKB_CONFIG_ENCRYPTION_KEY is required to save or read model API keys.",
+      500
+    );
+  }
+
+  if (/^[a-f0-9]{64}$/i.test(normalized)) {
+    return Buffer.from(normalized, "hex");
+  }
+
+  try {
+    const decoded = Buffer.from(normalized, "base64");
+    if (decoded.length === 32) {
+      return decoded;
+    }
+  } catch {
+    // Fall through to hashed passphrase support.
+  }
+
+  return createHash("sha256").update(normalized).digest();
+}
+
+function toBase64Url(value: Buffer): string {
+  return value.toString("base64url");
+}
+
+function fromBase64Url(value: string): Buffer {
+  return Buffer.from(value, "base64url");
+}
+
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = value ? Number(value) : fallback;
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseFloatNumber(value: string | undefined, fallback: number): number {
+  const parsed = value ? Number(value) : fallback;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function positiveNumber(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function finiteNumber(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 function emptyToUndefined(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized || undefined;
+}
+
+function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null)
+  );
+}
+
+function normalizeLanguageProvider(value: string | null | undefined): LanguageConfig["provider"] {
+  const provider = normalizeModelProvider(value, "language");
+  return isModelProviderAllowedForKind(provider, "language")
+    ? (provider as LanguageConfig["provider"])
+    : "openai_responses";
+}
+
+function defaultLanguageEndpoint(provider: LanguageConfig["provider"]): string {
+  if (provider === "openai_chat_completions") {
+    return DEFAULT_OPENAI_CHAT_COMPLETIONS_ENDPOINT;
+  }
+  if (provider === "anthropic_messages") {
+    return DEFAULT_ANTHROPIC_MESSAGES_ENDPOINT;
+  }
+  return DEFAULT_LANGUAGE_ENDPOINT;
 }

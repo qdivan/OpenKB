@@ -6,10 +6,10 @@
 Milvus 是检索索引，不是业务数据库，也不是最终权限系统。
 PostgreSQL 是文档、chunk 和权限真相。
 Embedding / BM25 / rerank 长期优先使用 Milvus Server 2.6+ 原生 Function 能力。
-OpenKB v0.x 不保存 embedding/rerank provider API key。
+OpenKB v0.x 允许 `system_admin` 保存实例级加密模型 secret；不允许明文保存 provider key，也不允许知识库级模型配置。
 ```
 
-当前 v0.3.x 已按部署决策实现 OpenKB 直连 HTTP 模型服务：endpoint/model 只来自环境变量，检索模式只由 Admin 设置保存到 `retrieval_settings`，不保存 provider key，不提供知识库级模型配置。Milvus TEXTEMBEDDING/RERANK Function 仍保留为后续演进方向。
+当前 v0.3.x 已按部署决策实现 OpenKB 直连 HTTP 模型服务：endpoint/model/secret 的优先级为实例级 DB enabled 配置 > 环境变量 > 未配置；检索模式只由 Admin 设置保存到 `retrieval_settings`。DB secret 必须加密保存并由 `OPENKB_CONFIG_ENCRYPTION_KEY` 解密，不提供知识库级模型配置。Milvus TEXTEMBEDDING/RERANK Function 仍保留为后续演进方向。
 
 ## 2. OpenKB 管理什么
 
@@ -28,11 +28,11 @@ retrieval mode
 OpenKB 不管理：
 
 ```text
-embedding provider API key
-rerank provider API key
+plaintext embedding provider API key
+plaintext rerank provider API key
 知识库级模型配置
 知识库级向量维度配置
-模型 endpoint/key 的数据库配置
+知识库级模型 endpoint/key 数据库配置
 ```
 
 ## 3. Embedding
@@ -103,7 +103,7 @@ OPENKB_RERANK_MODEL=qwen3-vl-reranker-2b
 - rerank 使用的字段必须是文本字段。
 - rerank 失败时降级为未 rerank 结果，并在结果 metadata 标记 `rerank_failed`。
 - rerank 必须发生在最终权限检查之后。
-- OpenKB 不保存 rerank API key。
+- OpenKB 不保存 rerank API key 明文；如由 `system_admin` 配置实例级 secret，必须加密保存。
 - Milvus RERANK / Model Ranker Function 是后续可选演进。
 
 ## 6. Collection schema
@@ -188,7 +188,7 @@ and ARRAY_CONTAINS_ANY(access_principals, [
 Embedding 模型更换流程：
 
 ```text
-1. 管理员在部署环境更新 `OPENKB_EMBEDDING_*` / `OPENKB_RERANK_*`。
+1. `system_admin` 在 Models 配置中心更新实例级模型配置，或管理员在部署环境更新 `OPENKB_EMBEDDING_*` / `OPENKB_RERANK_*`。
 2. 管理员在 OpenKB 后台创建 rebuild job。
 3. OpenKB 创建新 Milvus collection。
 4. collection schema 定义 BM25 Function；如启用 embedding，则包含普通 `dense_vector` 字段。
@@ -205,8 +205,8 @@ Embedding 模型更换流程：
 
 - 在同一 active collection 混合新旧 embedding 模型向量。
 - 让知识库 owner 单独切换模型。
-- 让 OpenKB 保存 embedding/rerank provider API key。
-- 为了兼容某模型在 OpenKB DB 中临时保存 embedding/rerank key。
+- 让 OpenKB 保存 plaintext embedding/rerank provider API key。
+- 为了兼容某模型在知识库级配置中临时保存 embedding/rerank key。
 
 ## 9. Retrieval Service
 
@@ -277,6 +277,7 @@ resolve caller identity
 ```
 
 不提供知识库级模型配置页面。
+`/app/admin/models` 是实例级 system-admin 配置中心，不是知识库级模型配置页面。
 
 ## 11. 父子检索和全文上下文
 

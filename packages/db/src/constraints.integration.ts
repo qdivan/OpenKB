@@ -18,6 +18,7 @@ const allTables = [
   "auth_email_outbox",
   "auth_tokens",
   "auth_sessions",
+  "model_settings",
   "dify_knowledge_mappings",
   "dify_api_keys",
   "mcp_personal_access_tokens",
@@ -203,7 +204,7 @@ describe("OpenKB PostgreSQL constraints", () => {
     expect(foldersTable.rows[0]?.folders_table).toBeNull();
   });
 
-  it("does not add forbidden model configuration or embedding key storage", async () => {
+  it("does not add knowledge-base model configuration or plaintext provider key storage", async () => {
     const forbiddenTables = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1::text[])",
       [
@@ -217,11 +218,42 @@ describe("OpenKB PostgreSQL constraints", () => {
     );
     const forbiddenColumns = await pool.query(
       "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = ANY($1::text[])",
-      [["embedding_api_key", "rerank_api_key", "provider_api_key", "model_config"]]
+      [["embedding_api_key", "rerank_api_key", "provider_api_key", "api_key", "model_config"]]
+    );
+    const modelSettingsColumns = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'model_settings' ORDER BY column_name"
     );
 
     expect(forbiddenTables.rowCount).toBe(0);
     expect(forbiddenColumns.rowCount).toBe(0);
+    expect(modelSettingsColumns.rows.map((row) => row.column_name)).toEqual(
+      expect.arrayContaining(["encrypted_api_key", "api_key_last4"])
+    );
+  });
+
+  it("constrains model provider formats by model kind", async () => {
+    const base = await insertBaseRows();
+
+    await expect(
+      pool.query(
+        "INSERT INTO model_settings (kind, provider, enabled, updated_by) VALUES ('embedding', 'openai_responses', false, $1)",
+        [base.userId]
+      )
+    ).rejects.toThrow();
+
+    await expect(
+      pool.query(
+        "INSERT INTO model_settings (kind, provider, enabled, updated_by) VALUES ('language', 'openai_compatible', false, $1)",
+        [base.userId]
+      )
+    ).rejects.toThrow();
+
+    await expect(
+      pool.query(
+        "INSERT INTO model_settings (kind, provider, enabled, updated_by) VALUES ('language', 'openai_chat_completions', false, $1)",
+        [base.userId]
+      )
+    ).resolves.toBeDefined();
   });
 
   it("seeds the first admin idempotently", async () => {

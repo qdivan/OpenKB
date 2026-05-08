@@ -460,6 +460,29 @@ model RetrievalSetting {
   @@map("retrieval_settings")
 }
 
+model ModelSetting {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id             String?  @db.Uuid
+  kind                  String   @unique
+  provider              String
+  endpoint              String?
+  model                 String?
+  enabled               Boolean  @default(false)
+  timeout_ms            Int?
+  embedding_dim         Int?
+  embedding_batch_size  Int?
+  llm_temperature       Float?
+  llm_max_output_tokens Int?
+  encrypted_api_key     String?
+  api_key_last4         String?
+  updated_by            String   @db.Uuid
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@map("model_settings")
+}
+
 model McpOauthClient {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id      String   @db.Uuid

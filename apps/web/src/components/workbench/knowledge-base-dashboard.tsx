@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  ArrowRight,
   BarChart3,
   CheckCircle2,
   Database,
@@ -16,6 +15,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { useI18n } from "@/lib/i18n-provider";
 import {
   createChunkRebuildJob,
   getChunkSettings,
@@ -48,9 +48,11 @@ export function KnowledgeBaseDashboard({
   onError: (error: unknown) => void;
   onOpenDocument: (documentId: string) => void;
 }) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<DashboardTab>("overview");
   const [overview, setOverview] = useState<KnowledgeBaseOverview | null>(null);
   const [chunks, setChunks] = useState<DocumentChunk[]>([]);
+  const [selectedChunkDocumentId, setSelectedChunkDocumentId] = useState<string | null>(null);
   const [settings, setSettings] = useState<ChunkSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -60,36 +62,23 @@ export function KnowledgeBaseDashboard({
   const [labContextMode, setLabContextMode] = useState<RetrievalContextMode>("parent_child");
   const [labResponse, setLabResponse] = useState<SearchResponse | null>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [selectedChunkDocumentId, setSelectedChunkDocumentId] = useState<string | null>(null);
 
-  const documentById = useMemo(
-    () => new Map(documents.map((document) => [document.id, document])),
-    [documents]
-  );
   const pageDocuments = useMemo(
-    () => documents.filter((document) => document.type === "page" && document.status !== "deleted"),
+    () => documents.filter((document) => document.type === "page"),
     [documents]
   );
-  const chunkCountByDocumentId = useMemo(() => {
+  const chunkCountByDocument = useMemo(() => {
     const counts = new Map<string, number>();
-    chunks.forEach((chunk) => {
+    for (const chunk of chunks) {
       counts.set(chunk.document_id, (counts.get(chunk.document_id) ?? 0) + 1);
-    });
+    }
     return counts;
   }, [chunks]);
-  const effectiveChunkDocumentId =
-    selectedChunkDocumentId &&
-    pageDocuments.some((document) => document.id === selectedChunkDocumentId)
-      ? selectedChunkDocumentId
-      : (pageDocuments.find((document) => (chunkCountByDocumentId.get(document.id) ?? 0) > 0)?.id ??
-        pageDocuments[0]?.id ??
-        null);
-  const selectedChunkDocument = effectiveChunkDocumentId
-    ? (documentById.get(effectiveChunkDocumentId) ?? null)
-    : null;
+  const selectedChunkDocument =
+    pageDocuments.find((document) => document.id === selectedChunkDocumentId) ?? null;
   const selectedDocumentChunks = useMemo(
-    () => chunks.filter((chunk) => chunk.document_id === effectiveChunkDocumentId),
-    [chunks, effectiveChunkDocumentId]
+    () => chunks.filter((chunk) => chunk.document_id === selectedChunkDocumentId),
+    [chunks, selectedChunkDocumentId]
   );
 
   useEffect(() => {
@@ -97,17 +86,30 @@ export function KnowledgeBaseDashboard({
   }, [knowledgeBaseId]);
 
   useEffect(() => {
-    setSelectedChunkDocumentId((current) => {
-      if (current && pageDocuments.some((document) => document.id === current)) {
-        return current;
+    if (pageDocuments.length === 0) {
+      if (selectedChunkDocumentId) {
+        setSelectedChunkDocumentId(null);
       }
-      return (
-        pageDocuments.find((document) => (chunkCountByDocumentId.get(document.id) ?? 0) > 0)?.id ??
-        pageDocuments[0]?.id ??
-        null
-      );
-    });
-  }, [chunkCountByDocumentId, knowledgeBaseId, pageDocuments]);
+      return;
+    }
+
+    const currentStillExists = pageDocuments.some(
+      (document) => document.id === selectedChunkDocumentId
+    );
+    if (currentStillExists) {
+      return;
+    }
+
+    const fallbackDocument = pageDocuments[0];
+    if (!fallbackDocument) {
+      return;
+    }
+
+    const firstWithChunks =
+      pageDocuments.find((document) => (chunkCountByDocument.get(document.id) ?? 0) > 0) ??
+      fallbackDocument;
+    setSelectedChunkDocumentId(firstWithChunks.id);
+  }, [chunkCountByDocument, pageDocuments, selectedChunkDocumentId]);
 
   async function load() {
     setIsLoading(true);
@@ -202,11 +204,19 @@ export function KnowledgeBaseDashboard({
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-semibold">{overview?.knowledge_base.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <Badge tone="zinc">knowledge base</Badge>
-            <Badge tone="sky">visibility: {overview?.knowledge_base.visibility}</Badge>
-            <Badge tone="emerald">status: {overview?.knowledge_base.status}</Badge>
-            {overview?.needs_chunk_rebuild ? <Badge tone="amber">chunks stale</Badge> : null}
-            {overview?.needs_index_rebuild ? <Badge tone="sky">index rebuild needed</Badge> : null}
+            <Badge tone="zinc">{t("Knowledge base")}</Badge>
+            <Badge tone="sky">
+              {t("visibility: {value}", {
+                value: t(overview?.knowledge_base.visibility ?? "")
+              })}
+            </Badge>
+            <Badge tone="emerald">
+              {t("status: {value}", { value: t(overview?.knowledge_base.status ?? "") })}
+            </Badge>
+            {overview?.needs_chunk_rebuild ? <Badge tone="amber">{t("chunks stale")}</Badge> : null}
+            {overview?.needs_index_rebuild ? (
+              <Badge tone="sky">{t("index rebuild needed")}</Badge>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -216,7 +226,7 @@ export function KnowledgeBaseDashboard({
             type="button"
           >
             <RefreshCw className="h-4 w-4" />
-            Refresh
+            {t("Refresh")}
           </button>
           <button
             className="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"
@@ -224,67 +234,71 @@ export function KnowledgeBaseDashboard({
             type="button"
           >
             <FileText className="h-4 w-4" />
-            New doc
+            {t("New doc")}
           </button>
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <TabButton
           active={tab === "overview"}
           icon={<BarChart3 />}
           onClick={() => setTab("overview")}
         >
-          Overview
+          {t("Overview")}
         </TabButton>
         <TabButton active={tab === "chunks"} icon={<Layers3 />} onClick={() => setTab("chunks")}>
-          Chunks
+          {t("Chunks")}
         </TabButton>
         <TabButton active={tab === "lab"} icon={<Search />} onClick={() => setTab("lab")}>
-          Retrieval Lab
+          {t("Retrieval Lab")}
         </TabButton>
         <TabButton
           active={tab === "settings"}
           icon={<Settings2 />}
           onClick={() => setTab("settings")}
         >
-          Settings
+          {t("Settings")}
         </TabButton>
       </div>
 
       {tab === "overview" && overview ? (
         <section className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <Metric icon={<FileText />} label="Documents" value={overview.documents.total} />
-          <Metric icon={<CheckCircle2 />} label="Published" value={overview.documents.published} />
-          <Metric icon={<Layers3 />} label="Chunks" value={overview.chunks.total} />
-          <Metric icon={<Database />} label="Child chunks" value={overview.chunks.child} />
+          <Metric icon={<FileText />} label={t("Documents")} value={overview.documents.total} />
+          <Metric
+            icon={<CheckCircle2 />}
+            label={t("Published")}
+            value={overview.documents.published}
+          />
+          <Metric icon={<Layers3 />} label={t("Chunks")} value={overview.chunks.total} />
+          <Metric icon={<Database />} label={t("Child chunks")} value={overview.chunks.child} />
         </section>
       ) : null}
 
       {tab === "overview" && overview ? (
         <section className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Panel title="Recent imports">
+          <Panel title={t("Recent imports")}>
             <div className="space-y-2">
               {overview.latest_import_jobs.length > 0 ? (
                 overview.latest_import_jobs.map((job) => (
-                  <Row key={job.id} title={job.title ?? job.converter} meta={job.status} />
+                  <Row key={job.id} title={job.title ?? job.converter} meta={t(job.status)} />
                 ))
               ) : (
-                <EmptyLine>No imports</EmptyLine>
+                <EmptyLine>{t("No imports")}</EmptyLine>
               )}
             </div>
           </Panel>
-          <Panel title="Index state">
+          <Panel title={t("Index state")}>
             <div className="space-y-2">
               <Row
-                title="Chunk rebuild"
-                meta={overview.latest_chunk_rebuild_job?.status ?? "none"}
+                title={t("Chunk rebuild")}
+                meta={t(overview.latest_chunk_rebuild_job?.status ?? "none")}
               />
               <Row
-                title="Milvus rebuild"
-                meta={overview.latest_index_rebuild_job?.status ?? "none"}
+                title={t("Milvus rebuild")}
+                meta={t(overview.latest_index_rebuild_job?.status ?? "none")}
               />
-              <Row title="Settings revision" meta={String(overview.chunk_settings.revision)} />
+              <Row title={t("Settings revision")} meta={String(overview.chunk_settings.revision)} />
             </div>
           </Panel>
         </section>
@@ -292,95 +306,87 @@ export function KnowledgeBaseDashboard({
 
       {tab === "chunks" ? (
         <section className="mt-5">
-          <Panel title="Chunk map">
-            <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
-              <div className="rounded-md border border-zinc-200 bg-white">
-                <div className="border-b border-zinc-200 px-3 py-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Documents
-                  </p>
+          <Panel title={t("Chunk map")}>
+            <div className="grid min-h-[260px] gap-3 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)]">
+              <div className="max-h-[620px] overflow-y-auto rounded-md border border-zinc-200 bg-white p-2">
+                <div className="mb-2 flex items-center justify-between gap-2 px-2 text-xs font-medium text-zinc-500">
+                  <span>{t("Documents")}</span>
+                  <span>{t("{count} items", { count: pageDocuments.length })}</span>
                 </div>
-                <div className="max-h-[480px] space-y-1 overflow-y-auto p-2">
+                <div className="space-y-1">
                   {pageDocuments.length > 0 ? (
                     pageDocuments.map((document) => {
-                      const count = chunkCountByDocumentId.get(document.id) ?? 0;
-                      const active = document.id === effectiveChunkDocumentId;
+                      const count = chunkCountByDocument.get(document.id) ?? 0;
+                      const selected = document.id === selectedChunkDocumentId;
                       return (
                         <button
-                          key={document.id}
-                          className={`flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm ${
-                            active ? "bg-sky-50 text-sky-800" : "text-zinc-700 hover:bg-zinc-50"
+                          className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm ${
+                            selected ? "bg-sky-50 text-sky-800" : "text-zinc-700 hover:bg-zinc-50"
                           }`}
+                          key={document.id}
                           onClick={() => setSelectedChunkDocumentId(document.id)}
                           type="button"
                         >
                           <span className="min-w-0 truncate">{document.title}</span>
-                          <span
-                            className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] ${
-                              active ? "bg-sky-100 text-sky-700" : "bg-zinc-100 text-zinc-500"
-                            }`}
-                          >
+                          <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
                             {count}
                           </span>
                         </button>
                       );
                     })
                   ) : (
-                    <EmptyLine>No page documents</EmptyLine>
+                    <EmptyLine>{t("No documents")}</EmptyLine>
                   )}
                 </div>
               </div>
 
-              <div className="min-w-0 rounded-md border border-zinc-200 bg-white">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-zinc-900">
-                      {selectedChunkDocument?.title ?? "No document selected"}
-                    </p>
-                    <p className="text-xs text-zinc-500">{selectedDocumentChunks.length} chunks</p>
-                  </div>
-                  {selectedChunkDocument ? (
+              <div className="min-w-0 rounded-md border border-zinc-200 bg-white p-3">
+                {selectedChunkDocument ? (
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-zinc-900">
+                        {selectedChunkDocument.title}
+                      </h3>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {t("{count} chunks", { count: selectedDocumentChunks.length })}
+                      </p>
+                    </div>
                     <button
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                      className="inline-flex h-8 shrink-0 items-center rounded-md border border-zinc-300 px-2.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50"
                       onClick={() => onOpenDocument(selectedChunkDocument.id)}
                       type="button"
                     >
-                      <ArrowRight className="h-3.5 w-3.5" />
-                      Open editor
+                      {t("Open document")}
                     </button>
-                  ) : null}
-                </div>
-                <div className="max-h-[480px] space-y-2 overflow-y-auto p-3">
+                  </div>
+                ) : null}
+
+                <div className="max-h-[560px] space-y-2 overflow-y-auto">
                   {selectedDocumentChunks.length > 0 ? (
                     selectedDocumentChunks.map((chunk) => (
-                      <div
+                      <button
                         key={chunk.id}
-                        className="rounded-md border border-zinc-200 bg-white px-3 py-2"
+                        className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-left hover:border-sky-200 hover:bg-sky-50/40"
+                        onClick={() => onOpenDocument(chunk.document_id)}
+                        type="button"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-zinc-500">
-                            <Badge tone={chunk.chunk_type === "parent" ? "emerald" : "zinc"}>
-                              {chunk.chunk_type}
-                            </Badge>
-                            <span>#{chunk.ordinal}</span>
-                            <span>{chunk.token_count ?? 0} tokens</span>
-                          </div>
-                          <button
-                            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-sky-700 hover:bg-sky-50"
-                            onClick={() => onOpenDocument(chunk.document_id)}
-                            type="button"
-                          >
-                            Open editor
-                          </button>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                          <Badge tone={chunk.chunk_type === "parent" ? "emerald" : "zinc"}>
+                            {t(chunk.chunk_type)}
+                          </Badge>
+                          <span>#{chunk.ordinal}</span>
+                          <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
                         </div>
-                        <p className="mt-2 line-clamp-2 text-sm text-zinc-700">
+                        <p className="mt-1 line-clamp-2 text-sm text-zinc-700">
                           {chunk.content_text}
                         </p>
-                      </div>
+                      </button>
                     ))
                   ) : (
                     <EmptyLine>
-                      No chunks for this document. Rebuild chunks or save the page again.
+                      {selectedChunkDocument
+                        ? t("No chunks for this document")
+                        : t("Select a document to inspect chunks")}
                     </EmptyLine>
                   )}
                 </div>
@@ -392,7 +398,7 @@ export function KnowledgeBaseDashboard({
 
       {tab === "lab" ? (
         <section className="mt-5">
-          <Panel title="Retrieval Lab">
+          <Panel title={t("Retrieval Lab")}>
             <form
               className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_180px_auto]"
               onSubmit={runLab}
@@ -400,7 +406,7 @@ export function KnowledgeBaseDashboard({
               <input
                 className="h-10 rounded-md border border-zinc-300 px-3 text-sm outline-none focus:border-emerald-500"
                 onChange={(event) => setLabQuery(event.target.value)}
-                placeholder="Search this knowledge base"
+                placeholder={t("Search this knowledge base")}
                 value={labQuery}
               />
               <input
@@ -416,10 +422,10 @@ export function KnowledgeBaseDashboard({
                 onChange={(event) => setLabContextMode(event.target.value as RetrievalContextMode)}
                 value={labContextMode}
               >
-                <option value="chunk">Chunk</option>
-                <option value="parent_child">Parent child</option>
-                <option value="paragraph_parent_child">Paragraph parent</option>
-                <option value="full_text">Full text</option>
+                <option value="chunk">{t("Chunk")}</option>
+                <option value="parent_child">{t("Parent child")}</option>
+                <option value="paragraph_parent_child">{t("Paragraph parent")}</option>
+                <option value="full_text">{t("Full text")}</option>
               </select>
               <button
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
@@ -431,7 +437,7 @@ export function KnowledgeBaseDashboard({
                 ) : (
                   <Play className="h-4 w-4" />
                 )}
-                Run
+                {t("Run")}
               </button>
             </form>
             <div className="mt-4 space-y-2">
@@ -454,8 +460,8 @@ export function KnowledgeBaseDashboard({
                   </p>
                   <p className="mt-2 truncate text-xs text-zinc-500">
                     {result.parent_chunk?.chunk_id
-                      ? `parent ${result.parent_chunk.chunk_id}`
-                      : `match ${result.match_chunk?.chunk_id ?? result.chunk_id}`}
+                      ? t("parent {id}", { id: result.parent_chunk.chunk_id })
+                      : t("match {id}", { id: result.match_chunk?.chunk_id ?? result.chunk_id })}
                   </p>
                 </button>
               ))}
@@ -466,9 +472,9 @@ export function KnowledgeBaseDashboard({
 
       {tab === "settings" && settings ? (
         <section className="mt-5">
-          <Panel title="Chunk settings">
+          <Panel title={t("Chunk settings")}>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Mode">
+              <Field label={t("Mode")}>
                 <select
                   className={formControlClass}
                   onChange={(event) =>
@@ -476,11 +482,11 @@ export function KnowledgeBaseDashboard({
                   }
                   value={settings.mode}
                 >
-                  <option value="parent_child">Parent child</option>
-                  <option value="general">General</option>
+                  <option value="parent_child">{t("Parent child")}</option>
+                  <option value="general">{t("General")}</option>
                 </select>
               </Field>
-              <Field label="Parent mode">
+              <Field label={t("Parent mode")}>
                 <select
                   className={formControlClass}
                   onChange={(event) =>
@@ -491,34 +497,34 @@ export function KnowledgeBaseDashboard({
                   }
                   value={settings.parent_mode}
                 >
-                  <option value="paragraph">Paragraph</option>
-                  <option value="full_doc">Full doc</option>
+                  <option value="paragraph">{t("Paragraph")}</option>
+                  <option value="full_doc">{t("Full doc")}</option>
                 </select>
               </Field>
               <NumberField
-                label="Parent chars"
+                label={t("Parent chars")}
                 onChange={(value) => setSettings({ ...settings, parent_max_characters: value })}
                 value={settings.parent_max_characters}
               />
               <TextField
-                label="Parent delimiter"
+                label={t("Parent delimiter")}
                 onChange={(value) =>
                   setSettings({ ...settings, parent_delimiter: decodeDelimiter(value) })
                 }
                 value={encodeDelimiter(settings.parent_delimiter)}
               />
               <NumberField
-                label="Child chars"
+                label={t("Child chars")}
                 onChange={(value) => setSettings({ ...settings, child_max_characters: value })}
                 value={settings.child_max_characters}
               />
               <NumberField
-                label="Child overlap"
+                label={t("Child overlap")}
                 onChange={(value) => setSettings({ ...settings, child_overlap_characters: value })}
                 value={settings.child_overlap_characters}
               />
               <TextField
-                label="Child delimiter"
+                label={t("Child delimiter")}
                 onChange={(value) =>
                   setSettings({ ...settings, child_delimiter: decodeDelimiter(value) })
                 }
@@ -537,7 +543,7 @@ export function KnowledgeBaseDashboard({
                 ) : (
                   <Save className="h-4 w-4" />
                 )}
-                Save settings
+                {t("Save settings")}
               </button>
               <button
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-800"
@@ -550,7 +556,7 @@ export function KnowledgeBaseDashboard({
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                Rebuild chunks
+                {t("Rebuild chunks")}
               </button>
             </div>
           </Panel>
@@ -573,13 +579,15 @@ function TabButton({
 }) {
   return (
     <button
-      className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium ${
+      className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium leading-none ${
         active ? "bg-zinc-950 text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
       }`}
       onClick={onClick}
       type="button"
     >
-      <span className="h-4 w-4">{icon}</span>
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center [&>svg]:h-4 [&>svg]:w-4">
+        {icon}
+      </span>
       {children}
     </button>
   );

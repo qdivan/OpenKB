@@ -9,7 +9,7 @@
 已完成的主线：
 
 - Phase 11 部署闭环：生产 Dockerfile、Docker Compose、Helm 最小 chart、环境变量、健康检查、显式 migrate/seed 和部署文档。
-- Phase 12 真实检索：OpenKB 通过环境变量直连 embedding/rerank 模型服务，支持 BM25、dense、hybrid、rerank，不保存 provider key，不做知识库级模型配置。
+- Phase 12/15 真实检索与模型配置：OpenKB 可通过环境变量或 system-admin 实例级加密 DB 配置直连 embedding/rerank/LLM 模型服务，支持 BM25、dense、hybrid、rerank，不保存明文 provider key，不做知识库级模型配置。
 - Phase 13 知识库体验：KB Dashboard、Chunks、Retrieval Lab、KB 级切片设置、父子切片、全文上下文、chunk rebuild job、发布/取消发布闭环。
 - Phase 14 Admin 用户管理：创建账号、密码重置链接、激活/停用/软删除、租户角色、会话撤销和审计入口。
 - Web、API、MCP Server、Dify Adapter、import worker、index worker 均已接入 Phase 13/14 最小闭环。
@@ -111,7 +111,7 @@ OPENKB_NODE_IMAGE="m.daocloud.io/docker.io/library/node:20-bookworm-slim"
 
 ## 重要边界
 
-- 不要把模型 endpoint/model 写入数据库；仍然只从环境变量读取。
+- 不要把模型 endpoint/model 写到知识库级配置；实例级 `model_settings` 只允许 system_admin 管理，secret 必须加密。
 - 不要给知识库 owner/manager 增加模型配置入口；KB 级设置只允许切片策略。
 - Web search、MCP、Dify 返回内容前必须继续走 PostgreSQL 最终权限检查。
 - Milvus 只做检索索引，不能成为最终授权来源。

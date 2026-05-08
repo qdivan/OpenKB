@@ -19,6 +19,8 @@ import { WorkspaceController } from "./content/workspace.controller";
 import { HealthController } from "./health.controller";
 import { MilvusAdminController } from "./milvus/milvus-admin.controller";
 import { MilvusAdminService } from "./milvus/milvus-admin.service";
+import { ModelSettingsAdminController } from "./models/model-settings-admin.controller";
+import { ModelSettingsAdminService } from "./models/model-settings-admin.service";
 import { RetrievalSettingsAdminController } from "./retrieval/retrieval-settings-admin.controller";
 import { RetrievalSettingsAdminService } from "./retrieval/retrieval-settings-admin.service";
 import { SearchController } from "./search/search.controller";
@@ -38,6 +40,7 @@ import { SearchController } from "./search/search.controller";
     CollaborationController,
     ShareController,
     MilvusAdminController,
+    ModelSettingsAdminController,
     RetrievalSettingsAdminController,
     SearchController
   ],
@@ -47,6 +50,7 @@ import { SearchController } from "./search/search.controller";
     ContentService,
     ImportService,
     MilvusAdminService,
+    ModelSettingsAdminService,
     RetrievalSettingsAdminService,
     RetrievalService
   ]

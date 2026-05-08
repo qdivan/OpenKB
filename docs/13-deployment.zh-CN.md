@@ -2,7 +2,7 @@
 
 Phase 11 已完成最小可部署闭环：生产/自托管 Docker Compose、Helm 最小 chart、环境变量整理、健康检查和公网测试安全基线。Phase 12 已在代码中接入真实 embedding、rerank 和 hybrid retrieval。Phase 13 已加入知识库 Dashboard、父子切片、全文上下文、检索测试台和发布闭环。
 
-部署层只负责配置、启动、健康检查和依赖编排；不新增知识库级模型配置，不在 OpenKB DB 中保存 embedding/rerank provider API key。
+部署层负责配置、启动、健康检查和依赖编排；不新增知识库级模型配置。OpenKB 允许 `system_admin` 保存实例级加密模型 secret，但禁止明文保存 embedding/rerank/LLM provider API key。
 
 ## 1. Docker Compose
 
@@ -91,6 +91,10 @@ OPENKB_EMBEDDING_MODEL
 OPENKB_EMBEDDING_DIM=2048
 OPENKB_RERANK_ENDPOINT
 OPENKB_RERANK_MODEL
+OPENKB_CONFIG_ENCRYPTION_KEY
+OPENKB_LLM_REQUEST_FORMAT
+OPENKB_LLM_ENDPOINT
+OPENKB_LLM_MODEL
 ```
 
 没有 NVIDIA GPU / `nvidia-smi` 的机器不要在同机启动 MinerU GPU worker、Qwen Embedding TEI 或 Qwen Reranker vLLM。模型服务可以部署在独立机器或内网模型平台上。
@@ -107,9 +111,9 @@ K8s Secret + Helm values
 provider service env
 ```
 
-OpenKB 数据库不保存 embedding/rerank API key。
+OpenKB 数据库只允许保存实例级加密模型 secret；没有 `OPENKB_CONFIG_ENCRYPTION_KEY` 时不能保存或读取 DB secret，只能使用环境变量配置。
 
-OpenKB 只从环境变量读取 endpoint/model；`retrieval_settings` 只保存当前模式：
+OpenKB 读取模型配置的优先级是 DB enabled 配置 > 环境变量 > 未配置；`retrieval_settings` 只保存当前模式：
 
 ```text
 bm25
@@ -239,9 +243,19 @@ OPENKB_EMBEDDING_MODEL
 OPENKB_EMBEDDING_DIM
 OPENKB_EMBEDDING_BATCH_SIZE
 OPENKB_EMBEDDING_TIMEOUT_MS
+OPENKB_EMBEDDING_API_KEY
 OPENKB_RERANK_ENDPOINT
 OPENKB_RERANK_MODEL
 OPENKB_RERANK_TIMEOUT_MS
+OPENKB_RERANK_API_KEY
+OPENKB_CONFIG_ENCRYPTION_KEY
+OPENKB_LLM_REQUEST_FORMAT
+OPENKB_LLM_ENDPOINT
+OPENKB_LLM_MODEL
+OPENKB_LLM_API_KEY
+OPENKB_LLM_TIMEOUT_MS
+OPENKB_LLM_MAX_OUTPUT_TOKENS
+OPENKB_LLM_TEMPERATURE
 MCP_SERVER_BASE_URL
 DIFY_REQUEST_MAX_BYTES
 DIFY_RESULT_BASE_URL

@@ -1,7 +1,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { AuthError, AuthService, type AuthenticatedUser } from "@openkb/auth";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
-import { createOpenKBModelClient, type OpenKBModelClient } from "@openkb/model-client";
+import {
+  createOpenKBModelClient,
+  getOpenKBModelClientConfig,
+  type OpenKBModelClient,
+  type StoredModelSetting
+} from "@openkb/model-client";
 import {
   activeProfileSupportsDenseVector,
   normalizeRetrievalMode,
@@ -20,11 +25,9 @@ export type UpdateRetrievalSettingsInput = {
 @Injectable()
 export class RetrievalSettingsAdminService {
   private readonly prisma: PrismaClient;
-  private readonly modelClient: OpenKBModelClient;
 
   constructor(@Inject(AuthService) private readonly auth: AuthService) {
     this.prisma = createDatabaseClient();
-    this.modelClient = createOpenKBModelClient();
   }
 
   async disconnect(): Promise<void> {
@@ -59,15 +62,17 @@ export class RetrievalSettingsAdminService {
 
   async probe(sessionToken: string | null) {
     await this.requireAdmin(sessionToken);
+    const modelClient = await this.createModelClient();
     const [embedding, rerank] = await Promise.all([
-      this.modelClient.probeEmbedding(),
-      this.modelClient.probeRerank()
+      modelClient.probeEmbedding(),
+      modelClient.probeRerank()
     ]);
     return { embedding, rerank };
   }
 
   private async buildStatus(me: AuthenticatedUser) {
     const milvusConfig = getMilvusConfig();
+    const modelClient = await this.createModelClient();
     const [setting, activeProfile, latestRebuildJob] = await Promise.all([
       this.prisma.retrievalSetting.findFirst({
         where: { tenant_id: me.tenantId }
@@ -89,16 +94,16 @@ export class RetrievalSettingsAdminService {
       })
     ]);
     const denseReady = activeProfileSupportsDenseVector(activeProfile, {
-      dim: this.modelClient.config.embedding.dim,
-      model: this.modelClient.config.embedding.model
+      dim: modelClient.config.embedding.dim,
+      model: modelClient.config.embedding.model
     });
     const resolution = resolveEffectiveRetrievalMode({
       storedMode: setting?.mode,
       envDefaultMode: process.env.OPENKB_RETRIEVAL_DEFAULT_MODE,
-      embeddingConfigured: this.modelClient.embeddingConfigured,
-      rerankConfigured: this.modelClient.rerankConfigured
+      embeddingConfigured: modelClient.embeddingConfigured,
+      rerankConfigured: modelClient.rerankConfigured
     });
-    const needsRebuild = this.modelClient.embeddingConfigured && !denseReady;
+    const needsRebuild = modelClient.embeddingConfigured && !denseReady;
 
     return {
       mode: resolution.requestedMode,
@@ -106,21 +111,21 @@ export class RetrievalSettingsAdminService {
       supported_modes: RETRIEVAL_MODES,
       modes: RETRIEVAL_MODES.map((mode) =>
         toModeCapability(mode, {
-          embeddingConfigured: this.modelClient.embeddingConfigured,
-          rerankConfigured: this.modelClient.rerankConfigured,
+          embeddingConfigured: modelClient.embeddingConfigured,
+          rerankConfigured: modelClient.rerankConfigured,
           denseReady
         })
       ),
       embedding: {
-        configured: this.modelClient.embeddingConfigured,
-        model: this.modelClient.embeddingConfigured
-          ? this.modelClient.config.embedding.model
-          : null,
-        dim: this.modelClient.config.embedding.dim
+        configured: modelClient.embeddingConfigured,
+        model: modelClient.embeddingConfigured ? modelClient.config.embedding.model : null,
+        dim: modelClient.config.embedding.dim,
+        source: modelClient.config.embedding.source
       },
       rerank: {
-        configured: this.modelClient.rerankConfigured,
-        model: this.modelClient.rerankConfigured ? this.modelClient.config.rerank.model : null
+        configured: modelClient.rerankConfigured,
+        model: modelClient.rerankConfigured ? modelClient.config.rerank.model : null,
+        source: modelClient.config.rerank.source
       },
       active_alias: milvusConfig.activeAlias,
       next_rebuild_collection: createCollectionName({
@@ -141,6 +146,45 @@ export class RetrievalSettingsAdminService {
     }
     return me;
   }
+
+  private async createModelClient(): Promise<OpenKBModelClient> {
+    const settings = await this.prisma.modelSetting.findMany({
+      where: { kind: { in: ["embedding", "rerank"] } }
+    });
+    return createOpenKBModelClient(
+      getOpenKBModelClientConfig(process.env, settings.map(toStoredModelSetting))
+    );
+  }
+}
+
+function toStoredModelSetting(setting: {
+  kind: string;
+  provider: string;
+  endpoint: string | null;
+  model: string | null;
+  enabled: boolean;
+  timeout_ms: number | null;
+  embedding_dim: number | null;
+  embedding_batch_size: number | null;
+  llm_temperature: number | null;
+  llm_max_output_tokens: number | null;
+  encrypted_api_key: string | null;
+  api_key_last4: string | null;
+}): StoredModelSetting {
+  return {
+    kind: setting.kind as StoredModelSetting["kind"],
+    provider: setting.provider as StoredModelSetting["provider"],
+    endpoint: setting.endpoint,
+    model: setting.model,
+    enabled: setting.enabled,
+    timeout_ms: setting.timeout_ms,
+    embedding_dim: setting.embedding_dim,
+    embedding_batch_size: setting.embedding_batch_size,
+    llm_temperature: setting.llm_temperature,
+    llm_max_output_tokens: setting.llm_max_output_tokens,
+    encrypted_api_key: setting.encrypted_api_key,
+    api_key_last4: setting.api_key_last4
+  };
 }
 
 function normalizeInputMode(value: string | undefined): RetrievalMode {

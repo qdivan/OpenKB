@@ -7,7 +7,7 @@ describe("@openkb/shared", () => {
     const health = createServiceHealth("smoke");
 
     expect(OPENKB_PROJECT_NAME).toBe("OpenKB");
-    expect(OPENKB_PHASE).toBe("phase-14-admin-users");
+    expect(OPENKB_PHASE).toBe("phase-15-admin-models");
     expect(health.status).toBe("ok");
     expect(health.service).toBe("smoke");
   });

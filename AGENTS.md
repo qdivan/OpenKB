@@ -35,7 +35,8 @@ OpenKB is a Markdown-first, Yuque-like, self-hostable knowledge base system. It 
 
 6. **Embedding and rerank belong to Milvus-native capabilities whenever supported.**
    - Use Milvus 2.6+ Functions such as TEXTEMBEDDING, BM25, and RERANK/Model Ranker when compatible with the deployment.
-   - OpenKB should not store embedding/rerank API keys in its database.
+   - OpenKB may store instance-level encrypted model secrets only when a `system_admin` configures them and `OPENKB_CONFIG_ENCRYPTION_KEY` is set.
+   - Never store model API keys in plaintext, never write raw model secrets to audit logs, and never add knowledge-base-level model configuration.
    - Provider credentials and endpoints should be configured in Milvus deployment configuration, environment variables, or the provider service deployment.
 
 7. **Embedding model replacement uses Milvus-native blue/green indexing.**
@@ -111,6 +112,7 @@ prompts/
 - Keep editor behavior deterministic: Markdown in, Milkdown-normalized Markdown out.
 - Do not bypass the feature registry when adding editor features.
 - Do not add per-knowledge-base model configuration.
+- Instance-level model configuration is `system_admin` only; `tenant_admin` may inspect retrieval state but cannot save model settings or secrets.
 - Treat share links as read-only only in v0.x; do not add link-edit capabilities.
 - Treat folders as `documents.type = folder`; do not create a separate folders table unless the spec is explicitly changed.
 
@@ -121,4 +123,4 @@ prompts/
 - Workspace invitations grant `admin/member/guest`; content invitations grant `manager/editor/viewer`; ordinary invitations do not grant owner.
 - Milvus collection primary key is `id`; `chunk_id` is a regular field. In v0.x both values equal the PostgreSQL `document_chunks.id` string.
 - Implement `auth_settings`, MCP OAuth/PAT tables, and Dify scoped API key tables from `docs/07-data-model.zh-CN.md`.
-- Do not implement embedding/rerank fallback provider secrets in OpenKB DB.
+- Do not implement knowledge-base-level embedding/rerank fallback provider secrets. Instance-level encrypted model secrets are allowed only through the system-admin Models control plane.

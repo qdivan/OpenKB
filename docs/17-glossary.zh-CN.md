@@ -13,8 +13,8 @@
 | Share Link | 只读分享链接。 |
 | Invitation Link | 邀请用户成为协作者的链接。 |
 | Milvus Function | Milvus 侧 TEXTEMBEDDING、BM25、RERANK 等函数能力。 |
-| OpenKB Direct Embedding | 当前 v0.3.x 已实现的直连模型方案：OpenKB 从环境变量读取 embedding endpoint/model，生成 query/chunk vector，不保存 provider key。 |
-| OpenKB Direct Rerank | 当前 v0.3.x 已实现的直连 rerank 方案：OpenKB 在最终权限过滤后调用 rerank endpoint，不保存 provider key。 |
+| OpenKB Direct Embedding | 当前 v0.3.x 已实现的直连模型方案：OpenKB 从实例级 DB enabled 配置或环境变量读取 embedding endpoint/model，生成 query/chunk vector，不保存明文 provider key。 |
+| OpenKB Direct Rerank | 当前 v0.3.x 已实现的直连 rerank 方案：OpenKB 在最终权限过滤后调用 rerank endpoint，不保存明文 provider key。 |
 | Retrieval Mode | 检索算法模式：`bm25`、`dense`、`dense_rerank`、`hybrid`、`hybrid_rerank`。 |
 | Context Mode | Phase 13 已实现的结果上下文模式：`chunk`、`parent_child`、`paragraph_parent_child`、`full_text`。 |
 | Parent Chunk | Phase 13 已实现的父块，按段落或全文保存，用于回填上下文，不写入 Milvus 检索。 |

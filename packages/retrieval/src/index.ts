@@ -1,8 +1,10 @@
 import { createDatabaseClient, type PrismaClient } from "@openkb/db";
 import {
   createOpenKBModelClient,
+  getOpenKBModelClientConfig,
   type OpenKBModelClient,
-  type RerankDocumentScore
+  type RerankDocumentScore,
+  type StoredModelSetting
 } from "@openkb/model-client";
 import {
   createOpenKBMilvus,
@@ -162,14 +164,14 @@ export class RetrievalService {
   private readonly prisma: PrismaClient;
   private readonly milvus: OpenKBMilvus;
   private readonly permissions: PermissionService;
-  private readonly modelClient: OpenKBModelClient;
+  private readonly modelClientOverride?: OpenKBModelClient;
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: RetrievalServiceOptions = {}) {
     this.prisma = options.prisma ?? createDatabaseClient();
     this.milvus = options.milvus ?? createOpenKBMilvus();
     this.permissions = options.permissions ?? new PermissionService({ prisma: this.prisma });
-    this.modelClient = options.modelClient ?? createOpenKBModelClient();
+    this.modelClientOverride = options.modelClient;
     this.env = options.env ?? process.env;
   }
 
@@ -181,8 +183,13 @@ export class RetrievalService {
     const normalized = normalizeRetrievalSearchInput(input);
     const userId = input.user.user.id;
     const tenantId = input.user.tenantId;
-    const mode = await this.resolveSearchMode(tenantId);
-    const queryVector = await this.embedQueryIfNeeded(normalized.query, mode.effectiveMode);
+    const modelClient = await this.createModelClient();
+    const mode = await this.resolveSearchMode(tenantId, modelClient);
+    const queryVector = await this.embedQueryIfNeeded(
+      normalized.query,
+      mode.effectiveMode,
+      modelClient
+    );
 
     for (const knowledgeBaseId of normalized.knowledgeBaseIds) {
       await this.permissions.requireCanRead(userId, "knowledge_base", knowledgeBaseId);
@@ -224,7 +231,12 @@ export class RetrievalService {
       candidates,
       normalized.candidateLimit
     );
-    const ranked = await this.applyRerank(normalized.query, allowed, mode.effectiveMode);
+    const ranked = await this.applyRerank(
+      normalized.query,
+      allowed,
+      mode.effectiveMode,
+      modelClient
+    );
     const contextMode = await this.resolveContextMode(
       tenantId,
       normalized.knowledgeBaseIds,
@@ -241,8 +253,13 @@ export class RetrievalService {
   async searchAppScope(input: RetrievalAppSearchInput): Promise<RetrievalSearchResponse> {
     const normalized = normalizeRetrievalAppSearchInput(input);
     const tenantId = input.app.tenantId;
-    const mode = await this.resolveSearchMode(tenantId);
-    const queryVector = await this.embedQueryIfNeeded(normalized.query, mode.effectiveMode);
+    const modelClient = await this.createModelClient();
+    const mode = await this.resolveSearchMode(tenantId, modelClient);
+    const queryVector = await this.embedQueryIfNeeded(
+      normalized.query,
+      mode.effectiveMode,
+      modelClient
+    );
     const activeKnowledgeBaseIds = await this.resolveActiveAppKnowledgeBaseIds(
       tenantId,
       normalized.knowledgeBaseIds
@@ -287,7 +304,12 @@ export class RetrievalService {
       candidates,
       normalized.candidateLimit
     );
-    const ranked = await this.applyRerank(normalized.query, allowed, mode.effectiveMode);
+    const ranked = await this.applyRerank(
+      normalized.query,
+      allowed,
+      mode.effectiveMode,
+      modelClient
+    );
     const contextMode = await this.resolveContextMode(
       tenantId,
       activeKnowledgeBaseIds,
@@ -300,7 +322,11 @@ export class RetrievalService {
     return this.toSearchResponse(normalized.query, normalized.topK, contextual, paths, contextMode);
   }
 
-  async resolveSearchMode(tenantId: string): Promise<RetrievalModeResolution> {
+  async resolveSearchMode(
+    tenantId: string,
+    modelClient: OpenKBModelClient | null = null
+  ): Promise<RetrievalModeResolution> {
+    const effectiveModelClient = modelClient ?? (await this.createModelClient());
     const [setting, activeProfile] = await Promise.all([
       this.prisma.retrievalSetting.findFirst({
         where: { tenant_id: tenantId },
@@ -318,15 +344,15 @@ export class RetrievalService {
     const resolution = resolveEffectiveRetrievalMode({
       storedMode: setting?.mode,
       envDefaultMode: this.env.OPENKB_RETRIEVAL_DEFAULT_MODE,
-      embeddingConfigured: this.modelClient.embeddingConfigured,
-      rerankConfigured: this.modelClient.rerankConfigured
+      embeddingConfigured: effectiveModelClient.embeddingConfigured,
+      rerankConfigured: effectiveModelClient.rerankConfigured
     });
 
     if (
       retrievalModeNeedsEmbedding(resolution.effectiveMode) &&
       !activeProfileSupportsDenseVector(activeProfile, {
-        dim: this.modelClient.config.embedding.dim,
-        model: this.modelClient.config.embedding.model
+        dim: effectiveModelClient.config.embedding.dim,
+        model: effectiveModelClient.config.embedding.model
       })
     ) {
       throw new RetrievalError(
@@ -336,13 +362,26 @@ export class RetrievalService {
         {
           mode: resolution.effectiveMode,
           active_alias: this.milvus.config.activeAlias,
-          required_embedding_dim: this.modelClient.config.embedding.dim,
-          required_embedding_model: this.modelClient.config.embedding.model ?? null
+          required_embedding_dim: effectiveModelClient.config.embedding.dim,
+          required_embedding_model: effectiveModelClient.config.embedding.model ?? null
         }
       );
     }
 
     return resolution;
+  }
+
+  private async createModelClient(): Promise<OpenKBModelClient> {
+    if (this.modelClientOverride) {
+      return this.modelClientOverride;
+    }
+
+    const settings = await this.prisma.modelSetting.findMany({
+      where: { kind: { in: ["embedding", "rerank"] } }
+    });
+    return createOpenKBModelClient(
+      getOpenKBModelClientConfig(this.env, settings.map(toStoredModelSetting))
+    );
   }
 
   private toSearchResponse(
@@ -770,14 +809,15 @@ export class RetrievalService {
 
   private async embedQueryIfNeeded(
     query: string,
-    mode: RetrievalMode
+    mode: RetrievalMode,
+    modelClient: OpenKBModelClient
   ): Promise<number[] | undefined> {
     if (!retrievalModeNeedsEmbedding(mode)) {
       return undefined;
     }
 
     try {
-      return await this.modelClient.embedText(query);
+      return await modelClient.embedText(query);
     } catch (error) {
       if (error instanceof Error) {
         throw new RetrievalError("SEARCH_FAILED", error.message, 502);
@@ -789,7 +829,8 @@ export class RetrievalService {
   private async applyRerank(
     query: string,
     candidates: MilvusSearchChunkResult[],
-    mode: RetrievalMode
+    mode: RetrievalMode,
+    modelClient: OpenKBModelClient
   ): Promise<MilvusSearchChunkResult[]> {
     const annotated = candidates.map((candidate) =>
       annotateRetrievalMetadata(candidate, {
@@ -798,13 +839,13 @@ export class RetrievalService {
       })
     );
 
-    if (!retrievalModeNeedsRerank(mode) || !this.modelClient.rerankConfigured) {
+    if (!retrievalModeNeedsRerank(mode) || !modelClient.rerankConfigured) {
       return annotated;
     }
 
     let rerankScores: RerankDocumentScore[];
     try {
-      rerankScores = await this.modelClient.rerankDocuments({
+      rerankScores = await modelClient.rerankDocuments({
         query,
         documents: candidates.map((candidate) => candidate.content_text)
       });
@@ -1013,6 +1054,36 @@ export function filterRetrievalAccessPrincipals(principals: string[]): string[] 
   return unique(
     principals.filter((principal) => !/^tenant:[^:]+:(system_admin|tenant_admin)$/.test(principal))
   );
+}
+
+function toStoredModelSetting(setting: {
+  kind: string;
+  provider: string;
+  endpoint: string | null;
+  model: string | null;
+  enabled: boolean;
+  timeout_ms: number | null;
+  embedding_dim: number | null;
+  embedding_batch_size: number | null;
+  llm_temperature: number | null;
+  llm_max_output_tokens: number | null;
+  encrypted_api_key: string | null;
+  api_key_last4: string | null;
+}): StoredModelSetting {
+  return {
+    kind: setting.kind as StoredModelSetting["kind"],
+    provider: setting.provider as StoredModelSetting["provider"],
+    endpoint: setting.endpoint,
+    model: setting.model,
+    enabled: setting.enabled,
+    timeout_ms: setting.timeout_ms,
+    embedding_dim: setting.embedding_dim,
+    embedding_batch_size: setting.embedding_batch_size,
+    llm_temperature: setting.llm_temperature,
+    llm_max_output_tokens: setting.llm_max_output_tokens,
+    encrypted_api_key: setting.encrypted_api_key,
+    api_key_last4: setting.api_key_last4
+  };
 }
 
 function normalizeTopK(value: unknown): number {

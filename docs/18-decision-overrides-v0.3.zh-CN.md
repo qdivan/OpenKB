@@ -18,7 +18,7 @@ v0.x 只做语雀式：空间、知识库、文档、协作者、邀请、分享
 
 ## 3. 知识库 owner 不能配置模型
 
-模型、Milvus、索引、LLM 配置只属于 `system_admin` / `tenant_admin`。知识库 owner、workspace owner、document owner 都不能配置 embedding、rerank、LLM。知识库设置页只能展示索引状态，不能出现模型配置入口。
+模型与模型 secret 配置只属于 `system_admin`。`tenant_admin` 可以查看租户内检索/索引状态，但不能保存 embedding、rerank、LLM 配置或 secret。知识库 owner、workspace owner、document owner 都不能配置 embedding、rerank、LLM。知识库设置页只能展示索引状态，不能出现模型配置入口。
 
 ## 4. Embedding/rerank 尽量放到 Milvus 侧
 
@@ -28,7 +28,7 @@ BM25: Milvus BM25 Function。
 Rerank: 长期优先 Milvus RERANK Function / Model Ranker；v0.3.x 当前实现允许 OpenKB 在最终权限过滤后直连环境变量中的 rerank HTTP endpoint。
 ```
 
-OpenKB v0.x 不保存 embedding/rerank API key，也不实现知识库级模型配置中心。endpoint/model 只能来自部署环境变量；Admin UI 只能切换检索模式。Qwen embedding/rerank 可以由独立模型服务提供 HTTP 兼容接口，后续仍可演进回 Milvus Function。
+OpenKB v0.x 不实现知识库级模型配置中心。endpoint/model 可以来自部署环境变量，也可以由 `system_admin` 在实例级 Models 配置中心保存；API key 只能以 AES-256-GCM 密文保存，依赖 `OPENKB_CONFIG_ENCRYPTION_KEY` 解密，数据库和审计日志不得出现明文 secret。Qwen embedding/rerank 可以由独立模型服务提供 HTTP 兼容接口，后续仍可演进回 Milvus Function。
 
 ## 5. Embedding 更换走 Milvus collection/index/alias
 
@@ -76,4 +76,4 @@ Codex 第二轮阅读发现的 5 个点按以下方式定稿：
 2. Milvus 主键固定为 `id` primary key；`chunk_id` 是普通字段。v0.x 中两者值都等于 PostgreSQL `document_chunks.id` 的字符串形式。
 3. `auth_settings` 必须在数据模型中实现，不能只在 auth 文档和 prompt 中提到。
 4. MCP OAuth/PAT 和 Dify scoped API key 必须有明确持久化表，见 `docs/07-data-model.zh-CN.md`。
-5. OpenKB v0.x 不保存 embedding/rerank provider API key；endpoint/model 只走部署环境变量，模式只走 admin 级 `retrieval_settings`。
+5. OpenKB v0.x 允许 `system_admin` 保存实例级加密模型 secret；禁止明文 key、禁止知识库级模型配置。endpoint/model/secret 的优先级为实例级 DB enabled 配置 > 环境变量 > 未配置，检索模式仍走 admin 级 `retrieval_settings`。

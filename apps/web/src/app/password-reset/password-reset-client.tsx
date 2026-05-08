@@ -3,24 +3,27 @@
 import { useSearchParams } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
+import { LanguageSwitcher } from "@/components/language-switcher";
+import { useI18n } from "@/lib/i18n-provider";
 import { confirmPasswordReset } from "@/lib/openkb-api";
 
 export default function PasswordResetClient() {
+  const { t } = useI18n();
   const searchParams = useSearchParams();
   const token = useMemo(() => searchParams.get("token") ?? "", [searchParams]);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [message, setMessage] = useState(token ? "" : "Password reset token is missing.");
+  const [message, setMessage] = useState(token ? "" : t("Password reset token is missing."));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token) {
-      setMessage("Password reset token is missing.");
+      setMessage(t("Password reset token is missing."));
       return;
     }
     if (password !== confirmPassword) {
-      setMessage("Passwords do not match.");
+      setMessage(t("Passwords do not match."));
       return;
     }
 
@@ -28,11 +31,17 @@ export default function PasswordResetClient() {
     setMessage("");
     try {
       await confirmPasswordReset({ token, password });
-      setMessage("Password updated. You can log in now.");
+      setMessage(t("Password updated. You can log in now."));
       setPassword("");
       setConfirmPassword("");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Password reset failed.");
+      setMessage(
+        error instanceof TypeError
+          ? t("API service is unreachable. Please confirm localhost:4000 is running.")
+          : error instanceof Error
+            ? error.message
+            : t("Password reset failed.")
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -40,13 +49,16 @@ export default function PasswordResetClient() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-6 py-10">
+      <div className="absolute right-6 top-6">
+        <LanguageSwitcher />
+      </div>
       <form
         className="w-full max-w-sm rounded-md border border-zinc-200 bg-white p-6 shadow-sm"
         onSubmit={onSubmit}
       >
-        <h1 className="text-2xl font-semibold">Set password</h1>
+        <h1 className="text-2xl font-semibold">{t("Set password")}</h1>
         <label className="mt-6 block text-sm font-medium text-zinc-700">
-          New password
+          {t("New password")}
           <input
             autoComplete="new-password"
             className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2"
@@ -58,7 +70,7 @@ export default function PasswordResetClient() {
           />
         </label>
         <label className="mt-4 block text-sm font-medium text-zinc-700">
-          Confirm password
+          {t("Confirm password")}
           <input
             autoComplete="new-password"
             className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2"
@@ -74,7 +86,7 @@ export default function PasswordResetClient() {
           disabled={isSubmitting || !token}
           type="submit"
         >
-          {isSubmitting ? "Saving..." : "Set password"}
+          {isSubmitting ? t("Saving...") : t("Set password")}
         </button>
         {message ? <p className="mt-4 text-sm text-zinc-700">{message}</p> : null}
       </form>

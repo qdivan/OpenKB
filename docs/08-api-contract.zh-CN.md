@@ -43,9 +43,14 @@ POST /api/admin/milvus/aliases/switch
 GET  /api/admin/retrieval-settings
 PUT  /api/admin/retrieval-settings
 POST /api/admin/retrieval-settings/probe
+
+GET    /api/admin/models
+PUT    /api/admin/models/:kind
+POST   /api/admin/models/:kind/probe
+DELETE /api/admin/models/:kind/secret
 ```
 
-这些接口不保存模型 API key，只管理 OpenKB 侧可见的 index profile、job、alias 状态。
+Milvus 与 Retrieval 设置接口不保存模型 API key，只管理 OpenKB 侧可见的 index profile、job、alias 和检索模式。`/api/admin/models` 仅允许 `system_admin` 使用，可保存实例级 endpoint/model 和加密 secret；响应和审计日志不得返回 raw key。
 
 ## 3. Workspace / KB / Document
 

@@ -75,7 +75,7 @@ caller identity
 ### Embedding 模型更换
 
 ```text
-admin updates OPENKB_EMBEDDING_* deployment env
+system_admin updates /app/admin/models or deployment OPENKB_EMBEDDING_* env
   -> create new Milvus collection with matching schema
   -> rebuild chunks into new collection
   -> health check

@@ -36,7 +36,7 @@
 
 OpenKB 是一个开源、自托管的团队知识库。它关注写作体验、权限边界和可信检索：内容与权限以 PostgreSQL 为准，Milvus 只做检索索引，Web、MCP、Dify 返回结果前都会再次校验权限。
 
-当前版本处于 `v0.3.x / Phase 14`，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
+当前版本处于 `v0.3.x / Phase 15`，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
 
 ## 特性
 
@@ -91,6 +91,7 @@ OpenKB-dev-123456
 - Phase 12：真实 embedding/rerank/hybrid 检索。
 - Phase 13：知识库 Dashboard、父子切片、全文上下文、检索测试台、发布闭环。
 - Phase 14：Admin 用户管理、账号状态、租户角色、密码重置链接、会话撤销和审计入口。
+- Phase 15：Admin Models 配置中心，支持 system_admin 管理实例级 embedding、rerank、language model endpoint/model 和加密 secret。
 
 下一批重点是 workspace/KB/document 协作面板、邀请审批、分享链接 UI、MCP/Dify key 管理、当前文档切片侧栏和复杂导入 adapter。当前本机开发移交见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
 

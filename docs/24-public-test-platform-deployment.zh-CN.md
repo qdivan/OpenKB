@@ -37,7 +37,7 @@
 | Redis | Redis 地址、是否内置、密码/网络策略 | `REDIS_URL` | 当前 workers 仍轮询 PostgreSQL，但 Redis 是部署基线。 |
 | 对象存储 | S3/MinIO endpoint、bucket、access key、secret、region、path-style | `S3_*` | key 只授予目标 bucket 最小权限。 |
 | Milvus | Milvus URI、token、database、是否 external | `MILVUS_*` | Milvus 只做索引，不做最终授权源。 |
-| 模型服务 | 是否启用 embedding/rerank、endpoint、model 名、向量维度、认证方式、是否仅内网可达 | `OPENKB_EMBEDDING_*`、`OPENKB_RERANK_*`、模型服务部署配置 | OpenKB 不保存 embedding/rerank provider key；如有凭据放在模型服务或部署平台 Secret。 |
+| 模型服务 | 是否启用 embedding/rerank/LLM、endpoint、model 名、向量维度、认证方式、是否仅内网可达 | `OPENKB_EMBEDDING_*`、`OPENKB_RERANK_*`、`OPENKB_LLM_*`、`OPENKB_CONFIG_ENCRYPTION_KEY`、模型服务部署配置 | OpenKB 可由 `system_admin` 保存实例级加密模型 secret；不保存明文 provider key，不提供知识库级模型配置。 |
 | OCR/导入 | 是否启用 MinerU/OCR/Office/PDF adapter、服务地址、资源规格 | 后续 adapter/worker | 当前代码只启用 Markdown/Text/HTML/CSV 导入。 |
 | 上传策略 | 单文件大小、允许文件类型、是否接入杀毒/内容扫描 | `UPLOAD_MAX_BYTES`、网关策略 | 公网未知用户上传必须接入外部扫描。 |
 | Dify | Dify 出口 IP、knowledge_id 命名、允许 KB、top_k 限制、API key 有效期 | Dify key/mapping | Dify key 是 app-scoped，不可模拟用户。 |
@@ -338,7 +338,7 @@ curl -b cookie.txt -H 'Content-Type: application/json' \
 - Session TTL 不超过测试平台需要，建议 7 天。
 - 上传大小有限制，未知用户上传必须经外部扫描。
 - Dify key 与 MCP PAT 设置最小 scope 和过期时间。
-- 模型 provider key 不进入 OpenKB 数据库。
+- 模型 provider key 不得明文进入 OpenKB 数据库；如由 system_admin 配置，只能保存实例级加密 secret。
 - 模型 endpoint 不对公网开放；rerank 只会收到最终权限检查后的候选文本。
 
 运维：

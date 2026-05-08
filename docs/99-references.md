@@ -36,6 +36,16 @@ The Yuque MCP references above are public server/API references used for capabil
 - AGENTS.md guide: https://developers.openai.com/codex/guides/agents-md
 - Codex CLI: https://developers.openai.com/codex/cli
 
+## OpenAI API
+
+- Responses API: https://platform.openai.com/docs/api-reference/responses
+- Chat Completions API: https://platform.openai.com/docs/api-reference/chat
+- Embeddings API: https://platform.openai.com/docs/api-reference/embeddings
+
+## Anthropic API
+
+- Messages API: https://docs.anthropic.com/en/api/messages
+
 ## Dify
 
 - Dify External Knowledge API: https://docs.dify.ai/en/use-dify/knowledge/external-knowledge-api

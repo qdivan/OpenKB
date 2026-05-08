@@ -6,6 +6,7 @@ import {
   createAdminUser,
   isUnauthorized,
   listAdminUsers,
+  probeAdminModel,
   searchKnowledge,
   setAdminUserTenantRole
 } from "./openkb-api";
@@ -73,6 +74,29 @@ describe("OpenKB API client", () => {
     );
   });
 
+  it("deduplicates simultaneous GET requests while they are in flight", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const fetchMock = vi.fn(() => pendingResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const firstRequest = apiFetch<{ ok: true }>("/api/workspaces");
+    const secondRequest = apiFetch<{ ok: true }>("/api/workspaces");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolveResponse(new Response(JSON.stringify({ ok: true })));
+    await expect(Promise.all([firstRequest, secondRequest])).resolves.toEqual([
+      { ok: true },
+      { ok: true }
+    ]);
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    await expect(apiFetch<{ ok: true }>("/api/workspaces")).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("builds admin user management requests", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [], total: 0 })));
     vi.stubGlobal("fetch", fetchMock);
@@ -105,6 +129,40 @@ describe("OpenKB API client", () => {
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({ role: "tenant_admin" })
+      })
+    );
+  });
+
+  it("posts transient admin model probe settings without saving them", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ configured: true, ok: true }))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await probeAdminModel("embedding", {
+      provider: "openai_compatible",
+      enabled: true,
+      endpoint: "http://model.test/v1/embeddings",
+      model: "embedding-model",
+      embedding_dim: 1024,
+      embedding_batch_size: 8,
+      api_key: "temporary-key"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/admin/models/embedding/probe",
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST",
+        body: JSON.stringify({
+          provider: "openai_compatible",
+          enabled: true,
+          endpoint: "http://model.test/v1/embeddings",
+          model: "embedding-model",
+          embedding_dim: 1024,
+          embedding_batch_size: 8,
+          api_key: "temporary-key"
+        })
       })
     );
   });

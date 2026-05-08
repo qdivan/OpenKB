@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { LanguageSwitcher } from "@/components/language-switcher";
+import { useI18n } from "@/lib/i18n-provider";
 import {
   ApiRequestError,
   getKnowledgeBase,
@@ -17,6 +19,7 @@ import {
 type SearchState = "idle" | "loading" | "done" | "error";
 
 export function SearchPageClient() {
+  const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const scopedKnowledgeBaseId = searchParams.get("kb_id")?.trim() ?? "";
@@ -57,7 +60,7 @@ export function SearchPageClient() {
           router.replace("/login");
           return;
         }
-        setMessage(formatSearchError(error));
+        setMessage(formatSearchError(error, t));
         setState("error");
       }
     },
@@ -125,10 +128,10 @@ export function SearchPageClient() {
   }
 
   const scopedLabel = knowledgeBaseTitle
-    ? `Scoped to ${knowledgeBaseTitle}`
+    ? t("Scoped to {name}", { name: knowledgeBaseTitle })
     : scopedKnowledgeBaseId
-      ? "Scoped to current knowledge base"
-      : "All readable knowledge bases";
+      ? t("Scoped to current knowledge base")
+      : t("All readable knowledge bases");
 
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-950">
@@ -138,17 +141,20 @@ export function SearchPageClient() {
             <Link
               className="icon-button"
               href={scopedKnowledgeBaseId ? `/app/kb/${scopedKnowledgeBaseId}` : "/app"}
-              title="Back to workspace"
+              title={t("Back to workspace")}
             >
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">Search</p>
+              <p className="truncate text-sm font-semibold">{t("Search")}</p>
               <p className="truncate text-xs text-zinc-500">{scopedLabel}</p>
             </div>
           </div>
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-sm font-semibold text-white">
-            OK
+          <div className="flex shrink-0 items-center gap-2">
+            <LanguageSwitcher compact />
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-600 text-sm font-semibold text-white">
+              OK
+            </div>
           </div>
         </div>
       </header>
@@ -163,7 +169,7 @@ export function SearchPageClient() {
             <input
               className="min-w-0 flex-1 border-none bg-transparent text-sm outline-none placeholder:text-zinc-400"
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search OpenKB"
+              placeholder={t("Search OpenKB")}
               value={query}
             />
           </label>
@@ -177,14 +183,14 @@ export function SearchPageClient() {
             ) : (
               <Search className="h-4 w-4" />
             )}
-            Search
+            {t("Search")}
           </button>
         </form>
 
         <div className="mt-5">
           {state === "loading" ? (
             <SearchStatus icon={<LoaderCircle className="h-4 w-4 animate-spin" />}>
-              Searching index
+              {t("Searching index")}
             </SearchStatus>
           ) : state === "error" ? (
             <SearchStatus icon={<AlertTriangle className="h-4 w-4 text-amber-600" />}>
@@ -193,7 +199,7 @@ export function SearchPageClient() {
           ) : response && response.results.length > 0 ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between px-1 text-xs text-zinc-500">
-                <span>{response.results.length} results</span>
+                <span>{t("{count} results", { count: response.results.length })}</span>
                 <span>top_k {response.top_k}</span>
               </div>
               {response.results.map((result) => (
@@ -234,10 +240,12 @@ export function SearchPageClient() {
             </div>
           ) : response ? (
             <SearchStatus icon={<Search className="h-4 w-4 text-zinc-500" />}>
-              No readable results
+              {t("No readable results")}
             </SearchStatus>
           ) : (
-            <SearchStatus icon={<Search className="h-4 w-4 text-zinc-500" />}>Ready</SearchStatus>
+            <SearchStatus icon={<Search className="h-4 w-4 text-zinc-500" />}>
+              {t("Ready")}
+            </SearchStatus>
           )}
         </div>
       </section>
@@ -254,10 +262,10 @@ function SearchStatus({ icon, children }: { icon: ReactNode; children: ReactNode
   );
 }
 
-function formatSearchError(error: unknown): string {
+function formatSearchError(error: unknown, t: (key: string) => string): string {
   if (error instanceof ApiRequestError) {
     const code = error.body.error ? `${error.body.error}: ` : "";
     return `${code}${error.body.message ?? error.message}`;
   }
-  return error instanceof Error ? error.message : "Search failed.";
+  return error instanceof Error ? error.message : t("Search failed.");
 }

@@ -17,6 +17,7 @@
 /app/admin
 /app/admin/users
 /app/admin/retrieval
+/app/admin/models
 /password-reset
 ```
 
@@ -32,7 +33,7 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 /admin/audit-logs
 ```
 
-当前已实现 `/app/admin`、`/app/admin/users` 和 `/app/admin/retrieval` 最小页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Admin 页面不显示“给某个知识库单独配置模型”的入口。
+当前已实现 `/app/admin`、`/app/admin/users`、`/app/admin/retrieval` 和 `/app/admin/models` 最小页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Models 页面是实例级 `system_admin` 配置中心，Admin 页面不显示“给某个知识库单独配置模型”的入口。
 
 ## 3. 文档页面布局
 
@@ -114,4 +115,4 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 - LLM 模型。
 - Milvus collection。
 
-模型、Milvus 和检索模式配置只属于 `system_admin` / `tenant_admin`。
+模型 secret、endpoint 和 model 配置只属于 `system_admin`；`tenant_admin` 可以查看检索状态但不能保存 Models 配置。Milvus 和检索模式仍是 admin 控制面能力。

@@ -1,11 +1,16 @@
 "use client";
 
 import {
+  clearBasicMarkdownFormatting,
+  createAssetLinkMarkdown,
+  createAssetImageMarkdown,
   createEditorSavePayload,
+  createMarkdownDateText,
   extractMarkdownReferences,
   extractMarkdownOutline,
   normalizeMarkdownSource,
   prepareMarkdownForMilkdown,
+  replaceMarkdownText,
   restoreMarkdownFromMilkdown,
   validateMarkdownSource,
   type MarkdownOutlineItem,
@@ -41,20 +46,29 @@ import {
   XCircle
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type FormEvent,
+  type ForwardRefExoticComponent,
+  type LazyExoticComponent,
   type MouseEvent,
-  type ReactNode
+  type ReactNode,
+  type RefAttributes
 } from "react";
-import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { KnowledgeBaseDashboard } from "@/components/workbench/knowledge-base-dashboard";
-import type { MilkdownEditorProps } from "@/components/workbench/milkdown-editor";
+import { EditorToolbar, type EditorToolbarAction } from "@/components/workbench/editor-toolbar";
+import type {
+  MilkdownCommandBridge,
+  MilkdownEditorProps
+} from "@/components/workbench/milkdown-editor";
+import { useI18n } from "@/lib/i18n-provider";
 import {
   ApiRequestError,
   createDocument,
@@ -95,39 +109,33 @@ type EditorMode = "read" | "edit" | "source";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
 type TreeNode = DocumentSummary & { children: TreeNode[] };
 type TreeDropPosition = "before" | "inside" | "after";
-type CreateDialogKind = "workspace" | "knowledge_base" | "folder" | "page";
-type CreateDialogState = {
-  kind: CreateDialogKind;
-  parentId?: string | null;
-};
 type DocumentMoveUpdate = {
   id: string;
   parent_id: string | null;
   sort_order: number;
 };
 
-const MilkdownEditor = dynamic<MilkdownEditorProps>(
-  () => import("@/components/workbench/milkdown-editor").then((module) => module.MilkdownEditor),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-500">
-        Loading editor...
-      </div>
-    )
-  }
-);
+const LazyMilkdownEditor = lazy(async () => {
+  const module = await import("@/components/workbench/milkdown-editor");
+  return { default: module.MilkdownEditor };
+}) as LazyExoticComponent<
+  ForwardRefExoticComponent<MilkdownEditorProps & RefAttributes<MilkdownCommandBridge>>
+>;
 
 export function WorkbenchClient({
   initialWorkspaceId,
   initialKnowledgeBaseId,
   initialDocumentId
 }: WorkbenchClientProps) {
+  const { t } = useI18n();
   const router = useRouter();
   const saveRunRef = useRef(0);
   const latestDraftRef = useRef({ title: "", markdown: "" });
   const editorPaneRef = useRef<HTMLDivElement | null>(null);
+  const milkdownEditorRef = useRef<MilkdownCommandBridge | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentFileInputRef = useRef<HTMLInputElement | null>(null);
   const [me, setMe] = useState<AuthMe | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
@@ -151,8 +159,10 @@ export function WorkbenchClient({
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
   const [importJobs, setImportJobs] = useState<ImportJob[]>([]);
   const [isImporting, setIsImporting] = useState(false);
-  const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null);
-  const [createTitle, setCreateTitle] = useState("");
+  const [findReplaceOpen, setFindReplaceOpen] = useState(false);
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [findReplaceMatchCase, setFindReplaceMatchCase] = useState(false);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const selectedKnowledgeBase = knowledgeBases.find(
@@ -177,6 +187,9 @@ export function WorkbenchClient({
       draftTitle.trim() !== savedTitle ||
       (currentDocument?.type === "page" &&
         normalizeMarkdownSource(draftMarkdown) !== savedMarkdown));
+  const canEditCurrentDocument = currentDocument
+    ? canEditDocumentRole(currentDocument.role)
+    : false;
 
   useEffect(() => {
     latestDraftRef.current = { title: draftTitle, markdown: draftMarkdown };
@@ -195,6 +208,12 @@ export function WorkbenchClient({
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    if (currentDocument && !canEditCurrentDocument && mode !== "read") {
+      setMode("read");
+    }
+  }, [canEditCurrentDocument, currentDocument, mode]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -262,12 +281,12 @@ export function WorkbenchClient({
         return;
       }
       if (error instanceof ApiRequestError) {
-        setMessage(error.body.message || error.body.error || "Request failed.");
+        setMessage(error.body.message || error.body.error || t("Request failed."));
         return;
       }
-      setMessage(error instanceof Error ? error.message : "Unexpected error.");
+      setMessage(error instanceof Error ? error.message : t("Unexpected error."));
     },
-    [router]
+    [router, t]
   );
 
   const clearDocumentState = useCallback(() => {
@@ -286,8 +305,8 @@ export function WorkbenchClient({
       return true;
     }
 
-    return window.confirm("You have unsaved changes. Leave this document anyway?");
-  }, [hasUnsavedChanges]);
+    return window.confirm(t("You have unsaved changes. Leave this document anyway?"));
+  }, [hasUnsavedChanges, t]);
 
   const openDocument = useCallback(async (documentId: string) => {
     const document = await getDocument(documentId);
@@ -297,6 +316,7 @@ export function WorkbenchClient({
     setDraftMarkdown(document.currentVersion?.markdown ?? "");
     setSavedMarkdown(document.currentVersion?.markdown ?? "");
     setBaseVersionId(document.currentVersion?.id ?? null);
+    setMode(canEditDocumentRole(document.role) ? "edit" : "read");
     setSaveState("idle");
     setMessage("");
     setEditorResetKey((key) => key + 1);
@@ -398,7 +418,7 @@ export function WorkbenchClient({
     }
     if (!nextTitle) {
       setSaveState("error");
-      setMessage("Title is required.");
+      setMessage(t("Title is required."));
       return;
     }
 
@@ -415,8 +435,8 @@ export function WorkbenchClient({
           setSaveState("error");
           setMessage(
             firstIssue
-              ? `${firstIssue.message} Line ${firstIssue.line}.`
-              : "Markdown source is invalid."
+              ? t("{message} Line {line}.", { message: firstIssue.message, line: firstIssue.line })
+              : t("Markdown source is invalid.")
           );
           return;
         }
@@ -464,7 +484,7 @@ export function WorkbenchClient({
     } catch (error) {
       if (error instanceof ApiRequestError && error.body.error === "VERSION_CONFLICT") {
         setSaveState("conflict");
-        setMessage("This document changed elsewhere. Your draft is still here.");
+        setMessage(t("This document changed elsewhere. Your draft is still here."));
         return;
       }
       if (error instanceof ApiRequestError && error.body.error === "MARKDOWN_DIALECT_ERROR") {
@@ -483,8 +503,25 @@ export function WorkbenchClient({
     handleApiError,
     saveState,
     savedMarkdown,
-    savedTitle
+    savedTitle,
+    t
   ]);
+
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") {
+        return;
+      }
+
+      event.preventDefault();
+      if (canEditCurrentDocument && currentDocument) {
+        void persistDraft();
+      }
+    };
+
+    window.addEventListener("keydown", handleSaveShortcut);
+    return () => window.removeEventListener("keydown", handleSaveShortcut);
+  }, [canEditCurrentDocument, currentDocument, persistDraft]);
 
   useEffect(() => {
     if (!currentDocument || saveState === "conflict" || saveState === "saving") {
@@ -559,14 +596,14 @@ export function WorkbenchClient({
       setKnowledgeBases(nextKnowledgeBases);
       const firstKnowledgeBase = nextKnowledgeBases[0] ?? null;
       if (firstKnowledgeBase) {
+        router.push(`/app/kb/${firstKnowledgeBase.id}`);
         await loadKnowledgeBase(firstKnowledgeBase.id);
-        pushWorkbenchPath(`/app/kb/${firstKnowledgeBase.id}`);
       } else {
+        router.push(`/app/workspaces/${workspaceId}`);
         setSelectedKnowledgeBaseId(null);
         setDocuments([]);
         setImportJobs([]);
         clearDocumentState();
-        pushWorkbenchPath(`/app/workspaces/${workspaceId}`);
       }
     } catch (error) {
       handleApiError(error);
@@ -577,13 +614,6 @@ export function WorkbenchClient({
 
   async function selectKnowledgeBase(knowledgeBaseId: string) {
     if (knowledgeBaseId === selectedKnowledgeBaseId) {
-      if (currentDocument) {
-        if (!confirmDiscardDraft()) {
-          return;
-        }
-        clearDocumentState();
-        pushWorkbenchPath(`/app/kb/${knowledgeBaseId}`);
-      }
       return;
     }
     if (!confirmDiscardDraft()) {
@@ -593,8 +623,8 @@ export function WorkbenchClient({
     setIsBusy(true);
     setMessage("");
     try {
+      router.push(`/app/kb/${knowledgeBaseId}`);
       await loadKnowledgeBase(knowledgeBaseId);
-      pushWorkbenchPath(`/app/kb/${knowledgeBaseId}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -614,7 +644,7 @@ export function WorkbenchClient({
     setMessage("");
     try {
       const document = await openDocument(documentId);
-      pushWorkbenchPath(`/app/kb/${document.knowledge_base_id}/docs/${document.id}`);
+      router.push(`/app/kb/${document.knowledge_base_id}/docs/${document.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -622,89 +652,20 @@ export function WorkbenchClient({
     }
   }
 
-  function openCreateDialog(kind: CreateDialogKind) {
-    if (kind === "knowledge_base" && !selectedWorkspaceId) {
-      return;
-    }
-    if ((kind === "folder" || kind === "page") && !selectedKnowledgeBaseId) {
-      return;
-    }
-
-    setMessage("");
-    setCreateTitle("");
-    setCreateDialog({
-      kind,
-      parentId:
-        kind === "folder" || kind === "page"
-          ? currentDocument?.type === "folder"
-            ? currentDocument.id
-            : null
-          : undefined
-    });
-  }
-
-  async function handleCreateDialogSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!createDialog) {
-      return;
-    }
-    const title = createTitle.trim();
-    if (!title) {
-      setMessage("Please enter a name.");
-      return;
-    }
-    if (!confirmDiscardDraft()) {
+  async function handleCreateWorkspace() {
+    const name = window.prompt(t("Workspace name"));
+    if (!name?.trim()) {
       return;
     }
 
     setIsBusy(true);
-    setMessage("");
     try {
-      if (createDialog.kind === "workspace") {
-        const workspace = await createWorkspace({
-          name: title,
-          slug: slugFromTitle(title, "workspace")
-        });
-        setWorkspaces((items) => [...items, workspace]);
-        setSelectedWorkspaceId(workspace.id);
-        setKnowledgeBases([]);
-        setSelectedKnowledgeBaseId(null);
-        setDocuments([]);
-        setImportJobs([]);
-        clearDocumentState();
-        pushWorkbenchPath(`/app/workspaces/${workspace.id}`);
-      } else if (createDialog.kind === "knowledge_base") {
-        if (!selectedWorkspaceId) {
-          return;
-        }
-        const knowledgeBase = await createKnowledgeBase({
-          workspace_id: selectedWorkspaceId,
-          title,
-          slug: slugFromTitle(title, "kb"),
-          visibility: "workspace"
-        });
-        setKnowledgeBases((items) => [...items, knowledgeBase]);
-        await loadKnowledgeBase(knowledgeBase.id);
-        pushWorkbenchPath(`/app/kb/${knowledgeBase.id}`);
-      } else {
-        if (!selectedKnowledgeBaseId) {
-          return;
-        }
-        const document = await createDocument({
-          knowledge_base_id: selectedKnowledgeBaseId,
-          parent_id: createDialog.parentId ?? null,
-          type: createDialog.kind,
-          title,
-          slug: slugFromTitle(title, createDialog.kind),
-          markdown: createDialog.kind === "page" ? `# ${title}\n` : ""
-        });
-        const nextTree = await getKnowledgeBaseTree(selectedKnowledgeBaseId);
-        setDocuments(nextTree);
-        await openDocument(document.id);
-        pushWorkbenchPath(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
-      }
-      setCreateDialog(null);
-      setCreateTitle("");
+      const workspace = await createWorkspace({
+        name: name.trim(),
+        slug: slugFromTitle(name, "workspace")
+      });
+      setWorkspaces((items) => [...items, workspace]);
+      await selectWorkspace(workspace.id);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -716,7 +677,7 @@ export function WorkbenchClient({
     if (!selectedWorkspace) {
       return;
     }
-    const name = window.prompt("Workspace name", selectedWorkspace.name);
+    const name = window.prompt(t("Workspace name"), selectedWorkspace.name);
     if (!name?.trim() || name.trim() === selectedWorkspace.name) {
       return;
     }
@@ -727,6 +688,64 @@ export function WorkbenchClient({
       setWorkspaces((items) =>
         items.map((item) => (item.id === workspace.id ? { ...item, ...workspace } : item))
       );
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleCreateKnowledgeBase() {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    const title = window.prompt(t("Knowledge base title"));
+    if (!title?.trim()) {
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const knowledgeBase = await createKnowledgeBase({
+        workspace_id: selectedWorkspaceId,
+        title: title.trim(),
+        slug: slugFromTitle(title, "kb"),
+        visibility: "workspace"
+      });
+      setKnowledgeBases((items) => [...items, knowledgeBase]);
+      router.push(`/app/kb/${knowledgeBase.id}`);
+      await loadKnowledgeBase(knowledgeBase.id);
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleCreateDocument(type: "folder" | "page") {
+    if (!selectedKnowledgeBaseId) {
+      return;
+    }
+    const title = window.prompt(type === "folder" ? t("Folder title") : t("Document title"));
+    if (!title?.trim()) {
+      return;
+    }
+
+    const parentId = currentDocument?.type === "folder" ? currentDocument.id : null;
+    setIsBusy(true);
+    try {
+      const document = await createDocument({
+        knowledge_base_id: selectedKnowledgeBaseId,
+        parent_id: parentId,
+        type,
+        title: title.trim(),
+        slug: slugFromTitle(title, type),
+        markdown: type === "page" ? `# ${title.trim()}\n` : ""
+      });
+      const nextTree = await getKnowledgeBaseTree(selectedKnowledgeBaseId);
+      setDocuments(nextTree);
+      await openDocument(document.id);
+      router.push(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -748,7 +767,7 @@ export function WorkbenchClient({
 
     const parentId = currentDocument?.type === "folder" ? currentDocument.id : null;
     const defaultTitle = file.name.replace(/\.[^.]+$/, "");
-    const title = window.prompt("Imported document title", defaultTitle);
+    const title = window.prompt(t("Imported document title"), defaultTitle);
     if (title === null) {
       if (importFileInputRef.current) {
         importFileInputRef.current.value = "";
@@ -772,7 +791,7 @@ export function WorkbenchClient({
         converter: "auto"
       });
       setImportJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]);
-      setMessage("Import job queued. The import worker will convert it to Markdown.");
+      setMessage(t("Import job queued. The import worker will convert it to Markdown."));
       void pollImportJob(job.id, selectedKnowledgeBaseId);
     } catch (error) {
       handleApiError(error);
@@ -782,6 +801,205 @@ export function WorkbenchClient({
         importFileInputRef.current.value = "";
       }
     }
+  }
+
+  function handleToolbarAction(action: EditorToolbarAction) {
+    if (currentDocument?.type !== "page" || mode !== "edit") {
+      return;
+    }
+
+    const editor = milkdownEditorRef.current;
+    switch (action) {
+      case "undo":
+        editor?.undo();
+        break;
+      case "redo":
+        editor?.redo();
+        break;
+      case "paragraph":
+        editor?.paragraph();
+        break;
+      case "heading_1":
+      case "heading_2":
+      case "heading_3":
+      case "heading_4":
+      case "heading_5":
+      case "heading_6":
+        editor?.heading(Number(action.at(-1)) as 1 | 2 | 3 | 4 | 5 | 6);
+        break;
+      case "bold":
+        editor?.bold();
+        break;
+      case "italic":
+        editor?.italic();
+        break;
+      case "strikethrough":
+        editor?.strikethrough();
+        break;
+      case "inline_code":
+        editor?.inlineCode();
+        break;
+      case "clear_format": {
+        if (!window.confirm(t("Clear basic inline Markdown formatting in this document?"))) {
+          break;
+        }
+        const result = clearBasicMarkdownFormatting(draftMarkdown);
+        if (!result.changed) {
+          setMessage(t("No basic formatting found."));
+          break;
+        }
+        setDraftMarkdown(result.markdown);
+        setEditorResetKey((key) => key + 1);
+        setMessage(t("Basic formatting cleared."));
+        break;
+      }
+      case "link": {
+        const href = window.prompt(t("Link URL"));
+        if (href?.trim()) {
+          if (!editor?.link(href.trim())) {
+            editor?.insertMarkdown(`[${t("Link")}](${href.trim()})`, true);
+          }
+        }
+        break;
+      }
+      case "blockquote":
+        if (!editor?.blockquote()) {
+          editor?.insertMarkdown(`\n> ${t("Quote")}\n`);
+        }
+        break;
+      case "divider":
+        if (!editor?.divider()) {
+          editor?.insertMarkdown("\n---\n");
+        }
+        break;
+      case "insert_code_block":
+        if (!editor?.codeBlock()) {
+          editor?.insertMarkdown("\n```ts\n\n```\n");
+        }
+        break;
+      case "bullet_list":
+        if (!editor?.bulletList()) {
+          editor?.insertMarkdown(`\n- ${t("Item")}\n`);
+        }
+        break;
+      case "ordered_list":
+        if (!editor?.orderedList()) {
+          editor?.insertMarkdown(`\n1. ${t("Item")}\n`);
+        }
+        break;
+      case "indent":
+        editor?.indent();
+        break;
+      case "outdent":
+        editor?.outdent();
+        break;
+      case "task_list":
+        editor?.taskList();
+        break;
+      case "insert_table":
+        if (!editor?.table()) {
+          editor?.insertMarkdown(
+            `\n| ${t("Column")} | ${t("Value")} |\n| --- | --- |\n| ${t("Item")} | ${t(
+              "Value"
+            )} |\n`
+          );
+        }
+        break;
+      case "insert_image":
+        imageFileInputRef.current?.click();
+        break;
+      case "insert_attachment":
+        attachmentFileInputRef.current?.click();
+        break;
+      case "insert_date": {
+        const dateText = createMarkdownDateText();
+        if (!editor?.insertMarkdown(dateText, true)) {
+          setDraftMarkdown((current) => normalizeMarkdownSource(`${current}${dateText}`));
+          setEditorResetKey((key) => key + 1);
+        }
+        break;
+      }
+      case "find_replace":
+        setFindReplaceOpen((open) => !open);
+        break;
+      default:
+        break;
+    }
+  }
+
+  async function handleInsertImageFile(file: File | null) {
+    if (!file || !selectedKnowledgeBaseId || currentDocument?.type !== "page") {
+      return;
+    }
+
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const asset = await uploadFile({
+        file,
+        knowledge_base_id: selectedKnowledgeBaseId,
+        parent_id: currentDocument.parent_id
+      });
+      const markdown = createAssetImageMarkdown(asset.id, file.name);
+      const inserted =
+        milkdownEditorRef.current?.image(`asset://${asset.id}`, file.name) ??
+        milkdownEditorRef.current?.insertMarkdown(`\n${markdown}\n`);
+      if (!inserted) {
+        setDraftMarkdown((current) => normalizeMarkdownSource(`${current}\n${markdown}\n`));
+        setEditorResetKey((key) => key + 1);
+      }
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+      if (imageFileInputRef.current) {
+        imageFileInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function handleInsertAttachmentFile(file: File | null) {
+    if (!file || !selectedKnowledgeBaseId || currentDocument?.type !== "page") {
+      return;
+    }
+
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const asset = await uploadFile({
+        file,
+        knowledge_base_id: selectedKnowledgeBaseId,
+        parent_id: currentDocument.parent_id
+      });
+      const markdown = createAssetLinkMarkdown(asset.id, file.name);
+      if (!milkdownEditorRef.current?.insertMarkdown(`\n${markdown}\n`)) {
+        setDraftMarkdown((current) => normalizeMarkdownSource(`${current}\n${markdown}\n`));
+        setEditorResetKey((key) => key + 1);
+      }
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+      if (attachmentFileInputRef.current) {
+        attachmentFileInputRef.current.value = "";
+      }
+    }
+  }
+
+  function handleReplaceDraftMarkdown(replaceAll: boolean) {
+    const result = replaceMarkdownText(draftMarkdown, findText, replaceText, {
+      matchCase: findReplaceMatchCase,
+      replaceAll
+    });
+
+    if (result.count === 0) {
+      setMessage(t("No matches found."));
+      return;
+    }
+
+    setDraftMarkdown(result.markdown);
+    setEditorResetKey((key) => key + 1);
+    setMessage(t("Replaced {count} matches.", { count: result.count }));
   }
 
   async function pollImportJob(importJobId: string, knowledgeBaseId: string) {
@@ -796,13 +1014,15 @@ export function WorkbenchClient({
           setDocuments(nextTree);
           if (job.document_id) {
             await openDocument(job.document_id);
-            pushWorkbenchPath(`/app/kb/${knowledgeBaseId}/docs/${job.document_id}`);
+            router.push(`/app/kb/${knowledgeBaseId}/docs/${job.document_id}`);
           }
           setMessage("");
           return;
         }
         if (job.status === "failed") {
-          setMessage(job.error ? `Import failed: ${job.error}` : "Import failed.");
+          setMessage(
+            job.error ? t("Import failed: {error}", { error: job.error }) : t("Import failed.")
+          );
           return;
         }
       } catch (error) {
@@ -816,7 +1036,7 @@ export function WorkbenchClient({
     if (!currentDocument) {
       return;
     }
-    if (!window.confirm(`Delete "${currentDocument.title}"?`)) {
+    if (!window.confirm(t('Delete "{title}"?', { title: currentDocument.title }))) {
       return;
     }
 
@@ -830,12 +1050,9 @@ export function WorkbenchClient({
       const nextDocument = nextTree.find((document) => document.type === "page") ?? nextTree[0];
       if (nextDocument) {
         await openDocument(nextDocument.id);
-        pushWorkbenchPath(`/app/kb/${nextDocument.knowledge_base_id}/docs/${nextDocument.id}`);
+        router.push(`/app/kb/${nextDocument.knowledge_base_id}/docs/${nextDocument.id}`);
       } else {
         clearDocumentState();
-        if (selectedKnowledgeBaseId) {
-          pushWorkbenchPath(`/app/kb/${selectedKnowledgeBaseId}`);
-        }
       }
     } catch (error) {
       handleApiError(error);
@@ -849,7 +1066,7 @@ export function WorkbenchClient({
       return;
     }
     if (hasUnsavedChanges || saveState === "saving") {
-      setMessage("Save the document before changing publish state.");
+      setMessage(t("Save the document before changing publish state."));
       return;
     }
 
@@ -865,7 +1082,9 @@ export function WorkbenchClient({
       setSavedMarkdown(updated.currentVersion?.markdown ?? "");
       setBaseVersionId(updated.currentVersion?.id ?? null);
       setDocuments((items) => updateDocumentInList(items, updated));
-      setMessage(updated.status === "published" ? "Document published." : "Document unpublished.");
+      setMessage(
+        updated.status === "published" ? t("Document published.") : t("Document unpublished.")
+      );
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -947,7 +1166,7 @@ export function WorkbenchClient({
     const updates = planDocumentMove(documents, draggedId, targetId, position);
     setDraggingDocumentId(null);
     if (updates.length === 0) {
-      setMessage("Document cannot be moved there.");
+      setMessage(t("Document cannot be moved there."));
       return;
     }
 
@@ -1001,7 +1220,7 @@ export function WorkbenchClient({
     }
   }
 
-  const statusText = saveStatusText(saveState);
+  const statusText = t(saveStatusText(saveState));
   const isAdmin = Boolean(
     me?.roles.some((role) => role === "system_admin" || role === "tenant_admin")
   );
@@ -1015,16 +1234,12 @@ export function WorkbenchClient({
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">OpenKB</p>
-            <p className="truncate text-xs text-zinc-500">{me?.user.email ?? "Loading"}</p>
+            <p className="truncate text-xs text-zinc-500">{me?.user.email ?? t("Loading")}</p>
           </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
-          <PanelHeader
-            title="Workspaces"
-            onAdd={() => openCreateDialog("workspace")}
-            disabled={isBusy}
-          />
+          <PanelHeader title={t("Workspaces")} onAdd={handleCreateWorkspace} disabled={isBusy} />
           <div className="space-y-1">
             {workspaces.map((workspace) => (
               <button
@@ -1041,8 +1256,8 @@ export function WorkbenchClient({
 
           <div className="mt-6">
             <PanelHeader
-              title="Knowledge Bases"
-              onAdd={() => openCreateDialog("knowledge_base")}
+              title={t("Knowledge Bases")}
+              onAdd={handleCreateKnowledgeBase}
               disabled={isBusy}
             />
             <div className="space-y-1">
@@ -1070,32 +1285,43 @@ export function WorkbenchClient({
             </div>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold">
-                {selectedWorkspace?.name ?? "OpenKB Workspace"}
+                {selectedWorkspace?.name ?? t("OpenKB Workspace")}
               </p>
               <p className="truncate text-xs text-zinc-500">
-                {selectedKnowledgeBase?.title ?? "No knowledge base selected"}
+                {selectedKnowledgeBase?.title ?? t("No knowledge base selected")}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="icon-button" onClick={handleOpenSearch} title="Search" type="button">
+            <LanguageSwitcher compact />
+            <button
+              className="icon-button"
+              onClick={handleOpenSearch}
+              title={t("Search")}
+              type="button"
+            >
               <Search className="h-4 w-4" />
             </button>
             {isAdmin ? (
-              <button className="icon-button" onClick={handleOpenAdmin} title="Admin" type="button">
+              <button
+                className="icon-button"
+                onClick={handleOpenAdmin}
+                title={t("Admin")}
+                type="button"
+              >
                 <Settings2 className="h-4 w-4" />
               </button>
             ) : null}
-            <button className="icon-button" title="Collaborators" type="button">
+            <button className="icon-button" title={t("Collaborators")} type="button">
               <Users className="h-4 w-4" />
             </button>
-            <button className="icon-button" title="Share" type="button">
+            <button className="icon-button" title={t("Share")} type="button">
               <Share2 className="h-4 w-4" />
             </button>
             <button
               className="icon-button"
               onClick={() => void handleLogout()}
-              title="Log out"
+              title={t("Log out")}
               type="button"
             >
               <LogOut className="h-4 w-4" />
@@ -1106,19 +1332,21 @@ export function WorkbenchClient({
         {isBooting ? (
           <LoadingState />
         ) : (
-          <div className="grid min-h-0 flex-1 content-start grid-cols-1 lg:content-stretch lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_240px]">
-            <aside className="min-h-0 self-start border-b border-zinc-200 bg-zinc-50/70 lg:self-stretch lg:border-b-0 lg:border-r">
+          <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_240px]">
+            <aside className="min-h-0 border-b border-zinc-200 bg-zinc-50/70 lg:border-b-0 lg:border-r">
               <div className="flex h-12 items-center justify-between border-b border-zinc-200 px-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">Documents</p>
-                  <p className="truncate text-xs text-zinc-500">{documents.length} items</p>
+                  <p className="truncate text-sm font-semibold">{t("Documents")}</p>
+                  <p className="truncate text-xs text-zinc-500">
+                    {t("{count} items", { count: documents.length })}
+                  </p>
                 </div>
                 <div className="flex gap-1">
                   <button
                     className="icon-button"
                     disabled={!selectedKnowledgeBaseId || isBusy || isImporting}
                     onClick={() => void handleImportClick()}
-                    title="Import file"
+                    title={t("Import file")}
                     type="button"
                   >
                     {isImporting ? (
@@ -1130,8 +1358,8 @@ export function WorkbenchClient({
                   <button
                     className="icon-button"
                     disabled={!selectedKnowledgeBaseId || isBusy}
-                    onClick={() => openCreateDialog("folder")}
-                    title="New folder"
+                    onClick={() => void handleCreateDocument("folder")}
+                    title={t("New folder")}
                     type="button"
                   >
                     <FolderPlus className="h-4 w-4" />
@@ -1139,8 +1367,8 @@ export function WorkbenchClient({
                   <button
                     className="icon-button"
                     disabled={!selectedKnowledgeBaseId || isBusy}
-                    onClick={() => openCreateDialog("page")}
-                    title="New document"
+                    onClick={() => void handleCreateDocument("page")}
+                    title={t("New document")}
                     type="button"
                   >
                     <Plus className="h-4 w-4" />
@@ -1152,6 +1380,21 @@ export function WorkbenchClient({
                 accept=".md,.markdown,.txt,.html,.htm,.csv,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
                 className="hidden"
                 onChange={(event) => void handleImportFile(event.target.files?.[0] ?? null)}
+                type="file"
+              />
+              <input
+                ref={imageFileInputRef}
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                className="hidden"
+                onChange={(event) => void handleInsertImageFile(event.target.files?.[0] ?? null)}
+                type="file"
+              />
+              <input
+                ref={attachmentFileInputRef}
+                className="hidden"
+                onChange={(event) =>
+                  void handleInsertAttachmentFile(event.target.files?.[0] ?? null)
+                }
                 type="file"
               />
 
@@ -1178,7 +1421,10 @@ export function WorkbenchClient({
                     />
                   ))
                 ) : (
-                  <EmptyPanel title="No documents" action="Create a page or folder to start." />
+                  <EmptyPanel
+                    title={t("No documents")}
+                    action={t("Create a page or folder to start.")}
+                  />
                 )}
                 <ImportJobsPanel jobs={importJobs} />
               </div>
@@ -1189,15 +1435,16 @@ export function WorkbenchClient({
                 <div className="flex h-full min-h-[680px] flex-col">
                   <div className="border-b border-zinc-200 px-5 py-4">
                     <div className="flex flex-wrap items-center gap-2">
-                      <ModeButton active={mode === "read"} onClick={() => setMode("read")}>
-                        Read
-                      </ModeButton>
-                      <ModeButton active={mode === "edit"} onClick={() => setMode("edit")}>
-                        Edit
-                      </ModeButton>
-                      <ModeButton active={mode === "source"} onClick={() => setMode("source")}>
-                        Source
-                      </ModeButton>
+                      {currentDocument.type === "page" && canEditCurrentDocument ? (
+                        <ModeSwitch
+                          mode={mode === "source" ? "source" : "edit"}
+                          onChange={(nextMode) => setMode(nextMode)}
+                        />
+                      ) : (
+                        <span className="inline-flex h-8 items-center rounded-md bg-zinc-100 px-2.5 text-xs font-medium text-zinc-600">
+                          {t("View only")}
+                        </span>
+                      )}
                       <div className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
                         <span className={saveStateClass(saveState)}>{statusText}</span>
                         {currentDocument.type === "page" ? (
@@ -1207,18 +1454,18 @@ export function WorkbenchClient({
                                 ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                                 : "bg-amber-50 text-amber-700 hover:bg-amber-100"
                             }`}
-                            disabled={isBusy || saveState === "saving"}
+                            disabled={!canEditCurrentDocument || isBusy || saveState === "saving"}
                             onClick={() => void handleTogglePublishDocument()}
                             type="button"
                           >
-                            {currentDocument.status === "published" ? "Published" : "Publish"}
+                            {currentDocument.status === "published" ? t("Published") : t("Publish")}
                           </button>
                         ) : null}
                         <button
                           className="icon-button"
-                          disabled={saveState === "saving"}
+                          disabled={!canEditCurrentDocument || saveState === "saving"}
                           onClick={() => void persistDraft()}
-                          title="Save now"
+                          title={t("Save now (Ctrl+S)")}
                           type="button"
                         >
                           {saveState === "saving" ? (
@@ -1229,8 +1476,9 @@ export function WorkbenchClient({
                         </button>
                         <button
                           className="icon-button"
+                          disabled={!canEditCurrentDocument || isBusy}
                           onClick={() => void handleDeleteDocument()}
-                          title="Delete document"
+                          title={t("Delete document")}
                           type="button"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -1239,16 +1487,21 @@ export function WorkbenchClient({
                     </div>
 
                     <input
-                      className="mt-4 w-full border-none bg-transparent text-3xl font-semibold leading-tight outline-none placeholder:text-zinc-300"
+                      className="mt-4 w-full border-none bg-transparent text-3xl font-semibold leading-tight outline-none placeholder:text-zinc-300 read-only:cursor-default"
                       onChange={(event) => setDraftTitle(event.target.value)}
-                      placeholder="Untitled"
+                      placeholder={t("Untitled")}
+                      readOnly={!canEditCurrentDocument}
                       value={draftTitle}
                     />
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                      <span>{currentDocument.type}</span>
-                      <span>{currentDocument.status}</span>
-                      <span>Version {currentDocument.currentVersion?.version_no ?? 0}</span>
-                      <span>{currentDocument.role ?? "viewer"}</span>
+                      <span>{t(currentDocument.type)}</span>
+                      <span>{t(currentDocument.status)}</span>
+                      <span>
+                        {t("Version {version}", {
+                          version: currentDocument.currentVersion?.version_no ?? 0
+                        })}
+                      </span>
+                      <span>{t(currentDocument.role ?? "viewer")}</span>
                     </div>
                   </div>
 
@@ -1260,12 +1513,61 @@ export function WorkbenchClient({
                         onClick={() => void reloadCurrentDocument()}
                         type="button"
                       >
-                        Load server version
+                        {t("Load server version")}
                       </button>
                     </div>
                   ) : message ? (
                     <div className="mx-5 mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                       {message}
+                    </div>
+                  ) : null}
+
+                  {currentDocument.type === "page" && canEditCurrentDocument && mode === "edit" ? (
+                    <div className="border-b border-zinc-200 bg-white px-5 py-2">
+                      <EditorToolbar
+                        disabled={isBusy || saveState === "saving"}
+                        onAction={handleToolbarAction}
+                      />
+                      {findReplaceOpen ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                          <input
+                            className="h-8 min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2 text-sm outline-none focus:border-emerald-500"
+                            onChange={(event) => setFindText(event.target.value)}
+                            placeholder={t("Find")}
+                            value={findText}
+                          />
+                          <input
+                            className="h-8 min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2 text-sm outline-none focus:border-emerald-500"
+                            onChange={(event) => setReplaceText(event.target.value)}
+                            placeholder={t("Replace")}
+                            value={replaceText}
+                          />
+                          <label className="inline-flex h-8 items-center gap-1.5 text-xs text-zinc-600">
+                            <input
+                              checked={findReplaceMatchCase}
+                              onChange={(event) => setFindReplaceMatchCase(event.target.checked)}
+                              type="checkbox"
+                            />
+                            {t("Match case")}
+                          </label>
+                          <button
+                            className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                            disabled={!findText}
+                            onClick={() => handleReplaceDraftMarkdown(false)}
+                            type="button"
+                          >
+                            {t("Replace")}
+                          </button>
+                          <button
+                            className="rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-800"
+                            disabled={!findText}
+                            onClick={() => handleReplaceDraftMarkdown(true)}
+                            type="button"
+                          >
+                            {t("Replace all")}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -1276,10 +1578,10 @@ export function WorkbenchClient({
                   >
                     {currentDocument.type === "folder" ? (
                       <EmptyPanel
-                        title="Folder selected"
-                        action="Create or select a page inside the tree."
+                        title={t("Folder selected")}
+                        action={t("Create or select a page inside the tree.")}
                       />
-                    ) : mode === "source" ? (
+                    ) : mode === "source" && canEditCurrentDocument ? (
                       <textarea
                         className="h-full min-h-[520px] w-full resize-none rounded-md border border-zinc-200 bg-zinc-950 p-4 font-mono text-sm leading-6 text-zinc-50 outline-none focus:border-emerald-500"
                         onChange={(event) => setDraftMarkdown(event.target.value)}
@@ -1288,16 +1590,19 @@ export function WorkbenchClient({
                       />
                     ) : (
                       <div className="openkb-milkdown-shell">
-                        <MilkdownEditor
-                          key={`${currentDocument.id}:${mode}:${editorResetKey}`}
-                          editable={mode === "edit"}
-                          markdown={milkdownMarkdown.markdown}
-                          onChange={(nextMarkdown) =>
-                            setDraftMarkdown(
-                              restoreMarkdownFromMilkdown(nextMarkdown, milkdownMarkdown)
-                            )
-                          }
-                        />
+                        <Suspense fallback={<EditorLoadingFallback />}>
+                          <LazyMilkdownEditor
+                            ref={milkdownEditorRef}
+                            key={`${currentDocument.id}:${mode}:${editorResetKey}`}
+                            editable={mode === "edit" && canEditCurrentDocument}
+                            markdown={milkdownMarkdown.markdown}
+                            onChange={(nextMarkdown) =>
+                              setDraftMarkdown(
+                                restoreMarkdownFromMilkdown(nextMarkdown, milkdownMarkdown)
+                              )
+                            }
+                          />
+                        </Suspense>
                       </div>
                     )}
                   </div>
@@ -1306,22 +1611,24 @@ export function WorkbenchClient({
                 <KnowledgeBaseDashboard
                   documents={documents}
                   knowledgeBaseId={selectedKnowledgeBaseId}
-                  onCreateDocument={() => openCreateDialog("page")}
+                  onCreateDocument={() => void handleCreateDocument("page")}
                   onError={handleApiError}
                   onOpenDocument={(documentId) => void selectDocument(documentId)}
                 />
               ) : (
                 <EmptyMain
                   hasKnowledgeBase={Boolean(selectedKnowledgeBaseId)}
-                  onCreate={() => openCreateDialog("page")}
+                  onCreate={() => void handleCreateDocument("page")}
                 />
               )}
             </article>
 
             <aside className="hidden min-h-0 border-l border-zinc-200 bg-zinc-50/70 xl:block">
               <div className="border-b border-zinc-200 px-4 py-3">
-                <p className="text-sm font-semibold">Outline</p>
-                <p className="text-xs text-zinc-500">{outline.length} headings</p>
+                <p className="text-sm font-semibold">{t("Outline")}</p>
+                <p className="text-xs text-zinc-500">
+                  {t("{count} headings", { count: outline.length })}
+                </p>
               </div>
               <Outline activeId={activeOutlineId} items={outline} onSelect={jumpToOutlineItem} />
               <ReferencesPanel
@@ -1335,29 +1642,13 @@ export function WorkbenchClient({
                   type="button"
                 >
                   <Pencil className="h-4 w-4" />
-                  Rename workspace
+                  {t("Rename workspace")}
                 </button>
               </div>
             </aside>
           </div>
         )}
       </section>
-      {createDialog ? (
-        <CreateDialog
-          isBusy={isBusy}
-          kind={createDialog.kind}
-          onClose={() => {
-            if (!isBusy) {
-              setCreateDialog(null);
-              setCreateTitle("");
-              setMessage("");
-            }
-          }}
-          onSubmit={handleCreateDialogSubmit}
-          title={createTitle}
-          onTitleChange={setCreateTitle}
-        />
-      ) : null}
     </main>
   );
 }
@@ -1371,6 +1662,7 @@ function PanelHeader({
   onAdd: () => void;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="mb-2 flex items-center justify-between">
       <p className="text-xs font-semibold uppercase text-zinc-500">{title}</p>
@@ -1378,124 +1670,13 @@ function PanelHeader({
         className="icon-button h-7 w-7"
         disabled={disabled}
         onClick={() => onAdd()}
-        title={`Add ${title.toLowerCase()}`}
+        title={t("Add {title}", { title: title.toLowerCase() })}
         type="button"
       >
         <Plus className="h-3.5 w-3.5" />
       </button>
     </div>
   );
-}
-
-function CreateDialog({
-  isBusy,
-  kind,
-  onClose,
-  onSubmit,
-  onTitleChange,
-  title
-}: {
-  isBusy: boolean;
-  kind: CreateDialogKind;
-  onClose: () => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onTitleChange: (value: string) => void;
-  title: string;
-}) {
-  const copy = createDialogCopy(kind);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/20 px-4">
-      <form
-        className="w-full max-w-sm rounded-md border border-zinc-200 bg-white p-4 shadow-lg"
-        onSubmit={onSubmit}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-zinc-950">{copy.title}</h2>
-            <p className="mt-1 text-sm leading-5 text-zinc-500">{copy.description}</p>
-          </div>
-          <button
-            className="icon-button h-8 w-8 shrink-0"
-            disabled={isBusy}
-            onClick={onClose}
-            title="Close"
-            type="button"
-          >
-            <XCircle className="h-4 w-4" />
-          </button>
-        </div>
-
-        <label className="mt-4 grid gap-1 text-sm">
-          <span className="text-xs font-medium text-zinc-500">{copy.label}</span>
-          <input
-            autoFocus
-            className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-500"
-            disabled={isBusy}
-            onChange={(event) => onTitleChange(event.target.value)}
-            placeholder={copy.placeholder}
-            required
-            value={title}
-          />
-        </label>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-            disabled={isBusy}
-            onClick={onClose}
-            type="button"
-          >
-            Cancel
-          </button>
-          <button
-            className="inline-flex h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-            disabled={isBusy}
-            type="submit"
-          >
-            {isBusy ? "Creating..." : copy.action}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function createDialogCopy(kind: CreateDialogKind) {
-  if (kind === "workspace") {
-    return {
-      action: "Create workspace",
-      description: "Create a new top-level workspace.",
-      label: "Workspace name",
-      placeholder: "Product Team",
-      title: "New workspace"
-    };
-  }
-  if (kind === "knowledge_base") {
-    return {
-      action: "Create knowledge base",
-      description: "Create a knowledge base in the selected workspace.",
-      label: "Knowledge base title",
-      placeholder: "OpenKB Demo",
-      title: "New knowledge base"
-    };
-  }
-  if (kind === "folder") {
-    return {
-      action: "Create folder",
-      description: "Create a folder in the current knowledge base.",
-      label: "Folder title",
-      placeholder: "Getting Started",
-      title: "New folder"
-    };
-  }
-  return {
-    action: "Create document",
-    description: "Create a Markdown page in the current knowledge base.",
-    label: "Document title",
-    placeholder: "Untitled page",
-    title: "New document"
-  };
 }
 
 function TreeItem({
@@ -1525,15 +1706,17 @@ function TreeItem({
   onMoveStep: (id: string, direction: "up" | "down") => void;
   depth?: number;
 }) {
+  const { t } = useI18n();
   const isFolder = node.type === "folder";
   const collapsed = collapsedFolders.has(node.id);
   const isDragging = draggingId === node.id;
 
   return (
     <div>
-      <div className="group flex items-center gap-1">
+      <div className="group relative flex items-center gap-1">
+        <TreeGuides depth={depth} />
         <button
-          className={treeButtonClass(node.id === activeId, isDragging)}
+          className={`${treeButtonClass(node.id === activeId, isDragging)} relative z-10`}
           draggable={!isBusy}
           onClick={() => onSelect(node.id)}
           onDragEnd={() => onDragEnd()}
@@ -1555,13 +1738,13 @@ function TreeItem({
               );
             }
           }}
-          style={{ paddingLeft: `${8 + depth * 14}px` }}
+          style={{ paddingLeft: `${8 + depth * 18}px` }}
           type="button"
         >
-          <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+          <GripVertical className="h-4 w-4 shrink-0 text-zinc-400" />
           {isFolder ? (
             <span
-              className="mr-1 flex h-5 w-5 items-center justify-center rounded text-zinc-500 hover:bg-zinc-200"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-zinc-500 hover:bg-zinc-200"
               onClick={(event) => {
                 event.stopPropagation();
                 onToggle(node.id);
@@ -1574,16 +1757,20 @@ function TreeItem({
               )}
             </span>
           ) : (
-            <span className="mr-1 h-5 w-5" />
+            <span className="h-5 w-5 shrink-0" />
           )}
-          {isFolder ? <Folder className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+          {isFolder ? (
+            <Folder className="h-4 w-4 shrink-0" />
+          ) : (
+            <FileText className="h-4 w-4 shrink-0" />
+          )}
           <span className="truncate">{node.title}</span>
         </button>
         <button
           className="icon-button h-7 w-7 shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
           disabled={isBusy}
           onClick={() => onMoveStep(node.id, "up")}
-          title="Move up"
+          title={t("Move up")}
           type="button"
         >
           <ArrowUp className="h-3.5 w-3.5" />
@@ -1592,7 +1779,7 @@ function TreeItem({
           className="icon-button h-7 w-7 shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
           disabled={isBusy}
           onClick={() => onMoveStep(node.id, "down")}
-          title="Move down"
+          title={t("Move down")}
           type="button"
         >
           <ArrowDown className="h-3.5 w-3.5" />
@@ -1621,6 +1808,24 @@ function TreeItem({
   );
 }
 
+function TreeGuides({ depth }: { depth: number }) {
+  if (depth <= 0) {
+    return null;
+  }
+
+  return (
+    <span className="pointer-events-none absolute inset-y-0 left-0 z-20">
+      {Array.from({ length: depth }).map((_, index) => (
+        <span
+          className="absolute inset-y-0 w-px bg-zinc-200"
+          key={index}
+          style={{ left: `${18 + index * 18}px` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function Outline({
   activeId,
   items,
@@ -1630,8 +1835,9 @@ function Outline({
   items: MarkdownOutlineItem[];
   onSelect: (item: MarkdownOutlineItem) => void;
 }) {
+  const { t } = useI18n();
   if (items.length === 0) {
-    return <EmptyPanel title="No outline" action="Add headings to this page." />;
+    return <EmptyPanel title={t("No outline")} action={t("Add headings to this page.")} />;
   }
 
   return (
@@ -1663,6 +1869,7 @@ function ReferencesPanel({
   references: MarkdownReferenceExtraction;
   onOpenDocument: (documentId: string) => void;
 }) {
+  const { t } = useI18n();
   const total =
     references.internalLinks.length +
     references.assetReferences.length +
@@ -1675,7 +1882,7 @@ function ReferencesPanel({
   return (
     <div className="border-t border-zinc-200 px-4 py-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold">References</p>
+        <p className="text-sm font-semibold">{t("References")}</p>
         <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-500">{total}</span>
       </div>
 
@@ -1683,7 +1890,7 @@ function ReferencesPanel({
         {references.internalLinks.length > 0 ? (
           <ReferenceGroup
             icon={<Link2 className="h-3.5 w-3.5" />}
-            title="OpenKB links"
+            title={t("OpenKB links")}
             count={references.internalLinks.length}
           >
             {references.internalLinks.map((link) => (
@@ -1703,7 +1910,7 @@ function ReferencesPanel({
         {references.assetReferences.length > 0 ? (
           <ReferenceGroup
             icon={<ImageIcon className="h-3.5 w-3.5" />}
-            title="Assets"
+            title={t("Assets")}
             count={references.assetReferences.length}
           >
             {references.assetReferences.map((asset) => (
@@ -1721,7 +1928,7 @@ function ReferencesPanel({
         {references.externalLinks.length > 0 ? (
           <ReferenceGroup
             icon={<Link2 className="h-3.5 w-3.5" />}
-            title="External"
+            title={t("External")}
             count={references.externalLinks.length}
           >
             {references.externalLinks.map((link) => (
@@ -1744,6 +1951,7 @@ function ReferencesPanel({
 }
 
 function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
+  const { t } = useI18n();
   const visibleJobs = jobs.slice(0, 4);
   if (visibleJobs.length === 0) {
     return null;
@@ -1752,7 +1960,7 @@ function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
   return (
     <div className="mt-4 border-t border-zinc-200 pt-3">
       <div className="mb-2 flex items-center justify-between px-2">
-        <p className="text-xs font-semibold uppercase text-zinc-500">Imports</p>
+        <p className="text-xs font-semibold uppercase text-zinc-500">{t("Imports")}</p>
         <span className="text-xs text-zinc-400">{jobs.length}</span>
       </div>
       <div className="space-y-1">
@@ -1766,13 +1974,13 @@ function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
               <span className="min-w-0 flex-1 truncate font-medium text-zinc-700">
                 {job.title || job.converter}
               </span>
-              <span className={importStatusClass(job.status)}>{job.status}</span>
+              <span className={importStatusClass(job.status)}>{t(job.status)}</span>
             </div>
             {job.error ? <p className="mt-1 truncate text-red-600">{job.error}</p> : null}
             {extractImportWarnings(job).length > 0 ? (
               <p className="mt-1 flex min-w-0 items-center gap-1 truncate text-amber-700">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
-                {extractImportWarnings(job)[0]?.message ?? "Import warning"}
+                {extractImportWarnings(job)[0]?.message ?? t("Import warning")}
               </p>
             ) : null}
           </div>
@@ -1818,25 +2026,35 @@ function ReferenceGroup({
   );
 }
 
-function ModeButton({
-  active,
-  children,
-  onClick
+function ModeSwitch({
+  mode,
+  onChange
 }: {
-  active: boolean;
-  children: string;
-  onClick: () => void;
+  mode: "edit" | "source";
+  onChange: (mode: "edit" | "source") => void;
 }) {
+  const { t } = useI18n();
   return (
-    <button
-      className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-        active ? "bg-zinc-950 text-white" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"
-      }`}
-      onClick={onClick}
-      type="button"
-    >
-      {children}
-    </button>
+    <div className="editor-mode-switch" aria-label={t("Editor mode")}>
+      <button
+        className={
+          mode === "edit" ? "editor-mode-switch-button-active" : "editor-mode-switch-button"
+        }
+        onClick={() => onChange("edit")}
+        type="button"
+      >
+        {t("Edit")}
+      </button>
+      <button
+        className={
+          mode === "source" ? "editor-mode-switch-button-active" : "editor-mode-switch-button"
+        }
+        onClick={() => onChange("source")}
+        type="button"
+      >
+        {t("Source")}
+      </button>
+    </div>
   );
 }
 
@@ -1847,6 +2065,7 @@ function EmptyMain({
   hasKnowledgeBase: boolean;
   onCreate: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="flex min-h-[680px] items-center justify-center px-6">
       <div className="max-w-sm text-center">
@@ -1854,12 +2073,12 @@ function EmptyMain({
           <FileText className="h-6 w-6" />
         </div>
         <h1 className="mt-4 text-xl font-semibold">
-          {hasKnowledgeBase ? "No document selected" : "No knowledge base yet"}
+          {hasKnowledgeBase ? t("No document selected") : t("No knowledge base yet")}
         </h1>
         <p className="mt-2 text-sm text-zinc-500">
           {hasKnowledgeBase
-            ? "Create a page from the document tree."
-            : "Create a workspace and knowledge base from the left rail."}
+            ? t("Create a page from the document tree.")
+            : t("Create a workspace and knowledge base from the left rail.")}
         </p>
         {hasKnowledgeBase ? (
           <button
@@ -1868,7 +2087,7 @@ function EmptyMain({
             type="button"
           >
             <Plus className="h-4 w-4" />
-            New document
+            {t("New document")}
           </button>
         ) : null}
       </div>
@@ -1886,12 +2105,22 @@ function EmptyPanel({ title, action }: { title: string; action: string }) {
 }
 
 function LoadingState() {
+  const { t } = useI18n();
   return (
     <div className="flex flex-1 items-center justify-center">
       <div className="flex items-center gap-3 rounded-md border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600 shadow-sm">
         <RefreshCw className="h-4 w-4 animate-spin text-emerald-600" />
-        Loading workspace
+        {t("Loading workspace")}
       </div>
+    </div>
+  );
+}
+
+function EditorLoadingFallback() {
+  const { t } = useI18n();
+  return (
+    <div className="flex min-h-[520px] items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 text-sm text-zinc-500">
+      {t("Loading...")}
     </div>
   );
 }
@@ -1948,6 +2177,10 @@ function toggleSet(items: Set<string>, id: string): Set<string> {
     next.add(id);
   }
   return next;
+}
+
+function canEditDocumentRole(role: string | null | undefined): boolean {
+  return role === "owner" || role === "manager" || role === "editor";
 }
 
 function navButtonClass(active: boolean): string {
@@ -2163,11 +2396,4 @@ function slugFromTitle(title: string, fallback: string): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function pushWorkbenchPath(path: string) {
-  if (window.location.pathname === path && !window.location.search) {
-    return;
-  }
-  window.history.pushState(null, "", path);
 }

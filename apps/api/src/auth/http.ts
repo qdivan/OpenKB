@@ -1,5 +1,6 @@
 import { AuthError } from "@openkb/auth";
 import { MilvusError } from "@openkb/milvus";
+import { ModelClientError } from "@openkb/model-client";
 import { PermissionError } from "@openkb/permissions";
 import { RetrievalError } from "@openkb/retrieval";
 
@@ -18,6 +19,7 @@ export function sendJsonError(error: unknown, reply: JsonReply) {
   if (
     error instanceof AuthError ||
     error instanceof MilvusError ||
+    error instanceof ModelClientError ||
     error instanceof PermissionError ||
     error instanceof RetrievalError ||
     error instanceof ContentError

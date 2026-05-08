@@ -27,6 +27,7 @@ import {
   type RetrievalMode,
   type RetrievalSettingsStatus
 } from "@/lib/openkb-api";
+import { useI18n } from "@/lib/i18n-provider";
 
 const MODE_LABELS: Record<RetrievalMode, string> = {
   bm25: "BM25",
@@ -38,6 +39,7 @@ const MODE_LABELS: Record<RetrievalMode, string> = {
 
 export function RetrievalAdminClient() {
   const router = useRouter();
+  const { t } = useI18n();
   const [status, setStatus] = useState<RetrievalSettingsStatus | null>(null);
   const [selectedMode, setSelectedMode] = useState<RetrievalMode>("bm25");
   const [probe, setProbe] = useState<{
@@ -80,7 +82,7 @@ export function RetrievalAdminClient() {
       const next = await updateRetrievalSettings({ mode: selectedMode });
       setStatus(next);
       setSelectedMode(next.mode);
-      setMessage("Retrieval mode saved.");
+      setMessage(t("Retrieval mode saved."));
     } catch (error) {
       handleError(error);
     } finally {
@@ -105,7 +107,7 @@ export function RetrievalAdminClient() {
     setMessage("");
     try {
       const job = await createMilvusRebuildJob();
-      setMessage(`Index rebuild job queued: ${job.id}`);
+      setMessage(t("Index rebuild job queued: {id}", { id: job.id }));
       await loadStatus();
     } catch (error) {
       handleError(error);
@@ -120,26 +122,26 @@ export function RetrievalAdminClient() {
       return;
     }
     if (error instanceof ApiRequestError && error.status === 403) {
-      setMessage("Admin role is required.");
+      setMessage(t("Admin role is required."));
       return;
     }
-    setMessage(error instanceof Error ? error.message : "Request failed.");
+    setMessage(error instanceof Error ? error.message : t("Request failed."));
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase text-zinc-500">Admin</p>
-          <h1 className="mt-1 text-2xl font-semibold">Retrieval</h1>
+          <p className="text-xs font-medium uppercase text-zinc-500">{t("Admin")}</p>
+          <h1 className="mt-1 text-2xl font-semibold">{t("Retrieval")}</h1>
           <p className="mt-1 text-sm text-zinc-600">
-            Configure retrieval mode, probe model endpoints, and queue index rebuilds.
+            {t("Configure retrieval mode, probe model endpoints, and queue index rebuilds.")}
           </p>
         </div>
         <button
           className="icon-button"
           onClick={() => void loadStatus()}
-          title="Refresh"
+          title={t("Refresh")}
           type="button"
         >
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
@@ -148,10 +150,10 @@ export function RetrievalAdminClient() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <section className="space-y-4">
-          <Panel title="Mode" icon={<Search className="h-4 w-4" />}>
+          <Panel title={t("Mode")} icon={<Search className="h-4 w-4" />}>
             {isLoading && !status ? (
               <InlineStatus icon={<LoaderCircle className="h-4 w-4 animate-spin" />}>
-                Loading
+                {t("Loading")}
               </InlineStatus>
             ) : null}
             {status ? (
@@ -174,7 +176,9 @@ export function RetrievalAdminClient() {
                       >
                         <span className="block font-medium">{MODE_LABELS[mode]}</span>
                         <span className="mt-1 block text-xs text-zinc-500">
-                          {disabled ? formatDisabledReason(capability?.disabled_reason) : "Ready"}
+                          {disabled
+                            ? t(formatDisabledReason(capability?.disabled_reason))
+                            : t("Ready")}
                         </span>
                       </button>
                     );
@@ -192,36 +196,36 @@ export function RetrievalAdminClient() {
                     ) : (
                       <Save className="h-4 w-4" />
                     )}
-                    Save
+                    {t("Save")}
                   </button>
                   <StatusPill tone={status.effective_mode === status.mode ? "green" : "amber"}>
-                    effective: {MODE_LABELS[status.effective_mode]}
+                    {t("effective: {mode}", { mode: MODE_LABELS[status.effective_mode] })}
                   </StatusPill>
                 </div>
               </>
             ) : null}
           </Panel>
 
-          <Panel title="Index" icon={<Database className="h-4 w-4" />}>
+          <Panel title={t("Index")} icon={<Database className="h-4 w-4" />}>
             {status ? (
               <div className="space-y-3">
                 <div className="grid gap-2 md:grid-cols-3">
-                  <Metric label="Alias" value={status.active_alias} />
+                  <Metric label={t("Alias")} value={status.active_alias} />
                   <Metric
-                    label="Dense index"
-                    value={status.dense_index_ready ? "Ready" : "Not ready"}
+                    label={t("Dense index")}
+                    value={status.dense_index_ready ? t("Ready") : t("Not ready")}
                   />
                   <Metric
-                    label="Vector dim"
+                    label={t("Vector dim")}
                     value={status.active_profile ? String(status.active_profile.vector_dim) : "-"}
                   />
                 </div>
                 <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs text-zinc-600">
                   <p className="truncate font-mono text-zinc-800">
-                    {status.active_profile?.collection_name ?? "No active collection"}
+                    {status.active_profile?.collection_name ?? t("No active collection")}
                   </p>
                   <p className="mt-1 truncate">
-                    next rebuild:{" "}
+                    {t("next rebuild")}:{" "}
                     <span className="font-mono">{status.next_rebuild_collection}</span>
                   </p>
                 </div>
@@ -236,7 +240,7 @@ export function RetrievalAdminClient() {
                   ) : (
                     <RefreshCw className="h-4 w-4" />
                   )}
-                  Rebuild index
+                  {t("Rebuild index")}
                 </button>
               </div>
             ) : null}
@@ -244,7 +248,7 @@ export function RetrievalAdminClient() {
         </section>
 
         <aside className="space-y-4">
-          <Panel title="Models" icon={<Settings2 className="h-4 w-4" />}>
+          <Panel title={t("Models")} icon={<Settings2 className="h-4 w-4" />}>
             {status ? (
               <div className="space-y-2">
                 <ModelRow
@@ -269,14 +273,14 @@ export function RetrievalAdminClient() {
                   ) : (
                     <FlaskConical className="h-4 w-4" />
                   )}
-                  Probe
+                  {t("Probe")}
                 </button>
               </div>
             ) : null}
           </Panel>
 
           {probe ? (
-            <Panel title="Probe" icon={<Activity className="h-4 w-4" />}>
+            <Panel title={t("Probe")} icon={<Activity className="h-4 w-4" />}>
               <div className="space-y-2">
                 <ProbeRow label="Embedding" result={probe.embedding} />
                 <ProbeRow label="Rerank" result={probe.rerank} />
@@ -327,25 +331,29 @@ function ModelRow({
   model: string | null;
   detail?: string;
 }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-start justify-between gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
       <div className="min-w-0">
         <p className="text-sm font-medium">{label}</p>
-        <p className="truncate text-xs text-zinc-500">{configured ? model : "Not configured"}</p>
+        <p className="truncate text-xs text-zinc-500">{configured ? model : t("Not configured")}</p>
       </div>
       <StatusPill tone={configured ? "green" : "zinc"}>
-        {detail ?? (configured ? "on" : "off")}
+        {detail ?? (configured ? t("on") : t("off"))}
       </StatusPill>
     </div>
   );
 }
 
 function ProbeRow({ label, result }: { label: string; result: ModelProbeResult }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">{label}</p>
-        <StatusPill tone={result.ok ? "green" : "amber"}>{result.ok ? "ok" : "check"}</StatusPill>
+        <StatusPill tone={result.ok ? "green" : "amber"}>
+          {result.ok ? t("ok") : t("check")}
+        </StatusPill>
       </div>
       <p className="mt-1 truncate text-xs text-zinc-500">
         {result.ok

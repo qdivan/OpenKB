@@ -116,6 +116,34 @@ slash menu
 - 版本冲突提示。
 - 顶部协作与分享按钮。
 
+### 编辑器工具栏 V1
+
+Phase 13.1 起，编辑模式中的 page 文档必须显示语雀式顶部工具栏。工具栏仍然受 `EDITOR_FEATURES` 和 toolbar/insert capability registry 约束，不能绕过 Milkdown 方言直接写入非标准内容。
+
+V1 已启用并可保存的能力：
+
+- 撤销、重做。
+- 正文、标题 1-6。
+- 粗体、斜体、删除线、行内代码。
+- 链接、引用、分割线。
+- 无序列表、有序列表、列表缩进和减少缩进。
+- 任务列表。
+- 表格、代码块。
+- 图片插入，保存为 `![alt](asset://asset_id)`。
+- 清除基础 Markdown 行内格式、插入当前日期纯文本。
+- 附件插入，保存为 `[filename](asset://asset_id)`。
+- 当前文档 Markdown 的查找替换。
+
+V1 只展示为 disabled/planned 的能力：
+
+- 格式刷。
+- 字号、字体颜色、背景颜色、对齐、普通段落缩进、行高。
+- 下划线。
+- 中文编号列表、大纲编号列表。
+- Mermaid、公式、PlantUML、折叠块、高亮块、@提及、日历、加密文本、音频、视频、B 站、优酷、Figma、墨刀、高德地图、网易云音乐等高级插入。
+
+这些 disabled/planned 能力只有在实现对应 Milkdown plugin、序列化、源码校验、导入校验和 round-trip 测试后，才能改为 enabled。不得使用 HTML `style`、`span` 或其它无法稳定 round-trip 的临时格式写入 `document_versions.markdown`。
+
 ### 右侧大纲
 
 必须支持：
@@ -198,6 +226,20 @@ markdown_hash
 - 转为 asset。
 - 转为只读 HTML block 前必须明确标记。
 - 或等待插件支持。
+
+### Phase 13.2 工具栏修正
+
+Phase 13.2 起，编辑器工具栏不再使用横向滚动条。主工具栏只放高频可用能力，低频能力、禁用能力和规划能力进入省略号 More 菜单。字体颜色和背景颜色仍是规划能力，不得显示成两个可用的重复调色板，也不得写入 HTML `style` / `span`。
+
+有编辑权限的 page 文档默认进入编辑模式，只提供 Edit / Source 分段开关；无编辑权限时进入只读渲染态并显示 View only。`Ctrl+S` / `Cmd+S` 必须触发当前文档保存并阻止浏览器默认保存网页。
+
+Phase 13.2 允许的轻量补齐能力：
+
+- 清除基础 Markdown 行内格式。
+- 插入当前日期纯文本。
+- 上传附件并插入 `[filename](asset://asset_id)` 链接。
+
+仍保持 disabled/planned 的能力包括：格式刷、字号、字体颜色、背景色、对齐、行高、下划线、中文编号、大纲编号、Mermaid、公式、PlantUML、折叠块、高亮块、@ 提及、日历、加密文本、音视频和第三方嵌入。只有补齐 Milkdown plugin、序列化、源码校验、导入校验和 round-trip 测试后，才能从 planned 改为 enabled。
 
 ## 11. 测试要求
 

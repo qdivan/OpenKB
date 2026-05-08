@@ -137,7 +137,7 @@
 - `knowledge_id` 必须映射到内部 KB，并被当前 API key allow list 显式授权。
 - 返回前执行 PostgreSQL final scope check；Milvus 只做候选索引。
 - 审计 `dify.retrieval`，`actor_type=api_key` 且 metadata 标记 `api_key_type=dify`，不记录 raw API key。
-- 不新增数据库 migration，不保存 embedding/rerank provider key。
+- 不新增 Dify 数据库 migration，不保存明文 embedding/rerank provider key。
 
 ## Phase 11 — 部署
 
@@ -176,3 +176,19 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 - Web/MCP/Dify 结果 metadata 附加 parent/child 信息。
 
 当前代码已完成 Phase 13 的最小闭环。后续仍需补强知识库设置页的信息架构、当前文档切片侧栏、检索结果解释 UI、分享/协作面板和复杂导入 adapter。
+
+## Phase 15 - Admin Models 配置中心
+
+输出：
+- `/app/admin/models`，与 Users、Retrieval、Permission Boundary 并列。
+- `GET /api/admin/models`、`PUT /api/admin/models/:kind`、`POST /api/admin/models/:kind/probe`、`DELETE /api/admin/models/:kind/secret`。
+- `model_settings` 实例级配置表，`kind = embedding | rerank | language`，不提供知识库级模型配置。
+- `system_admin` 可保存 endpoint/model 和加密 API key；`tenant_admin` 只能查看检索状态，不能保存 Models。
+- `OPENKB_CONFIG_ENCRYPTION_KEY` 作为 AES-256-GCM secret 解密密钥；缺失时不能保存或读取 DB secret。
+- 模型配置优先级：DB enabled 配置 > 环境变量 > 未配置。
+- Language model 第一版只做 OpenAI Responses API probe，不实现 LLM 问答生成。
+
+硬规则：
+- 数据库只保存密文、last4、更新时间和配置元数据。
+- 审计日志、DTO、日志 payload 都不能出现 raw API key。
+- embedding model 或 dim 变更后不自动重建 Milvus；Admin UI 显示 index rebuild required，并继续通过现有 rebuild job 执行 blue/green alias switch。

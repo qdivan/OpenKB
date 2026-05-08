@@ -69,6 +69,21 @@ export type EditorSavePayload = EditorSavePayloadInput & {
   markdown_hash: string;
 };
 
+export type MarkdownReplaceOptions = {
+  matchCase?: boolean;
+  replaceAll?: boolean;
+};
+
+export type MarkdownReplaceResult = {
+  markdown: string;
+  count: number;
+};
+
+export type MarkdownClearFormattingResult = {
+  markdown: string;
+  changed: boolean;
+};
+
 export type MilkdownAssetPlaceholder = {
   assetId: string;
   assetUrl: string;
@@ -85,6 +100,7 @@ const ASSET_IMAGE_PATTERN = /!\[([^\]\n]*)\]\((asset:\/\/[A-Za-z0-9][A-Za-z0-9_-
 const SAFE_URI_PATTERN =
   /^(https?:\/\/|mailto:|\/|#|\.\/|\.\.\/|openkb:\/\/document\/|asset:\/\/)/i;
 const ASSET_URI_PATTERN = /^asset:\/\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
+const ASSET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const INTERNAL_DOCUMENT_URI_PATTERN = /^openkb:\/\/document\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
 
 export function normalizeMarkdownSource(markdown: string): string {
@@ -243,6 +259,81 @@ export function restoreMarkdownFromMilkdown(
     restored = restored.split(placeholder.placeholderUrl).join(placeholder.assetUrl);
   }
   return restored;
+}
+
+export function createAssetImageMarkdown(assetId: string, alt = "Image"): string {
+  const normalizedAssetId = assetId.trim();
+  if (!ASSET_ID_PATTERN.test(normalizedAssetId)) {
+    throw new Error("Asset image markdown requires a stable asset id.");
+  }
+
+  const safeAlt =
+    alt
+      .replace(/[\r\n[\]]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "Image";
+  return `![${safeAlt}](asset://${normalizedAssetId})`;
+}
+
+export function createAssetLinkMarkdown(assetId: string, filename = "Attachment"): string {
+  const normalizedAssetId = assetId.trim();
+  if (!ASSET_ID_PATTERN.test(normalizedAssetId)) {
+    throw new Error("Asset link markdown requires a stable asset id.");
+  }
+
+  const safeLabel =
+    filename
+      .replace(/[\r\n[\]]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "Attachment";
+  return `[${safeLabel}](asset://${normalizedAssetId})`;
+}
+
+export function createMarkdownDateText(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function clearBasicMarkdownFormatting(markdown: string): MarkdownClearFormattingResult {
+  const source = normalizeLineEndings(markdown);
+  const cleared = source
+    .replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, "$1")
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/__([^_\n]+)__/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/_([^_\n]+)_/g, "$1")
+    .replace(/~~([^~\n]+)~~/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1");
+
+  return { markdown: cleared, changed: cleared !== source };
+}
+
+export function replaceMarkdownText(
+  markdown: string,
+  find: string,
+  replacement: string,
+  options: MarkdownReplaceOptions = {}
+): MarkdownReplaceResult {
+  if (!find) {
+    return { markdown, count: 0 };
+  }
+
+  const source = normalizeLineEndings(markdown);
+  const flags = options.matchCase ? "g" : "gi";
+  const pattern = new RegExp(
+    escapeRegExp(find),
+    options.replaceAll === false ? flags.replace("g", "") : flags
+  );
+  let count = 0;
+  const nextMarkdown = source.replace(pattern, () => {
+    count += 1;
+    return replacement;
+  });
+
+  return { markdown: nextMarkdown, count };
 }
 
 export function validateMarkdownSource(markdown: string): MarkdownValidationResult {
@@ -414,6 +505,10 @@ function escapeXml(value: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function slugifyHeading(title: string): string {

@@ -36,6 +36,7 @@ import {
   type AuditLogEntry,
   type TenantRole
 } from "@/lib/openkb-api";
+import { useI18n } from "@/lib/i18n-provider";
 
 const USER_STATUSES: Array<AdminUserStatus | "all"> = [
   "all",
@@ -50,6 +51,7 @@ const ROLE_OPTIONS: TenantRole[] = ["member", "tenant_admin", "system_admin"];
 
 export function AdminUsersClient() {
   const router = useRouter();
+  const { t } = useI18n();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [statusFilter, setStatusFilter] = useState<AdminUserStatus | "all">("all");
@@ -96,7 +98,7 @@ export function AdminUsersClient() {
         getMe()
       ]);
       if (!me.roles.some((role) => role === "system_admin" || role === "tenant_admin")) {
-        setMessage("Admin role is required.");
+        setMessage(t("Admin role is required."));
         return;
       }
       setUsers(nextUsers.items);
@@ -123,7 +125,7 @@ export function AdminUsersClient() {
       setNewEmail("");
       setNewDisplayName("");
       setNewRole("member");
-      setMessage("User created. Send the reset link to let them set a password.");
+      setMessage(t("User created. Send the reset link to let them set a password."));
       await load("");
     } catch (error) {
       handleError(error);
@@ -161,10 +163,10 @@ export function AdminUsersClient() {
       return;
     }
     if (error instanceof ApiRequestError && error.status === 403) {
-      setMessage(error.body.message || "Admin role is required.");
+      setMessage(error.body.message || t("Admin role is required."));
       return;
     }
-    setMessage(error instanceof Error ? error.message : "Request failed.");
+    setMessage(error instanceof Error ? error.message : t("Request failed."));
   }
 
   async function copyResetLink() {
@@ -172,20 +174,27 @@ export function AdminUsersClient() {
       return;
     }
     await navigator.clipboard.writeText(resetLink);
-    setMessage("Reset link copied.");
+    setMessage(t("Reset link copied."));
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase text-zinc-500">Admin</p>
-          <h1 className="mt-1 text-2xl font-semibold">Users</h1>
+          <p className="text-xs font-medium uppercase text-zinc-500">{t("Admin")}</p>
+          <h1 className="mt-1 text-2xl font-semibold">{t("Users")}</h1>
           <p className="mt-1 text-sm text-zinc-600">
-            Create accounts, change tenant roles, revoke sessions, and review account audit logs.
+            {t(
+              "Create accounts, change tenant roles, revoke sessions, and review account audit logs."
+            )}
           </p>
         </div>
-        <button className="icon-button" onClick={() => void load()} title="Refresh" type="button">
+        <button
+          className="icon-button"
+          onClick={() => void load()}
+          title={t("Refresh")}
+          type="button"
+        >
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
         </button>
       </div>
@@ -193,9 +202,9 @@ export function AdminUsersClient() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="space-y-4">
           <div className="grid gap-3 md:grid-cols-3">
-            <Metric icon={<Users />} label="Active" value={activeUsers} />
-            <Metric icon={<Shield />} label="System admins" value={systemAdmins} />
-            <Metric icon={<XCircle />} label="Suspended" value={suspendedUsers} />
+            <Metric icon={<Users />} label={t("Active")} value={activeUsers} />
+            <Metric icon={<Shield />} label={t("System admins")} value={systemAdmins} />
+            <Metric icon={<XCircle />} label={t("Suspended")} value={suspendedUsers} />
           </div>
 
           <section className="rounded-md border border-zinc-200 bg-white">
@@ -212,7 +221,7 @@ export function AdminUsersClient() {
                   <input
                     className="h-9 w-full rounded-md border border-zinc-300 bg-white pl-9 pr-3 text-sm outline-none focus:border-emerald-500"
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search email or name"
+                    placeholder={t("Search email or name")}
                     value={query}
                   />
                 </div>
@@ -225,7 +234,7 @@ export function AdminUsersClient() {
                 >
                   {USER_STATUSES.map((status) => (
                     <option key={status} value={status}>
-                      {status}
+                      {t(status)}
                     </option>
                   ))}
                 </select>
@@ -236,7 +245,7 @@ export function AdminUsersClient() {
                 >
                   {TENANT_ROLES.map((role) => (
                     <option key={role} value={role}>
-                      {role}
+                      {t(role)}
                     </option>
                   ))}
                 </select>
@@ -245,7 +254,7 @@ export function AdminUsersClient() {
                   type="submit"
                 >
                   <Search className="h-4 w-4" />
-                  Search
+                  {t("Search")}
                 </button>
               </form>
             </div>
@@ -253,18 +262,18 @@ export function AdminUsersClient() {
             {isLoading ? (
               <div className="flex h-56 items-center justify-center text-sm text-zinc-500">
                 <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                Loading users
+                {t("Loading users")}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-[960px] table-fixed text-left text-sm">
                   <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
                     <tr>
-                      <th className="w-[260px] px-3 py-2 font-medium">User</th>
-                      <th className="w-[150px] px-3 py-2 font-medium">Status</th>
-                      <th className="w-[170px] px-3 py-2 font-medium">Tenant role</th>
-                      <th className="w-[120px] px-3 py-2 font-medium">Sessions</th>
-                      <th className="w-[320px] px-3 py-2 font-medium">Actions</th>
+                      <th className="w-[260px] px-3 py-2 font-medium">{t("User")}</th>
+                      <th className="w-[150px] px-3 py-2 font-medium">{t("Status")}</th>
+                      <th className="w-[170px] px-3 py-2 font-medium">{t("Tenant role")}</th>
+                      <th className="w-[120px] px-3 py-2 font-medium">{t("Sessions")}</th>
+                      <th className="w-[320px] px-3 py-2 font-medium">{t("Actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -276,25 +285,25 @@ export function AdminUsersClient() {
                           void runUserAction(
                             user.id,
                             () => activateAdminUser(user.id),
-                            "User activated."
+                            t("User activated.")
                           )
                         }
                         onDelete={() => {
-                          if (window.confirm(`Soft-delete ${user.email}?`)) {
+                          if (window.confirm(t("Soft-delete {email}?", { email: user.email }))) {
                             void runUserAction(
                               user.id,
                               () => softDeleteAdminUser(user.id),
-                              "User soft-deleted."
+                              t("User soft-deleted.")
                             );
                           }
                         }}
                         onRename={() => {
-                          const nextName = window.prompt("Display name", user.displayName);
+                          const nextName = window.prompt(t("Display name"), user.displayName);
                           if (nextName?.trim()) {
                             void runUserAction(
                               user.id,
                               () => updateAdminUser(user.id, { display_name: nextName.trim() }),
-                              "Display name updated."
+                              t("Display name updated.")
                             );
                           }
                         }}
@@ -302,29 +311,29 @@ export function AdminUsersClient() {
                           void runUserAction(
                             user.id,
                             () => createAdminPasswordReset(user.id),
-                            "Password reset link generated."
+                            t("Password reset link generated.")
                           )
                         }
                         onRevokeSessions={() =>
                           void runUserAction(
                             user.id,
                             () => revokeAdminUserSessions(user.id),
-                            "Sessions revoked."
+                            t("Sessions revoked.")
                           )
                         }
                         onRoleChange={(role) =>
                           void runUserAction(
                             user.id,
                             () => setAdminUserTenantRole(user.id, role),
-                            "Tenant role updated."
+                            t("Tenant role updated.")
                           )
                         }
                         onSuspend={() => {
-                          if (window.confirm(`Suspend ${user.email}?`)) {
+                          if (window.confirm(t("Suspend {email}?", { email: user.email }))) {
                             void runUserAction(
                               user.id,
                               () => suspendAdminUser(user.id),
-                              "User suspended."
+                              t("User suspended.")
                             );
                           }
                         }}
@@ -335,7 +344,7 @@ export function AdminUsersClient() {
                 </table>
                 {users.length === 0 ? (
                   <div className="border-t border-zinc-200 p-8 text-center text-sm text-zinc-500">
-                    No users match the current filters.
+                    {t("No users match the current filters.")}
                   </div>
                 ) : null}
               </div>
@@ -344,10 +353,10 @@ export function AdminUsersClient() {
         </section>
 
         <aside className="space-y-4">
-          <Panel title="Create User" icon={<UserPlus className="h-4 w-4" />}>
+          <Panel title={t("Create User")} icon={<UserPlus className="h-4 w-4" />}>
             <form className="space-y-3" onSubmit={(event) => void handleCreateUser(event)}>
               <label className="block text-xs font-medium text-zinc-600">
-                Email
+                {t("Email")}
                 <input
                   className="mt-1 h-9 w-full rounded-md border border-zinc-300 px-3 text-sm outline-none focus:border-emerald-500"
                   onChange={(event) => setNewEmail(event.target.value)}
@@ -357,7 +366,7 @@ export function AdminUsersClient() {
                 />
               </label>
               <label className="block text-xs font-medium text-zinc-600">
-                Display name
+                {t("Display name")}
                 <input
                   className="mt-1 h-9 w-full rounded-md border border-zinc-300 px-3 text-sm outline-none focus:border-emerald-500"
                   onChange={(event) => setNewDisplayName(event.target.value)}
@@ -365,7 +374,7 @@ export function AdminUsersClient() {
                 />
               </label>
               <label className="block text-xs font-medium text-zinc-600">
-                Tenant role
+                {t("Tenant role")}
                 <select
                   className="mt-1 h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
                   onChange={(event) => setNewRole(event.target.value as TenantRole)}
@@ -373,7 +382,7 @@ export function AdminUsersClient() {
                 >
                   {ROLE_OPTIONS.map((role) => (
                     <option key={role} value={role}>
-                      {role}
+                      {t(role)}
                     </option>
                   ))}
                 </select>
@@ -388,7 +397,7 @@ export function AdminUsersClient() {
                 ) : (
                   <UserPlus className="h-4 w-4" />
                 )}
-                Create
+                {t("Create")}
               </button>
             </form>
           </Panel>
@@ -400,7 +409,7 @@ export function AdminUsersClient() {
           ) : null}
 
           {resetLink ? (
-            <Panel title="Password Reset" icon={<RotateCcw className="h-4 w-4" />}>
+            <Panel title={t("Password Reset")} icon={<RotateCcw className="h-4 w-4" />}>
               <p className="break-all rounded-md bg-zinc-100 p-2 font-mono text-xs text-zinc-700">
                 {resetLink}
               </p>
@@ -410,12 +419,12 @@ export function AdminUsersClient() {
                 type="button"
               >
                 <Copy className="h-4 w-4" />
-                Copy link
+                {t("Copy link")}
               </button>
             </Panel>
           ) : null}
 
-          <Panel title="Recent Audit" icon={<Shield className="h-4 w-4" />}>
+          <Panel title={t("Recent Audit")} icon={<Shield className="h-4 w-4" />}>
             <div className="space-y-2">
               {auditLogs.map((log) => (
                 <div key={log.id} className="rounded-md border border-zinc-200 p-2">
@@ -426,7 +435,7 @@ export function AdminUsersClient() {
                 </div>
               ))}
               {auditLogs.length === 0 ? (
-                <p className="text-sm text-zinc-500">No account audit entries yet.</p>
+                <p className="text-sm text-zinc-500">{t("No account audit entries yet.")}</p>
               ) : null}
             </div>
           </Panel>
@@ -457,6 +466,7 @@ function UserRow({
   onSuspend: () => void;
   user: AdminUser;
 }) {
+  const { t } = useI18n();
   return (
     <tr className="border-b border-zinc-100 align-top last:border-b-0">
       <td className="px-3 py-3">
@@ -475,7 +485,7 @@ function UserRow({
         >
           {ROLE_OPTIONS.map((role) => (
             <option key={role} value={role}>
-              {role}
+              {t(role)}
             </option>
           ))}
         </select>
@@ -484,22 +494,22 @@ function UserRow({
       <td className="px-3 py-3">
         <div className="flex flex-wrap gap-1.5">
           <ActionButton disabled={busy} onClick={onRename}>
-            Rename
+            {t("Rename")}
           </ActionButton>
           {user.status === "active" ? (
             <ActionButton disabled={busy} onClick={onSuspend}>
-              Suspend
+              {t("Suspend")}
             </ActionButton>
           ) : (
             <ActionButton disabled={busy || user.status === "deleted"} onClick={onActivate}>
-              Activate
+              {t("Activate")}
             </ActionButton>
           )}
           <ActionButton disabled={busy || user.status === "deleted"} onClick={onResetPassword}>
-            Reset
+            {t("Reset")}
           </ActionButton>
           <ActionButton disabled={busy} onClick={onRevokeSessions}>
-            Revoke
+            {t("Revoke")}
           </ActionButton>
           <ActionButton danger disabled={busy || user.status === "deleted"} onClick={onDelete}>
             <Trash2 className="h-3.5 w-3.5" />
@@ -511,6 +521,7 @@ function UserRow({
 }
 
 function StatusPill({ status }: { status: AdminUserStatus }) {
+  const { t } = useI18n();
   const tone =
     status === "active"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -528,7 +539,7 @@ function StatusPill({ status }: { status: AdminUserStatus }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${tone}`}>
       {icon}
-      {status}
+      {t(status)}
     </span>
   );
 }

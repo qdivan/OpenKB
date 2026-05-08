@@ -369,7 +369,36 @@ retrieval_settings (
 )
 ```
 
-OpenKB 不保存 embedding/rerank API key。模型 endpoint/model 只走部署环境变量；`retrieval_settings` 只保存模式。
+```sql
+model_settings (
+  id uuid primary key,
+  tenant_id uuid null check (tenant_id is null),
+  kind text unique not null check (kind in ('embedding', 'rerank', 'language')),
+  provider text not null check (
+    provider in (
+      'openai_compatible',
+      'openai_responses',
+      'openai_chat_completions',
+      'anthropic_messages'
+    )
+  ),
+  endpoint text null,
+  model text null,
+  enabled boolean not null default false,
+  timeout_ms int null,
+  embedding_dim int null,
+  embedding_batch_size int null,
+  llm_temperature double precision null,
+  llm_max_output_tokens int null,
+  encrypted_api_key text null,
+  api_key_last4 text null,
+  updated_by uuid not null,
+  created_at timestamptz not null,
+  updated_at timestamptz not null
+)
+```
+
+OpenKB 不提供知识库级模型配置。模型 endpoint/model/secret 可以由部署环境变量提供，也可以由 `system_admin` 保存实例级 DB enabled 配置；DB secret 只能是 AES-256-GCM 密文，审计日志不记录 raw key。`retrieval_settings` 只保存检索模式。
 
 ## 8. MCP OAuth / PAT 持久化
 

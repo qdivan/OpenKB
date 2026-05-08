@@ -103,6 +103,11 @@ OPENKB_EMBEDDING_MODEL=qwen3-vl-embedding-2b
 OPENKB_EMBEDDING_DIM=2048
 OPENKB_RERANK_ENDPOINT=http://192.168.6.220:18082/v1/rerank
 OPENKB_RERANK_MODEL=qwen3-vl-reranker-2b
+OPENKB_CONFIG_ENCRYPTION_KEY=<32+ chars or 64 hex chars if using DB model secrets>
+OPENKB_LLM_REQUEST_FORMAT=openai_responses
+OPENKB_LLM_ENDPOINT=https://api.openai.com/v1/responses
+OPENKB_LLM_MODEL=<optional OpenAI-compatible language model>
+OPENKB_LLM_API_KEY=<optional env secret>
 ```
 
 然后重启应用和 index-worker，登录 `/app/admin/retrieval`，执行 probe、创建 rebuild job，等重建完成后再切换 `dense`、`hybrid` 或 rerank 模式。
@@ -145,5 +150,5 @@ docker compose -f deploy/docker-compose/compose.yml down -v
 
 - `seed-dev` 只用于本地；公网测试和生产必须用 `db:seed:first-admin`。
 - Redis 已作为部署基线服务提供，但当前 workers 仍通过 PostgreSQL 轮询任务表。
-- OpenKB 不保存 embedding/rerank provider key；模型 endpoint/model 只读环境变量，凭据应留在模型服务或部署平台 Secret 中。
+- OpenKB 默认仍可只读环境变量；如使用 `/app/admin/models`，只有 `system_admin` 可以保存实例级加密模型 secret。数据库不得保存明文 provider key，也不提供知识库级模型配置。
 - 如果 Web 登录后回到登录页，先检查 `APP_BASE_URL`、`AUTH_COOKIE_SECURE` 和浏览器访问协议是否一致。

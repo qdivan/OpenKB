@@ -9,7 +9,7 @@
 5. 系统/租户 admin 可以访问后台配置，但不默认可读全库私有内容。
 6. 知识库 owner 不能配置模型。
 7. Embedding/Rerank 优先放 Milvus 2.6+ 原生 Functions。
-8. OpenKB 不保存 embedding/rerank API key。
+8. OpenKB 不保存明文 embedding/rerank API key；system_admin 可保存实例级加密模型 secret，但禁止知识库级模型配置。
 9. Embedding 模型更换走新 collection + rebuild + alias switch。
 10. Milvus 只做索引，PostgreSQL 是权限真相。
 11. MCP 必须用户权限绑定。

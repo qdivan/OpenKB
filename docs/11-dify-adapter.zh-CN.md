@@ -11,7 +11,7 @@ Dify 是应用级检索出口，使用 scoped API key；MCP 是用户级出口�
 - `knowledge_id` 必须通过 `dify_knowledge_mappings` 映射到内部 `knowledge_base_id`。
 - 映射成功后，还必须确认内部 KB 在当前 key 的 allow list 中。
 - PostgreSQL final scope check 是最终真相；Milvus 只做候选检索。
-- 不新增知识库级模型配置，不保存 embedding/rerank provider key。
+- 不新增知识库级模型配置，不保存明文 embedding/rerank provider key；如需模型 secret，只能复用 system-admin 实例级加密配置。
 
 ## 2. Endpoint
 

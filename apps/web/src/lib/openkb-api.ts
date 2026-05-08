@@ -217,6 +217,55 @@ export type RetrievalModeCapability = {
   disabled_reason: string | null;
 };
 
+export type ModelKind = "embedding" | "rerank" | "language";
+export type ModelProvider =
+  | "openai_compatible"
+  | "openai_responses"
+  | "openai_chat_completions"
+  | "anthropic_messages";
+
+export type AdminModelSetting = {
+  kind: ModelKind;
+  provider: ModelProvider;
+  source: "db" | "env" | "none";
+  enabled: boolean;
+  configured: boolean;
+  endpoint: string | null;
+  model: string | null;
+  timeout_ms: number;
+  embedding_dim: number | null;
+  embedding_batch_size: number | null;
+  llm_temperature: number | null;
+  llm_max_output_tokens: number | null;
+  has_secret: boolean;
+  secret_source: "db" | "env" | "none";
+  api_key_last4: string | null;
+  db_configured: boolean;
+  env_configured: boolean;
+  updated_by: string | null;
+  updated_at: string | null;
+  index_rebuild_required?: boolean;
+};
+
+export type AdminModelSettingsResponse = {
+  items: AdminModelSetting[];
+};
+
+export type UpdateAdminModelSettingInput = {
+  provider?: ModelProvider;
+  endpoint?: string | null;
+  model?: string | null;
+  enabled?: boolean;
+  timeout_ms?: number | null;
+  embedding_dim?: number | null;
+  embedding_batch_size?: number | null;
+  llm_temperature?: number | null;
+  llm_max_output_tokens?: number | null;
+  api_key?: string | null;
+};
+
+export type AdminModelProbeResult = ModelProbeResult;
+
 export type RetrievalSettingsStatus = {
   mode: RetrievalMode;
   effective_mode: RetrievalMode;
@@ -226,10 +275,12 @@ export type RetrievalSettingsStatus = {
     configured: boolean;
     model: string | null;
     dim: number;
+    source?: "db" | "env" | "none";
   };
   rerank: {
     configured: boolean;
     model: string | null;
+    source?: "db" | "env" | "none";
   };
   active_alias: string;
   next_rebuild_collection: string;
@@ -368,7 +419,33 @@ export type UpdateDocumentInput = {
   base_version_id?: string | null;
 };
 
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const canDedupeGet = method === "GET" && init.body === undefined && init.signal === undefined;
+  if (canDedupeGet) {
+    const key = `${path}:${JSON.stringify(init.headers ?? {})}`;
+    const existing = inFlightGetRequests.get(key) as Promise<T> | undefined;
+    if (existing) {
+      return existing;
+    }
+
+    const request = apiFetchRequest<T>(path, init);
+    inFlightGetRequests.set(key, request);
+    try {
+      return await request;
+    } finally {
+      if (inFlightGetRequests.get(key) === request) {
+        inFlightGetRequests.delete(key);
+      }
+    }
+  }
+
+  return apiFetchRequest<T>(path, init);
+}
+
+async function apiFetchRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData =
     typeof FormData !== "undefined" && init.body !== undefined && init.body instanceof FormData;
   const response = await fetch(authApiUrl(path), {
@@ -602,6 +679,30 @@ export function updateRetrievalSettings(input: { mode: RetrievalMode }) {
 export function probeRetrievalModels() {
   return apiFetch<RetrievalProbeResponse>("/api/admin/retrieval-settings/probe", {
     method: "POST"
+  });
+}
+
+export function listAdminModelSettings() {
+  return apiFetch<AdminModelSettingsResponse>("/api/admin/models");
+}
+
+export function updateAdminModelSetting(kind: ModelKind, input: UpdateAdminModelSettingInput) {
+  return apiFetch<AdminModelSetting>(`/api/admin/models/${kind}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function probeAdminModel(kind: ModelKind, input?: UpdateAdminModelSettingInput) {
+  return apiFetch<AdminModelProbeResult>(`/api/admin/models/${kind}/probe`, {
+    method: "POST",
+    ...(input ? { body: JSON.stringify(input) } : {})
+  });
+}
+
+export function clearAdminModelSecret(kind: ModelKind) {
+  return apiFetch<AdminModelSetting>(`/api/admin/models/${kind}/secret`, {
+    method: "DELETE"
   });
 }
 

@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createAssetImageMarkdown,
+  createAssetLinkMarkdown,
   createEditorSavePayload,
+  createMarkdownDateText,
+  clearBasicMarkdownFormatting,
+  DISABLED_EDITOR_INSERT_MENU_CAPABILITIES,
+  DISABLED_EDITOR_TOOLBAR_CAPABILITIES,
   EDITOR_FEATURES,
+  EDITOR_INSERT_MENU_CAPABILITIES,
+  EDITOR_TOOLBAR_CAPABILITIES,
   ENABLED_MILKDOWN_PRESETS,
   extractMarkdownPlainText,
   extractMarkdownReferences,
@@ -11,6 +19,7 @@ import {
   MARKDOWN_DIALECT_ERROR,
   normalizeMarkdownSource,
   prepareMarkdownForMilkdown,
+  replaceMarkdownText,
   restoreMarkdownFromMilkdown,
   validateMarkdownSource
 } from "./index";
@@ -39,6 +48,47 @@ describe("@openkb/editor", () => {
 
       expect(validation, fixture.featureKey).toMatchObject({ ok: true });
       expect(normalizeMarkdownSource(normalized)).toBe(normalized);
+    }
+  });
+
+  it("keeps toolbar and insert capabilities behind the feature registry", () => {
+    const enabledFeatureKeys = new Set(EDITOR_FEATURES.map((feature) => feature.key));
+    const enabledCapabilities = [
+      ...EDITOR_TOOLBAR_CAPABILITIES,
+      ...EDITOR_INSERT_MENU_CAPABILITIES
+    ].filter((capability) => capability.status === "enabled");
+
+    expect(EDITOR_TOOLBAR_CAPABILITIES.length).toBeGreaterThan(0);
+    expect(EDITOR_INSERT_MENU_CAPABILITIES.length).toBeGreaterThan(0);
+    expect(enabledCapabilities.length).toBeGreaterThan(0);
+    expect(
+      enabledCapabilities.every(
+        (capability) => capability.featureKey && enabledFeatureKeys.has(capability.featureKey)
+      )
+    ).toBe(true);
+    expect(
+      [...DISABLED_EDITOR_TOOLBAR_CAPABILITIES, ...DISABLED_EDITOR_INSERT_MENU_CAPABILITIES].every(
+        (capability) => capability.reason && capability.reason.length > 0
+      )
+    ).toBe(true);
+    expect(EDITOR_TOOLBAR_CAPABILITIES.find((item) => item.key === "clear_format")).toMatchObject({
+      status: "enabled",
+      featureKey: "paragraph"
+    });
+    expect(EDITOR_INSERT_MENU_CAPABILITIES.find((item) => item.key === "date")).toMatchObject({
+      status: "enabled",
+      featureKey: "paragraph"
+    });
+    expect(
+      EDITOR_INSERT_MENU_CAPABILITIES.find((item) => item.key === "file_attachment")
+    ).toMatchObject({
+      status: "enabled",
+      featureKey: "link"
+    });
+
+    for (const key of ["font_size", "font_color", "background_color", "alignment", "line_height"]) {
+      const capability = EDITOR_TOOLBAR_CAPABILITIES.find((item) => item.key === key);
+      expect(capability).toMatchObject({ status: "disabled", markdownNative: false });
     }
   });
 
@@ -110,6 +160,35 @@ See [Roadmap](openkb://document/doc_123) and [site](https://openkb.local).
     expect(prepared.assetPlaceholders).toHaveLength(1);
     expect(prepared.markdown).toContain("data:image/svg+xml");
     expect(restoreMarkdownFromMilkdown(prepared.markdown, prepared)).toBe(source);
+  });
+
+  it("builds asset image markdown and replaces draft markdown text", () => {
+    expect(createAssetImageMarkdown("asset_123", "Diagram [v1]\n")).toBe(
+      "![Diagram v1](asset://asset_123)"
+    );
+    expect(createAssetLinkMarkdown("asset_123", "Report [v1]\n.pdf")).toBe(
+      "[Report v1 .pdf](asset://asset_123)"
+    );
+    expect(createMarkdownDateText(new Date(2026, 4, 8))).toBe("2026-05-08");
+    expect(
+      clearBasicMarkdownFormatting(
+        "**Bold** *em* ~~gone~~ `code` [Link](https://openkb.local) ![Alt](asset://asset_123)"
+      )
+    ).toEqual({
+      markdown: "Bold em gone code Link Alt",
+      changed: true
+    });
+
+    expect(
+      replaceMarkdownText("OpenKB openkb OpenKB", "openkb", "Docs", {
+        matchCase: false,
+        replaceAll: false
+      })
+    ).toEqual({ markdown: "Docs openkb OpenKB", count: 1 });
+    expect(replaceMarkdownText("OpenKB openkb", "openkb", "Docs")).toEqual({
+      markdown: "Docs Docs",
+      count: 2
+    });
   });
 
   it("rejects source features that do not have enabled Milkdown plugins", () => {
