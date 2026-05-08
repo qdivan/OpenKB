@@ -4,28 +4,30 @@
 
 ## 当前状态
 
-截至 2026-05-07，本机代码已经推进到 `v0.3.x / Phase 13`。
+截至 2026-05-08，本机代码已经推进到 `v0.3.x / Phase 14`。
 
 已完成的主线：
 
 - Phase 11 部署闭环：生产 Dockerfile、Docker Compose、Helm 最小 chart、环境变量、健康检查、显式 migrate/seed 和部署文档。
 - Phase 12 真实检索：OpenKB 通过环境变量直连 embedding/rerank 模型服务，支持 BM25、dense、hybrid、rerank，不保存 provider key，不做知识库级模型配置。
 - Phase 13 知识库体验：KB Dashboard、Chunks、Retrieval Lab、KB 级切片设置、父子切片、全文上下文、chunk rebuild job、发布/取消发布闭环。
-- Web、API、MCP Server、Dify Adapter、import worker、index worker 均已接入 Phase 13 最小闭环。
+- Phase 14 Admin 用户管理：创建账号、密码重置链接、激活/停用/软删除、租户角色、会话撤销和审计入口。
+- Web、API、MCP Server、Dify Adapter、import worker、index worker 均已接入 Phase 13/14 最小闭环。
 
 仍建议后续优先补：
 
-- 分享/协作面板、邀请审批、密码分享、关闭/重置链接 UI。
+- Workspace/KB/document 分享协作面板、邀请审批、密码分享、关闭/重置链接 UI。
 - Dify key Web 管理、MCP PAT/OAuth UI、轮换和撤销体验。
 - 当前文档切片侧栏、全局搜索 parent/child 命中解释、发布后 index rebuild 引导。
 - PDF/DOCX/PPTX/XLSX/图片 OCR/MinerU/MarkItDown/Pandoc adapter。
 
 ## 工作树状态
 
-当前有一批 Phase 13 改动尚未提交，转移电脑前需要完整带走。
+Phase 14 已在 Phase 13 基础上补齐 Admin 用户管理；后续接手时需要同时关注账号权限和协作权限两条线。
 
 关键新增内容：
 
+- Phase 14 Admin：`/app/admin`、`/app/admin/users`、`/password-reset`，以及账号创建、状态、角色、会话和审计 API。
 - Prisma migration：`0005_phase13_chunk_experience`、`0006_phase13_legacy_chunk_settings`。
 - API：知识库 overview/chunk settings/chunk preview/chunks/chunk rebuild jobs，文档 publish/unpublish。
 - Web：`/app/kb/:kbId` 知识库 Dashboard，包含 Overview、Chunks、Retrieval Lab、Settings。
@@ -55,7 +57,7 @@ pnpm build
 pnpm test
 ```
 
-本机 Docker Compose 环境已经启动，健康检查返回 `phase-13-kb-experience`：
+Phase 14 健康检查返回 `phase-14-admin-users`：
 
 - API: `http://localhost:4000/health`
 - MCP Server: `http://localhost:4100/health`

@@ -854,11 +854,11 @@ export function WorkbenchClient({
     );
   }
 
-  function handleOpenRetrievalAdmin() {
+  function handleOpenAdmin() {
     if (!confirmDiscardDraft()) {
       return;
     }
-    router.push("/app/admin/retrieval");
+    router.push("/app/admin");
   }
 
   async function reloadCurrentDocument() {
@@ -1036,12 +1036,7 @@ export function WorkbenchClient({
               <Search className="h-4 w-4" />
             </button>
             {isAdmin ? (
-              <button
-                className="icon-button"
-                onClick={handleOpenRetrievalAdmin}
-                title="Retrieval admin"
-                type="button"
-              >
+              <button className="icon-button" onClick={handleOpenAdmin} title="Admin" type="button">
                 <Settings2 className="h-4 w-4" />
               </button>
             ) : null}

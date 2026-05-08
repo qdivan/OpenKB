@@ -21,9 +21,59 @@ export type AuthMe = {
     email: string;
     displayName: string | null;
     status: string;
+    emailVerifiedAt?: string | null;
   };
   tenantId: string;
   roles: string[];
+};
+
+export type AdminUserStatus =
+  | "pending_email_verification"
+  | "pending_activation"
+  | "active"
+  | "suspended"
+  | "deleted";
+
+export type TenantRole = "system_admin" | "tenant_admin" | "member";
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  status: AdminUserStatus;
+  emailVerifiedAt: string | null;
+  tenantRole: TenantRole | null;
+  activeSessionCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminUserListResponse = {
+  items: AdminUser[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type AuditLogEntry = {
+  id: string;
+  tenantId: string | null;
+  actorUserId: string | null;
+  actorType: string;
+  action: string;
+  objectType: string | null;
+  objectId: string | null;
+  metadata: unknown;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+};
+
+export type AuditLogListResponse = {
+  items: AuditLogEntry[];
+  limit: number;
+  offset: number;
+  total: number;
 };
 
 export type Workspace = {
@@ -346,6 +396,13 @@ export function logout() {
   return apiFetch<{ ok: true }>("/api/auth/logout", { method: "POST" });
 }
 
+export function confirmPasswordReset(input: { token: string; password: string }) {
+  return apiFetch<{ ok: true }>("/api/auth/password-reset/confirm", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function listWorkspaces() {
   return apiFetch<Workspace[]>("/api/workspaces");
 }
@@ -558,6 +615,99 @@ export function createMilvusRebuildJob(
     method: "POST",
     body: JSON.stringify(input)
   });
+}
+
+export function listAdminUsers(
+  input: {
+    status?: AdminUserStatus | "all";
+    role?: TenantRole | "all";
+    query?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+) {
+  const params = new URLSearchParams();
+  if (input.status && input.status !== "all") params.set("status", input.status);
+  if (input.role && input.role !== "all") params.set("role", input.role);
+  if (input.query) params.set("query", input.query);
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<AdminUserListResponse>(`/api/admin/users${query ? `?${query}` : ""}`);
+}
+
+export function createAdminUser(input: {
+  email: string;
+  display_name?: string;
+  tenant_role?: TenantRole;
+}) {
+  return apiFetch<{ user: AdminUser; reset_link: string }>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateAdminUser(
+  id: string,
+  input: { display_name?: string; status?: Exclude<AdminUserStatus, "deleted"> }
+) {
+  return apiFetch<AdminUser>(`/api/admin/users/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function activateAdminUser(id: string) {
+  return apiFetch<AdminUser>(`/api/admin/users/${id}/activate`, { method: "POST" });
+}
+
+export function suspendAdminUser(id: string) {
+  return apiFetch<AdminUser>(`/api/admin/users/${id}/suspend`, { method: "POST" });
+}
+
+export function softDeleteAdminUser(id: string) {
+  return apiFetch<AdminUser>(`/api/admin/users/${id}/delete`, { method: "POST" });
+}
+
+export function createAdminPasswordReset(id: string) {
+  return apiFetch<{ ok: true; reset_link: string }>(`/api/admin/users/${id}/password-reset`, {
+    method: "POST"
+  });
+}
+
+export function setAdminUserTenantRole(id: string, role: TenantRole) {
+  return apiFetch<{ user: AdminUser; tenant_role: TenantRole }>(
+    `/api/admin/users/${id}/tenant-role`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ role })
+    }
+  );
+}
+
+export function revokeAdminUserSessions(id: string) {
+  return apiFetch<{ ok: true; revoked_count: number }>(`/api/admin/users/${id}/revoke-sessions`, {
+    method: "POST"
+  });
+}
+
+export function listAuditLogs(
+  input: {
+    action?: string;
+    object_type?: string;
+    actor_user_id?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+) {
+  const params = new URLSearchParams();
+  if (input.action) params.set("action", input.action);
+  if (input.object_type) params.set("object_type", input.object_type);
+  if (input.actor_user_id) params.set("actor_user_id", input.actor_user_id);
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<AuditLogListResponse>(`/api/admin/audit-logs${query ? `?${query}` : ""}`);
 }
 
 export function isUnauthorized(error: unknown): boolean {

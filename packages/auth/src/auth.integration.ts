@@ -254,6 +254,14 @@ describe("AuthService integration", () => {
         status: "pending_activation"
       }
     });
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: "default" } });
+    await prisma.tenantMembership.create({
+      data: {
+        tenant_id: tenant.id,
+        user_id: pending.id,
+        role: "member"
+      }
+    });
 
     await expect(auth.listUsers(memberLogin.sessionToken)).rejects.toMatchObject({
       code: "ADMIN_REQUIRED"
@@ -266,6 +274,104 @@ describe("AuthService integration", () => {
       status: "suspended"
     });
     expect(await prisma.auditLog.count()).toBe(2);
+  });
+
+  it("lets admins create users with password reset links and revoke sessions", async () => {
+    await createDefaultSettings({ email_verification_required: false });
+    const auth = service();
+    await auth.register({ email: "admin@example.com", password: "password-123" });
+    const adminLogin = await auth.login({ email: "admin@example.com", password: "password-123" });
+
+    const created = await auth.createAdminUser(adminLogin.sessionToken, {
+      email: "new-user@example.com",
+      display_name: "New User",
+      tenant_role: "member"
+    });
+    expect(created.user).toMatchObject({
+      email: "new-user@example.com",
+      status: "active",
+      tenantRole: "member"
+    });
+    expect(created.reset_link).toContain("/password-reset?token=");
+    expect(await prisma.authEmailOutbox.count({ where: { template: "password_reset" } })).toBe(1);
+
+    await auth.confirmPasswordReset({
+      token: tokenFromLink(created.reset_link),
+      password: "new-password"
+    });
+    const userLogin = await auth.login({
+      email: "new-user@example.com",
+      password: "new-password"
+    });
+
+    await expect(
+      auth.revokeUserSessions(adminLogin.sessionToken, created.user.id)
+    ).resolves.toEqual({
+      ok: true,
+      revoked_count: 1
+    });
+    await expect(auth.getMe(userLogin.sessionToken)).rejects.toMatchObject({
+      code: "AUTHENTICATION_REQUIRED"
+    });
+
+    const auditLogs = await prisma.auditLog.findMany({
+      orderBy: { created_at: "asc" }
+    });
+    expect(JSON.stringify(auditLogs.map((log) => log.metadata))).not.toContain("reset_link");
+    expect(JSON.stringify(auditLogs.map((log) => log.metadata))).not.toContain("new-password");
+  });
+
+  it("enforces strict admin role safety rules", async () => {
+    await createDefaultSettings({ email_verification_required: false });
+    const auth = service();
+    await auth.register({ email: "root@example.com", password: "password-123" });
+    await auth.register({ email: "tenant-admin@example.com", password: "password-123" });
+    const rootLogin = await auth.login({ email: "root@example.com", password: "password-123" });
+    const tenantAdminLogin = await auth.login({
+      email: "tenant-admin@example.com",
+      password: "password-123"
+    });
+    const tenantAdmin = await prisma.user.findUniqueOrThrow({
+      where: { email: "tenant-admin@example.com" }
+    });
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: "default" } });
+    await prisma.tenantMembership.update({
+      where: {
+        tenant_id_user_id: {
+          tenant_id: tenant.id,
+          user_id: tenantAdmin.id
+        }
+      },
+      data: { role: "tenant_admin" }
+    });
+
+    const secondSystemAdmin = await auth.createAdminUser(rootLogin.sessionToken, {
+      email: "second-root@example.com",
+      tenant_role: "system_admin"
+    });
+
+    await expect(
+      auth.setTenantRole(rootLogin.sessionToken, rootLogin.me.user.id, "member")
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    });
+    await expect(
+      auth.suspendUser(tenantAdminLogin.sessionToken, secondSystemAdmin.user.id)
+    ).rejects.toMatchObject({
+      code: "ADMIN_REQUIRED"
+    });
+    await expect(
+      auth.setTenantRole(tenantAdminLogin.sessionToken, secondSystemAdmin.user.id, "member")
+    ).rejects.toMatchObject({
+      code: "ADMIN_REQUIRED"
+    });
+
+    await auth.suspendUser(rootLogin.sessionToken, secondSystemAdmin.user.id);
+    await expect(
+      auth.setTenantRole(rootLogin.sessionToken, secondSystemAdmin.user.id, "member")
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    });
   });
 
   it("updates auth settings and applies them to later registrations", async () => {

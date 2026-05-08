@@ -18,8 +18,14 @@ POST /api/auth/password-reset/confirm
 
 ```http
 GET  /api/admin/users
+POST /api/admin/users
+PATCH /api/admin/users/:id
 POST /api/admin/users/:id/activate
 POST /api/admin/users/:id/suspend
+POST /api/admin/users/:id/delete
+POST /api/admin/users/:id/password-reset
+PUT  /api/admin/users/:id/tenant-role
+POST /api/admin/users/:id/revoke-sessions
 GET  /api/admin/auth-settings
 PUT  /api/admin/auth-settings
 GET  /api/admin/audit-logs

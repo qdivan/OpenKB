@@ -36,6 +36,36 @@ export type PublicUser = {
   emailVerifiedAt: string | null;
 };
 
+export type AdminUserStatus =
+  | "pending_email_verification"
+  | "pending_activation"
+  | "active"
+  | "suspended"
+  | "deleted";
+
+export type TenantRole = "system_admin" | "tenant_admin" | "member";
+
+export type AdminUser = PublicUser & {
+  tenantRole: TenantRole | null;
+  activeSessionCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AuditLogEntry = {
+  id: string;
+  tenantId: string | null;
+  actorUserId: string | null;
+  actorType: string;
+  action: string;
+  objectType: string | null;
+  objectId: string | null;
+  metadata: unknown;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+};
+
 export type AuthenticatedUser = {
   user: PublicUser;
   tenantId: string;
@@ -61,6 +91,33 @@ export type UpdateAuthSettingsInput = {
   allowed_email_domains?: string[];
   invite_required?: boolean;
   first_user_becomes_admin?: boolean;
+};
+
+export type CreateAdminUserInput = {
+  email?: string;
+  display_name?: string;
+  tenant_role?: TenantRole;
+};
+
+export type UpdateAdminUserInput = {
+  display_name?: string;
+  status?: Exclude<AdminUserStatus, "deleted">;
+};
+
+export type ListAdminUsersInput = {
+  status?: string;
+  role?: string;
+  query?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type ListAuditLogsInput = {
+  action?: string;
+  object_type?: string;
+  actor_user_id?: string;
+  limit?: number;
+  offset?: number;
 };
 
 export type AuthServiceOptions = {
@@ -386,51 +443,380 @@ export class AuthService {
     return { ok: true };
   }
 
-  async listUsers(adminSessionToken: string, status?: string) {
-    await this.requireAdmin(adminSessionToken);
+  async listUsers(adminSessionToken: string, input: string | ListAdminUsersInput = {}) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const filters = typeof input === "string" ? { status: input } : input;
+    const limit = normalizeLimit(filters.limit, 100);
+    const offset = normalizeOffset(filters.offset);
+    const where: Prisma.UserWhereInput = {};
 
-    const users = await this.prisma.user.findMany({
-      where: status ? { status } : undefined,
-      orderBy: { created_at: "desc" },
-      take: 100
+    if (filters.status) {
+      where.status = normalizeAdminUserStatus(filters.status, true);
+    }
+    if (filters.query?.trim()) {
+      const query = filters.query.trim();
+      where.OR = [
+        { email: { contains: query, mode: "insensitive" } },
+        { display_name: { contains: query, mode: "insensitive" } }
+      ];
+    }
+    if (filters.role) {
+      const role = normalizeTenantRole(filters.role);
+      const memberships = await this.prisma.tenantMembership.findMany({
+        where: {
+          tenant_id: admin.tenantId,
+          role
+        },
+        select: { user_id: true }
+      });
+      where.id = { in: memberships.map((membership) => membership.user_id) };
+    }
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        take: limit,
+        skip: offset
+      }),
+      this.prisma.user.count({ where })
+    ]);
+
+    return {
+      items: await this.toAdminUsers(admin.tenantId, users),
+      limit,
+      offset,
+      total
+    };
+  }
+
+  async createAdminUser(adminSessionToken: string, input: CreateAdminUserInput) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const email = normalizeEmail(input.email ?? "");
+    const displayName = normalizeDisplayName(input.display_name, email);
+    const role = normalizeTenantRole(input.tenant_role ?? "member");
+    this.assertCanGrantRole(admin, role);
+    const now = this.now();
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findUnique({ where: { email } });
+      if (existing && existing.status !== "deleted") {
+        throw new AuthError("EMAIL_ALREADY_REGISTERED", "Email is already registered.", 409);
+      }
+
+      const user = existing
+        ? await tx.user.update({
+            where: { id: existing.id },
+            data: {
+              password_hash: null,
+              display_name: displayName,
+              status: "active",
+              email_verified_at: now,
+              updated_at: now
+            }
+          })
+        : await tx.user.create({
+            data: {
+              email,
+              password_hash: null,
+              display_name: displayName,
+              status: "active",
+              email_verified_at: now,
+              created_at: now,
+              updated_at: now
+            }
+          });
+
+      await tx.tenantMembership.upsert({
+        where: {
+          tenant_id_user_id: {
+            tenant_id: admin.tenantId,
+            user_id: user.id
+          }
+        },
+        create: {
+          tenant_id: admin.tenantId,
+          user_id: user.id,
+          role,
+          created_at: now
+        },
+        update: { role }
+      });
+
+      const resetLink = await this.createAuthTokenAndOutbox(tx, {
+        tenantId: admin.tenantId,
+        userId: user.id,
+        email: user.email,
+        purpose: "password_reset",
+        ttlHours: this.passwordResetTtlHours()
+      });
+      await this.writeAuditLog(tx, admin, "admin.user.create", "user", user.id, {
+        tenant_role: role,
+        restored: Boolean(existing)
+      });
+
+      return { user, resetLink };
     });
 
-    return users.map(toPublicUser);
+    return {
+      user: await this.toAdminUser(admin.tenantId, result.user),
+      reset_link: result.resetLink
+    };
+  }
+
+  async updateAdminUser(adminSessionToken: string, userId: string, input: UpdateAdminUserInput) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const target = await this.getTargetUserForAdmin(admin, userId);
+    const targetRole = await this.getTenantRole(admin.tenantId, userId);
+    this.assertCanManageTarget(admin, target.id, targetRole);
+
+    const data: Prisma.UserUpdateInput = {};
+    const displayName = input.display_name?.trim();
+    if (displayName) {
+      data.display_name = displayName;
+    }
+    if (input.status !== undefined) {
+      const status = normalizeAdminUserStatus(input.status, false);
+      if (status === "deleted") {
+        throw new AuthError("INVALID_INPUT", "Use the delete endpoint to soft-delete users.", 400);
+      }
+      if (target.id === admin.user.id && status === "suspended") {
+        throw new AuthError("INVALID_INPUT", "Admins cannot suspend themselves.", 400);
+      }
+      if (status === "suspended") {
+        await this.assertNotLastActiveSystemAdmin(admin.tenantId, target.id);
+      }
+      data.status = status;
+      if (status === "active" && !target.email_verified_at) {
+        data.email_verified_at = this.now();
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      return this.toAdminUser(admin.tenantId, target);
+    }
+
+    const now = this.now();
+    data.updated_at = now;
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({ where: { id: userId }, data });
+      if (data.status === "suspended") {
+        await tx.authSession.updateMany({
+          where: { user_id: userId, revoked_at: null },
+          data: { revoked_at: now }
+        });
+      }
+      await this.writeAuditLog(tx, admin, "admin.user.update", "user", userId, {
+        fields: Object.keys(data).filter((field) => field !== "updated_at")
+      });
+      return updated;
+    });
+
+    return this.toAdminUser(admin.tenantId, user);
   }
 
   async activateUser(adminSessionToken: string, userId: string) {
     const admin = await this.requireAdmin(adminSessionToken);
+    const target = await this.getTargetUserForAdmin(admin, userId);
+    const targetRole = await this.getTenantRole(admin.tenantId, userId);
+    this.assertCanManageTarget(admin, target.id, targetRole);
     const now = this.now();
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        status: "active",
-        updated_at: now
-      }
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          status: "active",
+          email_verified_at: target.email_verified_at ?? now,
+          updated_at: now
+        }
+      });
+      await this.writeAuditLog(tx, admin, "admin.user.activate", "user", updated.id);
+      return updated;
     });
-    await this.writeAuditLog(admin, "admin.user.activate", "user", user.id);
-    return toPublicUser(user);
+    return this.toAdminUser(admin.tenantId, user);
   }
 
   async suspendUser(adminSessionToken: string, userId: string) {
     const admin = await this.requireAdmin(adminSessionToken);
+    const target = await this.getTargetUserForAdmin(admin, userId);
+    const targetRole = await this.getTenantRole(admin.tenantId, userId);
+    this.assertCanManageTarget(admin, target.id, targetRole);
+    if (target.id === admin.user.id) {
+      throw new AuthError("INVALID_INPUT", "Admins cannot suspend themselves.", 400);
+    }
+    await this.assertNotLastActiveSystemAdmin(admin.tenantId, target.id);
     const now = this.now();
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        status: "suspended",
-        updated_at: now
-      }
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          status: "suspended",
+          updated_at: now
+        }
+      });
+      await tx.authSession.updateMany({
+        where: {
+          user_id: userId,
+          revoked_at: null
+        },
+        data: { revoked_at: now }
+      });
+      await this.writeAuditLog(tx, admin, "admin.user.suspend", "user", updated.id);
+      return updated;
     });
-    await this.prisma.authSession.updateMany({
-      where: {
-        user_id: userId,
-        revoked_at: null
-      },
-      data: { revoked_at: now }
+    return this.toAdminUser(admin.tenantId, user);
+  }
+
+  async softDeleteUser(adminSessionToken: string, userId: string) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const target = await this.getTargetUserForAdmin(admin, userId);
+    const targetRole = await this.getTenantRole(admin.tenantId, userId);
+    this.assertCanManageTarget(admin, target.id, targetRole);
+    if (target.id === admin.user.id) {
+      throw new AuthError("INVALID_INPUT", "Admins cannot delete themselves.", 400);
+    }
+    await this.assertNotLastActiveSystemAdmin(admin.tenantId, target.id);
+    const now = this.now();
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          status: "deleted",
+          updated_at: now
+        }
+      });
+      await tx.authSession.updateMany({
+        where: { user_id: userId, revoked_at: null },
+        data: { revoked_at: now }
+      });
+      await this.writeAuditLog(tx, admin, "admin.user.delete", "user", updated.id);
+      return updated;
     });
-    await this.writeAuditLog(admin, "admin.user.suspend", "user", user.id);
-    return toPublicUser(user);
+    return this.toAdminUser(admin.tenantId, user);
+  }
+
+  async createAdminPasswordReset(adminSessionToken: string, userId: string) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const target = await this.getTargetUserForAdmin(admin, userId);
+    const targetRole = await this.getTenantRole(admin.tenantId, userId);
+    this.assertCanManageTarget(admin, target.id, targetRole);
+
+    const resetLink = await this.prisma.$transaction(async (tx) => {
+      const link = await this.createAuthTokenAndOutbox(tx, {
+        tenantId: admin.tenantId,
+        userId: target.id,
+        email: target.email,
+        purpose: "password_reset",
+        ttlHours: this.passwordResetTtlHours()
+      });
+      await this.writeAuditLog(tx, admin, "admin.user.password_reset", "user", target.id);
+      return link;
+    });
+
+    return { ok: true, reset_link: resetLink };
+  }
+
+  async setTenantRole(adminSessionToken: string, userId: string, roleInput: string) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const role = normalizeTenantRole(roleInput);
+    this.assertCanGrantRole(admin, role);
+    const target = await this.getTargetUserForAdmin(admin, userId);
+    const currentRole = await this.getTenantRole(admin.tenantId, userId);
+    this.assertCanManageTarget(admin, target.id, currentRole);
+    if (target.id === admin.user.id) {
+      throw new AuthError("INVALID_INPUT", "Admins cannot change their own role.", 400);
+    }
+    if (currentRole === "system_admin" && role !== "system_admin") {
+      await this.assertNotLastActiveSystemAdmin(admin.tenantId, target.id);
+    }
+
+    const membership = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.tenantMembership.upsert({
+        where: {
+          tenant_id_user_id: {
+            tenant_id: admin.tenantId,
+            user_id: target.id
+          }
+        },
+        create: {
+          tenant_id: admin.tenantId,
+          user_id: target.id,
+          role,
+          created_at: this.now()
+        },
+        update: { role }
+      });
+      await this.writeAuditLog(tx, admin, "admin.user.role.update", "user", target.id, {
+        previous_role: currentRole,
+        tenant_role: role
+      });
+      return updated;
+    });
+
+    return {
+      user: await this.toAdminUser(admin.tenantId, target),
+      tenant_role: membership.role
+    };
+  }
+
+  async revokeUserSessions(adminSessionToken: string, userId: string) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const target = await this.getTargetUserForAdmin(admin, userId);
+    const targetRole = await this.getTenantRole(admin.tenantId, userId);
+    this.assertCanManageTarget(admin, target.id, targetRole);
+    const now = this.now();
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.authSession.updateMany({
+        where: {
+          user_id: userId,
+          revoked_at: null
+        },
+        data: { revoked_at: now }
+      });
+      await this.writeAuditLog(tx, admin, "admin.user.sessions.revoke", "user", userId, {
+        revoked_count: updated.count
+      });
+      return updated;
+    });
+
+    return { ok: true, revoked_count: result.count };
+  }
+
+  async listAuditLogs(adminSessionToken: string, input: ListAuditLogsInput = {}) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const limit = normalizeLimit(input.limit, 50);
+    const offset = normalizeOffset(input.offset);
+    const where: Prisma.AuditLogWhereInput = {};
+
+    if (!admin.roles.includes("system_admin")) {
+      where.tenant_id = admin.tenantId;
+    }
+    if (input.action?.trim()) {
+      where.action = { contains: input.action.trim(), mode: "insensitive" };
+    }
+    if (input.object_type?.trim()) {
+      where.object_type = input.object_type.trim();
+    }
+    if (input.actor_user_id?.trim()) {
+      where.actor_user_id = input.actor_user_id.trim();
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        take: limit,
+        skip: offset
+      }),
+      this.prisma.auditLog.count({ where })
+    ]);
+
+    return {
+      items: items.map(toAuditLogEntry),
+      limit,
+      offset,
+      total
+    };
   }
 
   async getAuthSettings(adminSessionToken: string) {
@@ -450,7 +836,13 @@ export class AuthService {
         updated_at: this.now()
       }
     });
-    await this.writeAuditLog(admin, "admin.auth_settings.update", "auth_settings", updated.id);
+    await this.writeAuditLog(
+      this.prisma,
+      admin,
+      "admin.auth_settings.update",
+      "auth_settings",
+      updated.id
+    );
     return toAuthSettingsDto(updated);
   }
 
@@ -498,6 +890,146 @@ export class AuthService {
       throw new AuthError("ADMIN_REQUIRED", "Admin role is required.", 403);
     }
     return me;
+  }
+
+  private async toAdminUsers(
+    tenantId: string,
+    users: Array<{
+      id: string;
+      email: string;
+      display_name: string;
+      status: string;
+      email_verified_at: Date | null;
+      created_at: Date;
+      updated_at: Date;
+    }>
+  ): Promise<AdminUser[]> {
+    if (users.length === 0) {
+      return [];
+    }
+
+    const userIds = users.map((user) => user.id);
+    const [memberships, sessions] = await Promise.all([
+      this.prisma.tenantMembership.findMany({
+        where: {
+          tenant_id: tenantId,
+          user_id: { in: userIds }
+        }
+      }),
+      this.prisma.authSession.groupBy({
+        by: ["user_id"],
+        where: {
+          user_id: { in: userIds },
+          revoked_at: null,
+          expires_at: { gt: this.now() }
+        },
+        _count: { _all: true }
+      })
+    ]);
+    const roleByUser = new Map(
+      memberships.map((membership) => [membership.user_id, membership.role as TenantRole])
+    );
+    const sessionsByUser = new Map(
+      sessions.map((session) => [session.user_id, session._count._all])
+    );
+
+    return users.map((user) => ({
+      ...toPublicUser(user),
+      tenantRole: roleByUser.get(user.id) ?? null,
+      activeSessionCount: sessionsByUser.get(user.id) ?? 0,
+      createdAt: user.created_at.toISOString(),
+      updatedAt: user.updated_at.toISOString()
+    }));
+  }
+
+  private async toAdminUser(
+    tenantId: string,
+    user: {
+      id: string;
+      email: string;
+      display_name: string;
+      status: string;
+      email_verified_at: Date | null;
+      created_at: Date;
+      updated_at: Date;
+    }
+  ): Promise<AdminUser> {
+    const [adminUser] = await this.toAdminUsers(tenantId, [user]);
+    if (!adminUser) {
+      throw new AuthError("USER_NOT_FOUND", "User was not found.", 404);
+    }
+    return adminUser;
+  }
+
+  private async getTargetUserForAdmin(admin: AuthenticatedUser, userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.status === "deleted") {
+      throw new AuthError("USER_NOT_FOUND", "User was not found.", 404);
+    }
+    const membership = await this.prisma.tenantMembership.findFirst({
+      where: {
+        tenant_id: admin.tenantId,
+        user_id: userId
+      }
+    });
+    if (!membership) {
+      throw new AuthError("USER_NOT_FOUND", "User was not found in this tenant.", 404);
+    }
+    return user;
+  }
+
+  private async getTenantRole(tenantId: string, userId: string): Promise<TenantRole | null> {
+    const membership = await this.prisma.tenantMembership.findFirst({
+      where: {
+        tenant_id: tenantId,
+        user_id: userId
+      }
+    });
+    return isTenantRole(membership?.role) ? membership.role : null;
+  }
+
+  private assertCanManageTarget(
+    admin: AuthenticatedUser,
+    targetUserId: string,
+    targetRole: TenantRole | null
+  ) {
+    if (targetRole === "system_admin" && !admin.roles.includes("system_admin")) {
+      throw new AuthError("ADMIN_REQUIRED", "Only system admins can manage system admins.", 403);
+    }
+    if (targetUserId === admin.user.id && targetRole === "system_admin") {
+      return;
+    }
+  }
+
+  private assertCanGrantRole(admin: AuthenticatedUser, role: TenantRole) {
+    if (role === "system_admin" && !admin.roles.includes("system_admin")) {
+      throw new AuthError("ADMIN_REQUIRED", "Only system admins can grant system admin.", 403);
+    }
+  }
+
+  private async assertNotLastActiveSystemAdmin(tenantId: string, targetUserId: string) {
+    const targetRole = await this.getTenantRole(tenantId, targetUserId);
+    if (targetRole !== "system_admin") {
+      return;
+    }
+
+    const memberships = await this.prisma.tenantMembership.findMany({
+      where: {
+        tenant_id: tenantId,
+        role: "system_admin"
+      },
+      select: { user_id: true }
+    });
+    const activeSystemAdmins = await this.prisma.user.count({
+      where: {
+        id: { in: memberships.map((membership) => membership.user_id) },
+        status: "active"
+      }
+    });
+
+    if (activeSystemAdmins <= 1) {
+      throw new AuthError("INVALID_INPUT", "At least one active system admin is required.", 400);
+    }
   }
 
   private async ensureDefaultTenant() {
@@ -689,12 +1221,14 @@ export class AuthService {
   }
 
   private async writeAuditLog(
+    tx: Prisma.TransactionClient | PrismaClient,
     admin: AuthenticatedUser,
     action: string,
     objectType: string,
-    objectId: string
+    objectId: string,
+    metadata: Prisma.InputJsonValue = {}
   ) {
-    await this.prisma.auditLog.create({
+    await tx.auditLog.create({
       data: {
         tenant_id: admin.tenantId,
         actor_user_id: admin.user.id,
@@ -702,7 +1236,7 @@ export class AuthService {
         action,
         object_type: objectType,
         object_id: objectId,
-        metadata: {},
+        metadata,
         created_at: this.now()
       }
     });
@@ -768,6 +1302,34 @@ function toAuthSettingsDto(settings: AuthSettingsRecord) {
   };
 }
 
+function toAuditLogEntry(entry: {
+  id: string;
+  tenant_id: string | null;
+  actor_user_id: string | null;
+  actor_type: string;
+  action: string;
+  object_type: string | null;
+  object_id: string | null;
+  metadata: unknown;
+  ip: string | null;
+  user_agent: string | null;
+  created_at: Date;
+}): AuditLogEntry {
+  return {
+    id: entry.id,
+    tenantId: entry.tenant_id,
+    actorUserId: entry.actor_user_id,
+    actorType: entry.actor_type,
+    action: entry.action,
+    objectType: entry.object_type,
+    objectId: entry.object_id,
+    metadata: entry.metadata,
+    ip: entry.ip,
+    userAgent: entry.user_agent,
+    createdAt: entry.created_at.toISOString()
+  };
+}
+
 function normalizeAuthSettingsInput(input: UpdateAuthSettingsInput) {
   const data: UpdateAuthSettingsInput = {};
 
@@ -799,6 +1361,31 @@ function normalizeAuthSettingsInput(input: UpdateAuthSettingsInput) {
   }
 
   return data;
+}
+
+function normalizeAdminUserStatus(value: string, allowDeleted: boolean): AdminUserStatus {
+  const statuses: AdminUserStatus[] = [
+    "pending_email_verification",
+    "pending_activation",
+    "active",
+    "suspended",
+    "deleted"
+  ];
+  if (statuses.includes(value as AdminUserStatus) && (allowDeleted || value !== "deleted")) {
+    return value as AdminUserStatus;
+  }
+  throw new AuthError("INVALID_INPUT", "status is invalid.", 400);
+}
+
+function normalizeTenantRole(value: string): TenantRole {
+  if (isTenantRole(value)) {
+    return value;
+  }
+  throw new AuthError("INVALID_INPUT", "tenant role is invalid.", 400);
+}
+
+function isTenantRole(value: string | undefined | null): value is TenantRole {
+  return value === "system_admin" || value === "tenant_admin" || value === "member";
 }
 
 function normalizeEmail(email: string): string {
@@ -876,4 +1463,26 @@ function addDays(date: Date, days: number): Date {
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new AuthError("INVALID_INPUT", "limit is invalid.", 400);
+  }
+  return Math.min(Math.trunc(parsed), 200);
+}
+
+function normalizeOffset(value: number | undefined): number {
+  if (value === undefined) {
+    return 0;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new AuthError("INVALID_INPUT", "offset is invalid.", 400);
+  }
+  return Math.trunc(parsed);
 }

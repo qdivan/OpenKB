@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiRequestError, apiFetch, isUnauthorized, searchKnowledge } from "./openkb-api";
+import {
+  ApiRequestError,
+  apiFetch,
+  createAdminUser,
+  isUnauthorized,
+  listAdminUsers,
+  searchKnowledge,
+  setAdminUserTenantRole
+} from "./openkb-api";
 
 describe("OpenKB API client", () => {
   afterEach(() => {
@@ -61,6 +69,42 @@ describe("OpenKB API client", () => {
         credentials: "include",
         method: "POST",
         body: JSON.stringify({ query: "MCP", knowledge_base_ids: ["kb_1"] })
+      })
+    );
+  });
+
+  it("builds admin user management requests", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [], total: 0 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listAdminUsers({ status: "active", role: "member", query: "openkb", limit: 20 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/admin/users?status=active&role=member&query=openkb&limit=20",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ user: { id: "u1" }, reset_link: "http://example.test" }))
+    );
+    await createAdminUser({ email: "user@example.com", tenant_role: "member" });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/users",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ email: "user@example.com", tenant_role: "member" })
+      })
+    );
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ user: { id: "u1" }, tenant_role: "tenant_admin" }))
+    );
+    await setAdminUserTenantRole("u1", "tenant_admin");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/users/u1/tenant-role",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ role: "tenant_admin" })
       })
     );
   });

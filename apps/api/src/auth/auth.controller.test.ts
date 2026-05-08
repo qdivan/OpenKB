@@ -100,7 +100,54 @@ describe("AdminController", () => {
       error: "ADMIN_REQUIRED",
       message: "Admin role is required."
     });
-    expect(auth.listUsers).toHaveBeenCalledWith("abc", undefined);
+    expect(auth.listUsers).toHaveBeenCalledWith("abc", {
+      status: undefined,
+      role: undefined,
+      query: undefined,
+      limit: undefined,
+      offset: undefined
+    });
     expect(res.statusCode).toBe(403);
+  });
+
+  it("routes admin user management calls to AuthService", async () => {
+    const auth = {
+      cookieName: () => "openkb_session",
+      createAdminUser: vi.fn(async () => ({
+        user: { email: "new@example.com" },
+        reset_link: "http://localhost:3000/password-reset?token=abc"
+      })),
+      setTenantRole: vi.fn(async () => ({
+        user: { id: "u1" },
+        tenant_role: "tenant_admin"
+      })),
+      listAuditLogs: vi.fn(async () => ({ items: [], total: 0, limit: 20, offset: 0 }))
+    } as unknown as AuthService;
+    const controller = new AdminController(auth);
+    const res = reply();
+    const request = { headers: { cookie: "openkb_session=abc" } } as never;
+
+    await expect(
+      controller.createUser(
+        { email: "new@example.com", tenant_role: "member" },
+        request,
+        res as never
+      )
+    ).resolves.toMatchObject({ user: { email: "new@example.com" } });
+    await controller.setTenantRole("u1", { role: "tenant_admin" }, request, res as never);
+    await controller.auditLogs({ action: "admin.user", limit: "20" }, request, res as never);
+
+    expect(auth.createAdminUser).toHaveBeenCalledWith("abc", {
+      email: "new@example.com",
+      tenant_role: "member"
+    });
+    expect(auth.setTenantRole).toHaveBeenCalledWith("abc", "u1", "tenant_admin");
+    expect(auth.listAuditLogs).toHaveBeenCalledWith("abc", {
+      action: "admin.user",
+      object_type: undefined,
+      actor_user_id: undefined,
+      limit: 20,
+      offset: undefined
+    });
   });
 });
