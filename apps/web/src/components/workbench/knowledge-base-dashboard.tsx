@@ -162,8 +162,9 @@ export function KnowledgeBaseDashboard({
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-semibold">{overview?.knowledge_base.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <span>{overview?.knowledge_base.visibility}</span>
-            <span>{overview?.knowledge_base.status}</span>
+            <Badge tone="zinc">knowledge base</Badge>
+            <Badge tone="sky">visibility: {overview?.knowledge_base.visibility}</Badge>
+            <Badge tone="emerald">status: {overview?.knowledge_base.status}</Badge>
             {overview?.needs_chunk_rebuild ? <Badge tone="amber">chunks stale</Badge> : null}
             {overview?.needs_index_rebuild ? <Badge tone="sky">index rebuild needed</Badge> : null}
           </div>
@@ -273,7 +274,9 @@ export function KnowledgeBaseDashboard({
                   </button>
                 ))
               ) : (
-                <EmptyLine>No chunks</EmptyLine>
+                <EmptyLine>
+                  No chunks yet. Rebuild chunks or save a document to generate searchable chunks.
+                </EmptyLine>
               )}
             </div>
           </Panel>

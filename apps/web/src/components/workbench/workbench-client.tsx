@@ -538,14 +538,14 @@ export function WorkbenchClient({
       setKnowledgeBases(nextKnowledgeBases);
       const firstKnowledgeBase = nextKnowledgeBases[0] ?? null;
       if (firstKnowledgeBase) {
-        router.push(`/app/kb/${firstKnowledgeBase.id}`);
         await loadKnowledgeBase(firstKnowledgeBase.id);
+        pushWorkbenchPath(`/app/kb/${firstKnowledgeBase.id}`);
       } else {
-        router.push(`/app/workspaces/${workspaceId}`);
         setSelectedKnowledgeBaseId(null);
         setDocuments([]);
         setImportJobs([]);
         clearDocumentState();
+        pushWorkbenchPath(`/app/workspaces/${workspaceId}`);
       }
     } catch (error) {
       handleApiError(error);
@@ -556,6 +556,13 @@ export function WorkbenchClient({
 
   async function selectKnowledgeBase(knowledgeBaseId: string) {
     if (knowledgeBaseId === selectedKnowledgeBaseId) {
+      if (currentDocument) {
+        if (!confirmDiscardDraft()) {
+          return;
+        }
+        clearDocumentState();
+        pushWorkbenchPath(`/app/kb/${knowledgeBaseId}`);
+      }
       return;
     }
     if (!confirmDiscardDraft()) {
@@ -565,8 +572,8 @@ export function WorkbenchClient({
     setIsBusy(true);
     setMessage("");
     try {
-      router.push(`/app/kb/${knowledgeBaseId}`);
       await loadKnowledgeBase(knowledgeBaseId);
+      pushWorkbenchPath(`/app/kb/${knowledgeBaseId}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -586,7 +593,7 @@ export function WorkbenchClient({
     setMessage("");
     try {
       const document = await openDocument(documentId);
-      router.push(`/app/kb/${document.knowledge_base_id}/docs/${document.id}`);
+      pushWorkbenchPath(`/app/kb/${document.knowledge_base_id}/docs/${document.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -655,8 +662,8 @@ export function WorkbenchClient({
         visibility: "workspace"
       });
       setKnowledgeBases((items) => [...items, knowledgeBase]);
-      router.push(`/app/kb/${knowledgeBase.id}`);
       await loadKnowledgeBase(knowledgeBase.id);
+      pushWorkbenchPath(`/app/kb/${knowledgeBase.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -687,7 +694,7 @@ export function WorkbenchClient({
       const nextTree = await getKnowledgeBaseTree(selectedKnowledgeBaseId);
       setDocuments(nextTree);
       await openDocument(document.id);
-      router.push(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
+      pushWorkbenchPath(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -757,7 +764,7 @@ export function WorkbenchClient({
           setDocuments(nextTree);
           if (job.document_id) {
             await openDocument(job.document_id);
-            router.push(`/app/kb/${knowledgeBaseId}/docs/${job.document_id}`);
+            pushWorkbenchPath(`/app/kb/${knowledgeBaseId}/docs/${job.document_id}`);
           }
           setMessage("");
           return;
@@ -791,9 +798,12 @@ export function WorkbenchClient({
       const nextDocument = nextTree.find((document) => document.type === "page") ?? nextTree[0];
       if (nextDocument) {
         await openDocument(nextDocument.id);
-        router.push(`/app/kb/${nextDocument.knowledge_base_id}/docs/${nextDocument.id}`);
+        pushWorkbenchPath(`/app/kb/${nextDocument.knowledge_base_id}/docs/${nextDocument.id}`);
       } else {
         clearDocumentState();
+        if (selectedKnowledgeBaseId) {
+          pushWorkbenchPath(`/app/kb/${selectedKnowledgeBaseId}`);
+        }
       }
     } catch (error) {
       handleApiError(error);
@@ -1990,4 +2000,11 @@ function slugFromTitle(title: string, fallback: string): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function pushWorkbenchPath(path: string) {
+  if (window.location.pathname === path && !window.location.search) {
+    return;
+  }
+  window.history.pushState(null, "", path);
 }

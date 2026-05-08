@@ -3,7 +3,6 @@
 import {
   Activity,
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   Database,
   FlaskConical,
@@ -14,7 +13,6 @@ import {
   Settings2,
   ShieldCheck
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -129,30 +127,26 @@ export function RetrievalAdminClient() {
   }
 
   return (
-    <main className="min-h-screen bg-zinc-50 text-zinc-950">
-      <header className="border-b border-zinc-200 bg-white">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link className="icon-button" href="/app" title="Back to app">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">Retrieval</p>
-              <p className="truncate text-xs text-zinc-500">Admin</p>
-            </div>
-          </div>
-          <button
-            className="icon-button"
-            onClick={() => void loadStatus()}
-            title="Refresh"
-            type="button"
-          >
-            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-          </button>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase text-zinc-500">Admin</p>
+          <h1 className="mt-1 text-2xl font-semibold">Retrieval</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Configure retrieval mode, probe model endpoints, and queue index rebuilds.
+          </p>
         </div>
-      </header>
+        <button
+          className="icon-button"
+          onClick={() => void loadStatus()}
+          title="Refresh"
+          type="button"
+        >
+          <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
 
-      <div className="mx-auto grid max-w-6xl gap-4 px-4 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <section className="space-y-4">
           <Panel title="Mode" icon={<Search className="h-4 w-4" />}>
             {isLoading && !status ? (
@@ -297,7 +291,7 @@ export function RetrievalAdminClient() {
           ) : null}
         </aside>
       </div>
-    </main>
+    </div>
   );
 }
 

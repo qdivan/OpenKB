@@ -63,7 +63,7 @@ describe("ContentService integration", () => {
   });
 
   it("seeds a fixed dev admin that can log in and create content", async () => {
-    await seedDev({ prisma });
+    const seed = await seedDev({ prisma });
     const content = new ContentService(auth, permissions);
 
     try {
@@ -92,6 +92,11 @@ describe("ContentService integration", () => {
       expect(workspace.slug).toBe("product");
       expect(knowledgeBase.visibility).toBe("private");
       expect(document.currentVersion).toMatchObject({ markdown: "# Roadmap" });
+      const seededOverview = await content.getKnowledgeBaseOverview(
+        login.sessionToken,
+        seed.knowledgeBaseId
+      );
+      expect(seededOverview.chunks.total).toBeGreaterThan(0);
     } finally {
       await content.disconnect();
     }

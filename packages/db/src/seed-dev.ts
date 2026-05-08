@@ -1,5 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
+import {
+  chunkMarkdownForIndex,
+  type HierarchicalMarkdownChunk,
+  type MarkdownChunkingMode,
+  type MarkdownParentChunkMode
+} from "@openkb/markdown";
 import bcrypt from "bcryptjs";
 
 import { createDatabaseClient, type Prisma, type PrismaClient } from "./index";
@@ -368,8 +374,9 @@ async function upsertDocument(
         }
       }));
 
+    let updatedDocument = document;
     if (document.current_version_id !== version.id) {
-      return tx.document.update({
+      updatedDocument = await tx.document.update({
         where: { id: document.id },
         data: {
           current_version_id: version.id,
@@ -377,9 +384,124 @@ async function upsertDocument(
         }
       });
     }
+
+    await ensureSeedChunks(tx, {
+      tenantId: input.tenantId,
+      workspaceId: input.workspaceId,
+      knowledgeBaseId: input.knowledgeBaseId,
+      documentId: updatedDocument.id,
+      versionId: version.id,
+      markdown: version.markdown,
+      userId: input.userId,
+      now: input.now
+    });
+
+    return updatedDocument;
   }
 
   return document;
+}
+
+async function ensureSeedChunks(
+  tx: Prisma.TransactionClient,
+  input: {
+    tenantId: string;
+    workspaceId: string;
+    knowledgeBaseId: string;
+    documentId: string;
+    versionId: string;
+    markdown: string;
+    userId: string;
+    now: Date;
+  }
+) {
+  const existingChunks = await tx.documentChunk.count({
+    where: { version_id: input.versionId }
+  });
+  if (existingChunks > 0) {
+    return;
+  }
+
+  const settings = await ensureSeedChunkSettings(tx, input);
+  const chunks = materializeSeedChunks(
+    chunkMarkdownForIndex(input.markdown, {
+      mode: normalizeChunkMode(settings.mode),
+      parent_mode: normalizeParentChunkMode(settings.parent_mode),
+      parent_delimiter: settings.parent_delimiter,
+      child_delimiter: settings.child_delimiter,
+      parent_max_characters: settings.parent_max_characters,
+      child_max_characters: settings.child_max_characters,
+      child_overlap_characters: settings.child_overlap_characters
+    })
+  );
+
+  if (chunks.length === 0) {
+    return;
+  }
+
+  await tx.documentChunk.createMany({
+    data: chunks.map((chunk) => ({
+      id: chunk.id,
+      tenant_id: input.tenantId,
+      workspace_id: input.workspaceId,
+      knowledge_base_id: input.knowledgeBaseId,
+      document_id: input.documentId,
+      version_id: input.versionId,
+      ordinal: chunk.ordinal,
+      chunk_type: chunk.chunk_type,
+      parent_chunk_id: chunk.parent_chunk_id,
+      settings_revision: settings.revision,
+      start_line: chunk.start_line,
+      end_line: chunk.end_line,
+      start_char: chunk.start_char,
+      end_char: chunk.end_char,
+      parent_ordinal: chunk.parent_ordinal,
+      child_ordinal: chunk.child_ordinal,
+      heading_path: chunk.heading_path,
+      content_text: chunk.content_text,
+      content_markdown: chunk.content_markdown,
+      token_count: chunk.token_count,
+      metadata: chunk.metadata as Prisma.InputJsonValue,
+      created_at: input.now
+    }))
+  });
+}
+
+async function ensureSeedChunkSettings(
+  tx: Prisma.TransactionClient,
+  input: {
+    tenantId: string;
+    workspaceId: string;
+    knowledgeBaseId: string;
+    userId: string;
+    now: Date;
+  }
+) {
+  const existing = await tx.knowledgeBaseChunkSetting.findUnique({
+    where: { knowledge_base_id: input.knowledgeBaseId }
+  });
+  if (existing) {
+    return existing;
+  }
+
+  return tx.knowledgeBaseChunkSetting.create({
+    data: {
+      tenant_id: input.tenantId,
+      workspace_id: input.workspaceId,
+      knowledge_base_id: input.knowledgeBaseId,
+      mode: "parent_child",
+      parent_mode: "paragraph",
+      parent_delimiter: "\n\n",
+      child_delimiter: "\n\n",
+      parent_max_characters: 4000,
+      child_max_characters: 900,
+      child_overlap_characters: 120,
+      revision: 1,
+      updated_by: input.userId,
+      created_at: input.now,
+      updated_at: input.now
+    }
+  });
 }
 
 async function upsertOwnerCollaborator(
@@ -427,4 +549,34 @@ function optionalEnv(env: NodeJS.ProcessEnv, key: string, fallback: string): str
 
 function markdownHash(markdown: string): string {
   return createHash("sha256").update(markdown).digest("hex");
+}
+
+function materializeSeedChunks(
+  chunks: HierarchicalMarkdownChunk[]
+): Array<HierarchicalMarkdownChunk & { id: string; parent_chunk_id: string | null }> {
+  const ids = chunks.map(() => randomUUID());
+  const parentIdByLocalId = new Map<string, string>();
+
+  chunks.forEach((chunk, index) => {
+    if (chunk.chunk_type === "parent" && chunk.parent_local_id) {
+      parentIdByLocalId.set(chunk.parent_local_id, ids[index]!);
+    }
+  });
+
+  return chunks.map((chunk, index) => ({
+    ...chunk,
+    id: ids[index]!,
+    parent_chunk_id:
+      chunk.chunk_type === "child" && chunk.parent_local_id
+        ? (parentIdByLocalId.get(chunk.parent_local_id) ?? null)
+        : null
+  }));
+}
+
+function normalizeChunkMode(value: string): MarkdownChunkingMode {
+  return value === "general" ? "general" : "parent_child";
+}
+
+function normalizeParentChunkMode(value: string): MarkdownParentChunkMode {
+  return value === "full_doc" ? "full_doc" : "paragraph";
 }

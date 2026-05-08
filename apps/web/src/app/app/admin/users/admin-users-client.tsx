@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   Copy,
   LoaderCircle,
@@ -15,7 +14,6 @@ import {
   Users,
   XCircle
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -178,25 +176,21 @@ export function AdminUsersClient() {
   }
 
   return (
-    <main className="min-h-screen bg-zinc-50 text-zinc-950">
-      <header className="border-b border-zinc-200 bg-white">
-        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link className="icon-button" href="/app/admin" title="Back to admin">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">Users</p>
-              <p className="truncate text-xs text-zinc-500">Admin</p>
-            </div>
-          </div>
-          <button className="icon-button" onClick={() => void load()} title="Refresh" type="button">
-            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-          </button>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase text-zinc-500">Admin</p>
+          <h1 className="mt-1 text-2xl font-semibold">Users</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Create accounts, change tenant roles, revoke sessions, and review account audit logs.
+          </p>
         </div>
-      </header>
+        <button className="icon-button" onClick={() => void load()} title="Refresh" type="button">
+          <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
 
-      <div className="mx-auto grid max-w-7xl gap-4 px-4 py-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="space-y-4">
           <div className="grid gap-3 md:grid-cols-3">
             <Metric icon={<Users />} label="Active" value={activeUsers} />
@@ -438,7 +432,7 @@ export function AdminUsersClient() {
           </Panel>
         </aside>
       </div>
-    </main>
+    </div>
   );
 }
 
