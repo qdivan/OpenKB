@@ -46,6 +46,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type MouseEvent,
   type ReactNode
 } from "react";
@@ -94,6 +95,11 @@ type EditorMode = "read" | "edit" | "source";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
 type TreeNode = DocumentSummary & { children: TreeNode[] };
 type TreeDropPosition = "before" | "inside" | "after";
+type CreateDialogKind = "workspace" | "knowledge_base" | "folder" | "page";
+type CreateDialogState = {
+  kind: CreateDialogKind;
+  parentId?: string | null;
+};
 type DocumentMoveUpdate = {
   id: string;
   parent_id: string | null;
@@ -145,6 +151,8 @@ export function WorkbenchClient({
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
   const [importJobs, setImportJobs] = useState<ImportJob[]>([]);
   const [isImporting, setIsImporting] = useState(false);
+  const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null);
+  const [createTitle, setCreateTitle] = useState("");
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const selectedKnowledgeBase = knowledgeBases.find(
@@ -614,20 +622,89 @@ export function WorkbenchClient({
     }
   }
 
-  async function handleCreateWorkspace() {
-    const name = window.prompt("Workspace name");
-    if (!name?.trim()) {
+  function openCreateDialog(kind: CreateDialogKind) {
+    if (kind === "knowledge_base" && !selectedWorkspaceId) {
+      return;
+    }
+    if ((kind === "folder" || kind === "page") && !selectedKnowledgeBaseId) {
+      return;
+    }
+
+    setMessage("");
+    setCreateTitle("");
+    setCreateDialog({
+      kind,
+      parentId:
+        kind === "folder" || kind === "page"
+          ? currentDocument?.type === "folder"
+            ? currentDocument.id
+            : null
+          : undefined
+    });
+  }
+
+  async function handleCreateDialogSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!createDialog) {
+      return;
+    }
+    const title = createTitle.trim();
+    if (!title) {
+      setMessage("Please enter a name.");
+      return;
+    }
+    if (!confirmDiscardDraft()) {
       return;
     }
 
     setIsBusy(true);
+    setMessage("");
     try {
-      const workspace = await createWorkspace({
-        name: name.trim(),
-        slug: slugFromTitle(name, "workspace")
-      });
-      setWorkspaces((items) => [...items, workspace]);
-      await selectWorkspace(workspace.id);
+      if (createDialog.kind === "workspace") {
+        const workspace = await createWorkspace({
+          name: title,
+          slug: slugFromTitle(title, "workspace")
+        });
+        setWorkspaces((items) => [...items, workspace]);
+        setSelectedWorkspaceId(workspace.id);
+        setKnowledgeBases([]);
+        setSelectedKnowledgeBaseId(null);
+        setDocuments([]);
+        setImportJobs([]);
+        clearDocumentState();
+        pushWorkbenchPath(`/app/workspaces/${workspace.id}`);
+      } else if (createDialog.kind === "knowledge_base") {
+        if (!selectedWorkspaceId) {
+          return;
+        }
+        const knowledgeBase = await createKnowledgeBase({
+          workspace_id: selectedWorkspaceId,
+          title,
+          slug: slugFromTitle(title, "kb"),
+          visibility: "workspace"
+        });
+        setKnowledgeBases((items) => [...items, knowledgeBase]);
+        await loadKnowledgeBase(knowledgeBase.id);
+        pushWorkbenchPath(`/app/kb/${knowledgeBase.id}`);
+      } else {
+        if (!selectedKnowledgeBaseId) {
+          return;
+        }
+        const document = await createDocument({
+          knowledge_base_id: selectedKnowledgeBaseId,
+          parent_id: createDialog.parentId ?? null,
+          type: createDialog.kind,
+          title,
+          slug: slugFromTitle(title, createDialog.kind),
+          markdown: createDialog.kind === "page" ? `# ${title}\n` : ""
+        });
+        const nextTree = await getKnowledgeBaseTree(selectedKnowledgeBaseId);
+        setDocuments(nextTree);
+        await openDocument(document.id);
+        pushWorkbenchPath(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
+      }
+      setCreateDialog(null);
+      setCreateTitle("");
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -650,64 +727,6 @@ export function WorkbenchClient({
       setWorkspaces((items) =>
         items.map((item) => (item.id === workspace.id ? { ...item, ...workspace } : item))
       );
-    } catch (error) {
-      handleApiError(error);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function handleCreateKnowledgeBase() {
-    if (!selectedWorkspaceId) {
-      return;
-    }
-    const title = window.prompt("Knowledge base title");
-    if (!title?.trim()) {
-      return;
-    }
-
-    setIsBusy(true);
-    try {
-      const knowledgeBase = await createKnowledgeBase({
-        workspace_id: selectedWorkspaceId,
-        title: title.trim(),
-        slug: slugFromTitle(title, "kb"),
-        visibility: "workspace"
-      });
-      setKnowledgeBases((items) => [...items, knowledgeBase]);
-      await loadKnowledgeBase(knowledgeBase.id);
-      pushWorkbenchPath(`/app/kb/${knowledgeBase.id}`);
-    } catch (error) {
-      handleApiError(error);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function handleCreateDocument(type: "folder" | "page") {
-    if (!selectedKnowledgeBaseId) {
-      return;
-    }
-    const title = window.prompt(type === "folder" ? "Folder title" : "Document title");
-    if (!title?.trim()) {
-      return;
-    }
-
-    const parentId = currentDocument?.type === "folder" ? currentDocument.id : null;
-    setIsBusy(true);
-    try {
-      const document = await createDocument({
-        knowledge_base_id: selectedKnowledgeBaseId,
-        parent_id: parentId,
-        type,
-        title: title.trim(),
-        slug: slugFromTitle(title, type),
-        markdown: type === "page" ? `# ${title.trim()}\n` : ""
-      });
-      const nextTree = await getKnowledgeBaseTree(selectedKnowledgeBaseId);
-      setDocuments(nextTree);
-      await openDocument(document.id);
-      pushWorkbenchPath(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -1001,7 +1020,11 @@ export function WorkbenchClient({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
-          <PanelHeader title="Workspaces" onAdd={handleCreateWorkspace} disabled={isBusy} />
+          <PanelHeader
+            title="Workspaces"
+            onAdd={() => openCreateDialog("workspace")}
+            disabled={isBusy}
+          />
           <div className="space-y-1">
             {workspaces.map((workspace) => (
               <button
@@ -1019,7 +1042,7 @@ export function WorkbenchClient({
           <div className="mt-6">
             <PanelHeader
               title="Knowledge Bases"
-              onAdd={handleCreateKnowledgeBase}
+              onAdd={() => openCreateDialog("knowledge_base")}
               disabled={isBusy}
             />
             <div className="space-y-1">
@@ -1107,7 +1130,7 @@ export function WorkbenchClient({
                   <button
                     className="icon-button"
                     disabled={!selectedKnowledgeBaseId || isBusy}
-                    onClick={() => void handleCreateDocument("folder")}
+                    onClick={() => openCreateDialog("folder")}
                     title="New folder"
                     type="button"
                   >
@@ -1116,7 +1139,7 @@ export function WorkbenchClient({
                   <button
                     className="icon-button"
                     disabled={!selectedKnowledgeBaseId || isBusy}
-                    onClick={() => void handleCreateDocument("page")}
+                    onClick={() => openCreateDialog("page")}
                     title="New document"
                     type="button"
                   >
@@ -1283,14 +1306,14 @@ export function WorkbenchClient({
                 <KnowledgeBaseDashboard
                   documents={documents}
                   knowledgeBaseId={selectedKnowledgeBaseId}
-                  onCreateDocument={() => void handleCreateDocument("page")}
+                  onCreateDocument={() => openCreateDialog("page")}
                   onError={handleApiError}
                   onOpenDocument={(documentId) => void selectDocument(documentId)}
                 />
               ) : (
                 <EmptyMain
                   hasKnowledgeBase={Boolean(selectedKnowledgeBaseId)}
-                  onCreate={() => void handleCreateDocument("page")}
+                  onCreate={() => openCreateDialog("page")}
                 />
               )}
             </article>
@@ -1319,6 +1342,22 @@ export function WorkbenchClient({
           </div>
         )}
       </section>
+      {createDialog ? (
+        <CreateDialog
+          isBusy={isBusy}
+          kind={createDialog.kind}
+          onClose={() => {
+            if (!isBusy) {
+              setCreateDialog(null);
+              setCreateTitle("");
+              setMessage("");
+            }
+          }}
+          onSubmit={handleCreateDialogSubmit}
+          title={createTitle}
+          onTitleChange={setCreateTitle}
+        />
+      ) : null}
     </main>
   );
 }
@@ -1346,6 +1385,117 @@ function PanelHeader({
       </button>
     </div>
   );
+}
+
+function CreateDialog({
+  isBusy,
+  kind,
+  onClose,
+  onSubmit,
+  onTitleChange,
+  title
+}: {
+  isBusy: boolean;
+  kind: CreateDialogKind;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onTitleChange: (value: string) => void;
+  title: string;
+}) {
+  const copy = createDialogCopy(kind);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/20 px-4">
+      <form
+        className="w-full max-w-sm rounded-md border border-zinc-200 bg-white p-4 shadow-lg"
+        onSubmit={onSubmit}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-zinc-950">{copy.title}</h2>
+            <p className="mt-1 text-sm leading-5 text-zinc-500">{copy.description}</p>
+          </div>
+          <button
+            className="icon-button h-8 w-8 shrink-0"
+            disabled={isBusy}
+            onClick={onClose}
+            title="Close"
+            type="button"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+
+        <label className="mt-4 grid gap-1 text-sm">
+          <span className="text-xs font-medium text-zinc-500">{copy.label}</span>
+          <input
+            autoFocus
+            className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-500"
+            disabled={isBusy}
+            onChange={(event) => onTitleChange(event.target.value)}
+            placeholder={copy.placeholder}
+            required
+            value={title}
+          />
+        </label>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            disabled={isBusy}
+            onClick={onClose}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="inline-flex h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+            disabled={isBusy}
+            type="submit"
+          >
+            {isBusy ? "Creating..." : copy.action}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function createDialogCopy(kind: CreateDialogKind) {
+  if (kind === "workspace") {
+    return {
+      action: "Create workspace",
+      description: "Create a new top-level workspace.",
+      label: "Workspace name",
+      placeholder: "Product Team",
+      title: "New workspace"
+    };
+  }
+  if (kind === "knowledge_base") {
+    return {
+      action: "Create knowledge base",
+      description: "Create a knowledge base in the selected workspace.",
+      label: "Knowledge base title",
+      placeholder: "OpenKB Demo",
+      title: "New knowledge base"
+    };
+  }
+  if (kind === "folder") {
+    return {
+      action: "Create folder",
+      description: "Create a folder in the current knowledge base.",
+      label: "Folder title",
+      placeholder: "Getting Started",
+      title: "New folder"
+    };
+  }
+  return {
+    action: "Create document",
+    description: "Create a Markdown page in the current knowledge base.",
+    label: "Document title",
+    placeholder: "Untitled page",
+    title: "New document"
+  };
 }
 
 function TreeItem({
