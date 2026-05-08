@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowRight,
   BarChart3,
   CheckCircle2,
   Database,
@@ -59,15 +60,54 @@ export function KnowledgeBaseDashboard({
   const [labContextMode, setLabContextMode] = useState<RetrievalContextMode>("parent_child");
   const [labResponse, setLabResponse] = useState<SearchResponse | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [selectedChunkDocumentId, setSelectedChunkDocumentId] = useState<string | null>(null);
 
   const documentById = useMemo(
     () => new Map(documents.map((document) => [document.id, document])),
     [documents]
   );
+  const pageDocuments = useMemo(
+    () => documents.filter((document) => document.type === "page" && document.status !== "deleted"),
+    [documents]
+  );
+  const chunkCountByDocumentId = useMemo(() => {
+    const counts = new Map<string, number>();
+    chunks.forEach((chunk) => {
+      counts.set(chunk.document_id, (counts.get(chunk.document_id) ?? 0) + 1);
+    });
+    return counts;
+  }, [chunks]);
+  const effectiveChunkDocumentId =
+    selectedChunkDocumentId &&
+    pageDocuments.some((document) => document.id === selectedChunkDocumentId)
+      ? selectedChunkDocumentId
+      : (pageDocuments.find((document) => (chunkCountByDocumentId.get(document.id) ?? 0) > 0)?.id ??
+        pageDocuments[0]?.id ??
+        null);
+  const selectedChunkDocument = effectiveChunkDocumentId
+    ? (documentById.get(effectiveChunkDocumentId) ?? null)
+    : null;
+  const selectedDocumentChunks = useMemo(
+    () => chunks.filter((chunk) => chunk.document_id === effectiveChunkDocumentId),
+    [chunks, effectiveChunkDocumentId]
+  );
 
   useEffect(() => {
     void load();
   }, [knowledgeBaseId]);
+
+  useEffect(() => {
+    setSelectedChunkDocumentId((current) => {
+      if (current && pageDocuments.some((document) => document.id === current)) {
+        return current;
+      }
+      return (
+        pageDocuments.find((document) => (chunkCountByDocumentId.get(document.id) ?? 0) > 0)?.id ??
+        pageDocuments[0]?.id ??
+        null
+      );
+    });
+  }, [chunkCountByDocumentId, knowledgeBaseId, pageDocuments]);
 
   async function load() {
     setIsLoading(true);
@@ -75,7 +115,7 @@ export function KnowledgeBaseDashboard({
       const [nextOverview, nextSettings, nextChunks] = await Promise.all([
         getKnowledgeBaseOverview(knowledgeBaseId),
         getChunkSettings(knowledgeBaseId),
-        listKnowledgeBaseChunks(knowledgeBaseId, { limit: 160 })
+        listKnowledgeBaseChunks(knowledgeBaseId, { limit: 500 })
       ]);
       setOverview(nextOverview);
       setSettings(nextSettings);
@@ -253,31 +293,98 @@ export function KnowledgeBaseDashboard({
       {tab === "chunks" ? (
         <section className="mt-5">
           <Panel title="Chunk map">
-            <div className="max-h-[620px] space-y-2 overflow-y-auto">
-              {chunks.length > 0 ? (
-                chunks.map((chunk) => (
-                  <button
-                    key={chunk.id}
-                    className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-left hover:border-sky-200 hover:bg-sky-50/40"
-                    onClick={() => onOpenDocument(chunk.document_id)}
-                    type="button"
-                  >
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                      <Badge tone={chunk.chunk_type === "parent" ? "emerald" : "zinc"}>
-                        {chunk.chunk_type}
-                      </Badge>
-                      <span>{documentById.get(chunk.document_id)?.title ?? chunk.document_id}</span>
-                      <span>#{chunk.ordinal}</span>
-                      <span>{chunk.token_count ?? 0} tokens</span>
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-sm text-zinc-700">{chunk.content_text}</p>
-                  </button>
-                ))
-              ) : (
-                <EmptyLine>
-                  No chunks yet. Rebuild chunks or save a document to generate searchable chunks.
-                </EmptyLine>
-              )}
+            <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+              <div className="rounded-md border border-zinc-200 bg-white">
+                <div className="border-b border-zinc-200 px-3 py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Documents
+                  </p>
+                </div>
+                <div className="max-h-[480px] space-y-1 overflow-y-auto p-2">
+                  {pageDocuments.length > 0 ? (
+                    pageDocuments.map((document) => {
+                      const count = chunkCountByDocumentId.get(document.id) ?? 0;
+                      const active = document.id === effectiveChunkDocumentId;
+                      return (
+                        <button
+                          key={document.id}
+                          className={`flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm ${
+                            active ? "bg-sky-50 text-sky-800" : "text-zinc-700 hover:bg-zinc-50"
+                          }`}
+                          onClick={() => setSelectedChunkDocumentId(document.id)}
+                          type="button"
+                        >
+                          <span className="min-w-0 truncate">{document.title}</span>
+                          <span
+                            className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] ${
+                              active ? "bg-sky-100 text-sky-700" : "bg-zinc-100 text-zinc-500"
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <EmptyLine>No page documents</EmptyLine>
+                  )}
+                </div>
+              </div>
+
+              <div className="min-w-0 rounded-md border border-zinc-200 bg-white">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-zinc-900">
+                      {selectedChunkDocument?.title ?? "No document selected"}
+                    </p>
+                    <p className="text-xs text-zinc-500">{selectedDocumentChunks.length} chunks</p>
+                  </div>
+                  {selectedChunkDocument ? (
+                    <button
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                      onClick={() => onOpenDocument(selectedChunkDocument.id)}
+                      type="button"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" />
+                      Open editor
+                    </button>
+                  ) : null}
+                </div>
+                <div className="max-h-[480px] space-y-2 overflow-y-auto p-3">
+                  {selectedDocumentChunks.length > 0 ? (
+                    selectedDocumentChunks.map((chunk) => (
+                      <div
+                        key={chunk.id}
+                        className="rounded-md border border-zinc-200 bg-white px-3 py-2"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-zinc-500">
+                            <Badge tone={chunk.chunk_type === "parent" ? "emerald" : "zinc"}>
+                              {chunk.chunk_type}
+                            </Badge>
+                            <span>#{chunk.ordinal}</span>
+                            <span>{chunk.token_count ?? 0} tokens</span>
+                          </div>
+                          <button
+                            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-sky-700 hover:bg-sky-50"
+                            onClick={() => onOpenDocument(chunk.document_id)}
+                            type="button"
+                          >
+                            Open editor
+                          </button>
+                        </div>
+                        <p className="mt-2 line-clamp-2 text-sm text-zinc-700">
+                          {chunk.content_text}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <EmptyLine>
+                      No chunks for this document. Rebuild chunks or save the page again.
+                    </EmptyLine>
+                  )}
+                </div>
+              </div>
             </div>
           </Panel>
         </section>

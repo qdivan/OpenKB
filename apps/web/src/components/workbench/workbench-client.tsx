@@ -1083,8 +1083,8 @@ export function WorkbenchClient({
         {isBooting ? (
           <LoadingState />
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_240px]">
-            <aside className="min-h-0 border-b border-zinc-200 bg-zinc-50/70 lg:border-b-0 lg:border-r">
+          <div className="grid min-h-0 flex-1 content-start grid-cols-1 lg:content-stretch lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_240px]">
+            <aside className="min-h-0 self-start border-b border-zinc-200 bg-zinc-50/70 lg:self-stretch lg:border-b-0 lg:border-r">
               <div className="flex h-12 items-center justify-between border-b border-zinc-200 px-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">Documents</p>
