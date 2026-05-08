@@ -49,10 +49,11 @@ import {
   type MouseEvent,
   type ReactNode
 } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
 import { KnowledgeBaseDashboard } from "@/components/workbench/knowledge-base-dashboard";
-import { MilkdownEditor } from "@/components/workbench/milkdown-editor";
+import type { MilkdownEditorProps } from "@/components/workbench/milkdown-editor";
 import {
   ApiRequestError,
   createDocument,
@@ -98,6 +99,18 @@ type DocumentMoveUpdate = {
   parent_id: string | null;
   sort_order: number;
 };
+
+const MilkdownEditor = dynamic<MilkdownEditorProps>(
+  () => import("@/components/workbench/milkdown-editor").then((module) => module.MilkdownEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-500">
+        Loading editor...
+      </div>
+    )
+  }
+);
 
 export function WorkbenchClient({
   initialWorkspaceId,

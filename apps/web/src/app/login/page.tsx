@@ -1,16 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { authApiUrl } from "@/lib/auth-api";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    router.prefetch("/app");
+  }, [router]);
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSubmitting(true);
     setMessage("");
@@ -29,7 +35,7 @@ export default function LoginPage() {
       return;
     }
 
-    window.location.href = "/app";
+    router.replace("/app");
   }
 
   return (

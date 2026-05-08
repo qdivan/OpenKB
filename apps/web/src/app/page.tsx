@@ -1,3 +1,6 @@
+import { OPENKB_PHASE } from "@openkb/shared";
+import Link from "next/link";
+
 const services = [
   ["Web", "Next.js knowledge base workbench"],
   ["API", "NestJS Fastify content and search API"],
@@ -8,16 +11,29 @@ const services = [
 export default function Home() {
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-8 text-zinc-950">
-      <section className="mx-auto flex max-w-6xl flex-col gap-8">
+      <section className="mx-auto flex max-w-6xl flex-col gap-6">
         <header className="border-b border-zinc-200 pb-6">
-          <p className="text-sm font-medium uppercase tracking-wide text-teal-700">
-            Phase 11 Deployment
+          <p className="text-sm font-medium uppercase tracking-wide text-emerald-700">
+            {OPENKB_PHASE}
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-normal">OpenKB</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-600">
-            Markdown-first knowledge base foundation with Yuque-style permissions, Milkdown editing,
-            Milvus indexing, MCP, and Dify integration boundaries.
+            Local development entry for the Markdown-first knowledge base workbench.
           </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link
+              className="inline-flex h-10 items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-medium text-white hover:bg-zinc-800"
+              href="/app"
+            >
+              进入工作台
+            </Link>
+            <Link
+              className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
+              href="/login"
+            >
+              登录
+            </Link>
+          </div>
         </header>
 
         <section className="grid gap-3 md:grid-cols-2">
