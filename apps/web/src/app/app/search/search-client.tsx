@@ -233,6 +233,24 @@ export function SearchPageClient() {
                           </span>
                         ) : null}
                       </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5">
+                          {result.context_mode ?? response.context_mode ?? "chunk"}
+                        </span>
+                        {result.parent_chunk?.chunk_id ? (
+                          <span>
+                            {t("matched child, returned parent {id}", {
+                              id: result.parent_chunk.chunk_id
+                            })}
+                          </span>
+                        ) : (
+                          <span>
+                            {t("matched chunk {id}", {
+                              id: result.match_chunk?.chunk_id ?? result.chunk_id
+                            })}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </Link>

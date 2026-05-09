@@ -51,11 +51,12 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
   - RightOutline
 ```
 
-规划但未实现：
+Phase 18 已实现：
 
-- 文档版本列表和 restore UI。
-- 当前文档切片侧栏。
-- 当前文档检索命中解释。
+- 文档右侧栏支持 `Outline / Chunks / Versions` 切换。
+- `Versions` 显示版本列表、Markdown 预览、行级差异摘要和 restore。
+- `Chunks` 显示当前文档的 PostgreSQL chunks，并提示发布/重建 chunks 与搜索索引。
+- 搜索页和知识库 Retrieval Lab 展示 parent / child 命中解释。
 
 ## 4. 权限面板
 

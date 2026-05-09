@@ -294,6 +294,69 @@ describe("ContentService integration", () => {
     }
   });
 
+  it("lists, reads, and restores document versions without deleting history", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const initial = await content.getDocument(login.sessionToken, seed.documentId);
+      const firstVersionId = initial.currentVersion?.id;
+      expect(firstVersionId).toBeTruthy();
+      expect(initial.currentVersion?.is_current).toBe(true);
+
+      const nextMarkdown = "# Restorable\n\nNew content";
+      const updated = await content.updateDocument(login.sessionToken, seed.documentId, {
+        base_version_id: firstVersionId ?? null,
+        markdown: nextMarkdown,
+        markdown_hash: markdownHash(nextMarkdown)
+      });
+      expect(updated.currentVersion?.version_no).toBe(2);
+      expect(updated.currentVersion?.is_current).toBe(true);
+
+      const versions = await content.listDocumentVersions(login.sessionToken, seed.documentId);
+      expect(versions).toHaveLength(2);
+      expect(versions[0]).toMatchObject({
+        id: updated.currentVersion?.id,
+        is_current: true,
+        source_type: "manual"
+      });
+
+      const firstVersion = await content.getDocumentVersion(
+        login.sessionToken,
+        seed.documentId,
+        firstVersionId ?? ""
+      );
+      expect(firstVersion.markdown).toContain("Welcome to OpenKB");
+
+      const restored = await content.restoreDocumentVersion(
+        login.sessionToken,
+        seed.documentId,
+        firstVersionId ?? ""
+      );
+      expect(restored.currentVersion?.id).not.toBe(firstVersionId);
+      expect(restored.currentVersion?.version_no).toBe(3);
+      expect(restored.currentVersion?.markdown).toBe(firstVersion.markdown);
+      expect(restored.currentVersion?.is_current).toBe(true);
+
+      const afterRestore = await content.listDocumentVersions(login.sessionToken, seed.documentId);
+      expect(afterRestore).toHaveLength(3);
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { action: "document.version.restore", object_id: seed.documentId },
+        orderBy: { created_at: "desc" }
+      });
+      expect(audit.metadata).toMatchObject({
+        restored_from_version_id: firstVersionId,
+        new_version_id: restored.currentVersion?.id
+      });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
   it("rejects markdown outside the enabled dialect", async () => {
     const seed = await seedDev({ prisma });
     const content = new ContentService(auth, permissions);

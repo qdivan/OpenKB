@@ -371,6 +371,32 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   Value: "值",
   "Vector dim": "向量维度",
   "Version {version}": "版本 {version}",
+  Current: "当前",
+  "Document chunks": "文档分块",
+  "Document published. Rebuild the search index to refresh retrieval.":
+    "文档已发布。请重建搜索索引以刷新检索结果。",
+  "Document unpublished. Rebuild the search index to remove stale retrieval results.":
+    "文档已取消发布。请重建搜索索引以移除过期检索结果。",
+  "Loading chunks": "正在加载分块",
+  "Loading versions": "正在加载版本",
+  "No Markdown changes from current version.": "与当前版本没有 Markdown 差异。",
+  "No versions": "暂无版本",
+  "Open KB dashboard": "打开知识库首页",
+  "Publish or rebuild chunks before this document can be searched.":
+    "发布或重建分块后，此文档才能被搜索。",
+  "Reading document history.": "正在读取文档历史。",
+  "Reading PostgreSQL chunks.": "正在读取 PostgreSQL 分块。",
+  "Restore version": "恢复版本",
+  "Restore this version as a new current version?": "将此版本恢复为新的当前版本吗？",
+  "Save the page to create history.": "保存页面后会生成版本历史。",
+  "Version id": "版本 ID",
+  "Version restored. Rebuild chunks and search index if this document is published.":
+    "版本已恢复。如果此文档已发布，请重建分块和搜索索引。",
+  Versions: "版本",
+  "{count} changed lines": "{count} 行有差异",
+  "{count} versions": "{count} 个版本",
+  "matched child, returned parent {id}": "命中子块，返回父块 {id}",
+  "matched chunk {id}": "命中分块 {id}",
   "Workspace name": "Workspace 名称",
   Workspaces: "工作区",
   "You have unsaved changes. Leave this document anyway?": "你有未保存改动，仍要离开此文档吗？",
@@ -597,6 +623,24 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   owner: "所有者",
   tenant_admin: "租户管理员"
 };
+
+Object.assign(ZH_CN_TRANSLATIONS, {
+  "Sessions help": "当前仍有效的登录会话数量。吊销会话只会让用户重新登录，不会改变账号状态或权限。",
+  "User actions help":
+    "禁用会阻止登录并吊销会话；吊销会话只让用户重新登录；删除是软删除，会移除该账号自身权限但保留历史创建人姓名和审计。",
+  "Click to suspend": "点击禁用",
+  "Click to activate": "点击启用",
+  "Reset password": "重置密码",
+  "Revoke sessions": "吊销会话",
+  "Revoke sessions short": "吊销会话",
+  "Create user dialog help": "创建后会生成密码重置链接；不会显示临时明文密码。",
+  "Suspend {email}? Login will be blocked and active sessions will be revoked, while existing permissions stay unchanged.":
+    "禁用 {email}？该用户将不能登录，现有会话会被吊销，但已有权限关系会保持不变。",
+  "Soft-delete {email}? Historical creator names stay unchanged, but this account's memberships, collaborators, tenant role, and sessions are removed.":
+    "软删除 {email}？历史创建人名称会保留，但该账号的工作区成员身份、协作者权限、租户角色和会话会被移除。",
+  "Revoke active sessions for {email}? This only signs the user out and does not change account status or permissions.":
+    "吊销 {email} 的当前会话？这只会让用户重新登录，不会改变账号状态或权限。"
+});
 
 const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   en: {},

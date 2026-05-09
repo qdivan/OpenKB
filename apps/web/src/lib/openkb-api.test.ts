@@ -8,11 +8,14 @@ import {
   clearAdminModelSecret,
   createAdminUser,
   getShare,
+  getDocumentVersion,
   isUnauthorized,
   listAdminUsers,
+  listDocumentVersions,
   listShareLinks,
   probeAdminModel,
   resetShareLink,
+  restoreDocumentVersion,
   searchKnowledge,
   setAdminUserTenantRole,
   updateAdminModelSetting,
@@ -234,6 +237,38 @@ describe("OpenKB API client", () => {
       expect.objectContaining({
         credentials: "include",
         method: "DELETE"
+      })
+    );
+  });
+
+  it("builds document version history requests", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify([{ id: "v1", version_no: 1, is_current: true }]))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listDocumentVersions("doc_1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/documents/doc_1/versions",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: "v1", version_no: 1, markdown: "# Old" }))
+    );
+    await getDocumentVersion("doc_1", "v1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/documents/doc_1/versions/v1",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ id: "doc_1" })));
+    await restoreDocumentVersion("doc_1", "v1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/documents/doc_1/restore/v1",
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST"
       })
     );
   });

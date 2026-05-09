@@ -239,11 +239,16 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 
 ## Phase 18 - 文档版本与检索解释
 
-输出：
-- 文档版本列表、对比和 restore。
-- 当前文档 chunk 侧栏。
-- 搜索结果 parent / child 命中解释。
-- 发布后 index rebuild 引导。
+输出（Phase 18 已实现最小闭环）：
+- 文档版本 API：`GET /api/documents/:id/versions`、`GET /api/documents/:id/versions/:versionId`、`POST /api/documents/:id/restore/:versionId`。
+- 文档页右侧 `Outline / Chunks / Versions` 面板：当前文档 chunk 侧栏、版本列表、Markdown 预览、差异摘要和 restore。
+- restore 不回退旧指针，而是复制目标版本 Markdown 创建新的当前版本，并审计 `restored_from_version_id` / `new_version_id`。
+- 搜索页和 KB Retrieval Lab 展示 parent / child 命中解释；发布、取消发布和 restore 后提示需要重建搜索索引。
+
+边界：
+- 不新增数据库表；继续复用 `document_versions` 和 `document_chunks`。
+- 不做复杂可视化 diff 编辑器；第一版只做 Markdown 预览与行级差异摘要。
+- PostgreSQL + `PermissionService` 仍是最终权限真相，Milvus 命中解释不参与授权。
 
 ## Phase 19 - 复杂导入适配器
 

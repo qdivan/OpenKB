@@ -743,9 +743,103 @@ export class ContentService {
 
     return {
       ...toDocumentDto(document),
-      currentVersion: version ? toDocumentVersionDto(version) : null,
+      currentVersion: version ? toDocumentVersionDto(version, true) : null,
       role: await this.permissions.resolveObjectRole(me.user.id, "document", document.id)
     };
+  }
+
+  async listDocumentVersions(sessionToken: string | null, documentId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "document", documentId);
+    const document = await this.prisma.document.findUnique({ where: { id: documentId } });
+    if (!document || document.status === "deleted") {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+
+    const versions = await this.prisma.documentVersion.findMany({
+      where: { document_id: documentId },
+      orderBy: { version_no: "desc" }
+    });
+    return versions.map((version) =>
+      toDocumentVersionSummaryDto(version, version.id === document.current_version_id)
+    );
+  }
+
+  async getDocumentVersion(sessionToken: string | null, documentId: string, versionId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "document", documentId);
+    const document = await this.prisma.document.findUnique({ where: { id: documentId } });
+    if (!document || document.status === "deleted") {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    const version = await this.prisma.documentVersion.findFirst({
+      where: { id: versionId, document_id: documentId }
+    });
+    if (!version) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document version was not found.", 404);
+    }
+    return toDocumentVersionDto(version, version.id === document.current_version_id);
+  }
+
+  async restoreDocumentVersion(sessionToken: string | null, documentId: string, versionId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanEdit(me.user.id, "document", documentId);
+    const document = await this.prisma.document.findUnique({ where: { id: documentId } });
+    if (!document || document.status === "deleted") {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    if (document.type !== "page") {
+      throw new ContentError("INVALID_INPUT", "Only page documents can restore versions.", 400);
+    }
+    const sourceVersion = await this.prisma.documentVersion.findFirst({
+      where: { id: versionId, document_id: documentId }
+    });
+    if (!sourceVersion) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document version was not found.", 404);
+    }
+
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      const latest = await tx.documentVersion.findFirst({
+        where: { document_id: documentId },
+        orderBy: { version_no: "desc" }
+      });
+      const restored = await tx.documentVersion.create({
+        data: {
+          tenant_id: document.tenant_id,
+          document_id: documentId,
+          version_no: latest ? latest.version_no + 1 : 1,
+          markdown: sourceVersion.markdown,
+          markdown_hash: sourceVersion.markdown_hash,
+          source_type: "manual",
+          source_file_id: sourceVersion.source_file_id,
+          created_by: me.user.id,
+          created_at: now
+        }
+      });
+      await this.replaceChunksForDocumentVersion(
+        tx,
+        me,
+        documentId,
+        restored.id,
+        restored.markdown,
+        now
+      );
+      await tx.document.update({
+        where: { id: documentId },
+        data: {
+          current_version_id: restored.id,
+          updated_by: me.user.id,
+          updated_at: now
+        }
+      });
+      await this.writeAuditLog(tx, me, "document.version.restore", "document", documentId, {
+        restored_from_version_id: sourceVersion.id,
+        new_version_id: restored.id
+      });
+    });
+
+    return this.getDocument(sessionToken, documentId);
   }
 
   async updateDocument(
@@ -775,7 +869,7 @@ export class ContentService {
 
       throw new ContentError("VERSION_CONFLICT", "Document version conflict.", 409, {
         current_version_id: current.current_version_id,
-        current_version: currentVersion ? toDocumentVersionDto(currentVersion) : null,
+        current_version: currentVersion ? toDocumentVersionDto(currentVersion, true) : null,
         updated_at: current.updated_at.toISOString()
       });
     }
@@ -1953,7 +2047,7 @@ export class ContentService {
           selectedDocument: selected
             ? {
                 ...toDocumentDto(selected),
-                currentVersion: version ? toDocumentVersionDto(version) : null
+                currentVersion: version ? toDocumentVersionDto(version, true) : null
               }
             : null
         }
@@ -1971,7 +2065,7 @@ export class ContentService {
       workspaceId: document.workspace_id,
       payload: {
         ...toDocumentDto(document),
-        currentVersion: version ? toDocumentVersionDto(version) : null
+        currentVersion: version ? toDocumentVersionDto(version, true) : null
       }
     };
   }
@@ -1981,7 +2075,8 @@ export class ContentService {
     me: AuthenticatedUser,
     action: string,
     objectType: string,
-    objectId: string
+    objectId: string,
+    metadata: Prisma.InputJsonObject = {}
   ) {
     await tx.auditLog.create({
       data: {
@@ -1991,7 +2086,7 @@ export class ContentService {
         action,
         object_type: objectType,
         object_id: objectId,
-        metadata: {},
+        metadata,
         created_at: new Date()
       }
     });
@@ -2300,23 +2395,57 @@ function toDocumentDto(document: {
   };
 }
 
-function toDocumentVersionDto(version: {
-  id: string;
-  document_id: string;
-  version_no: number;
-  markdown: string;
-  markdown_hash: string;
-  created_by: string;
-  created_at: Date;
-}) {
+function toDocumentVersionSummaryDto(
+  version: {
+    id: string;
+    document_id: string;
+    version_no: number;
+    markdown_hash: string;
+    source_type: string;
+    source_file_id: string | null;
+    created_by: string;
+    created_at: Date;
+  },
+  isCurrent: boolean
+) {
+  return {
+    id: version.id,
+    document_id: version.document_id,
+    version_no: version.version_no,
+    markdown_hash: version.markdown_hash,
+    source_type: version.source_type,
+    source_file_id: version.source_file_id,
+    created_by: version.created_by,
+    created_at: version.created_at.toISOString(),
+    is_current: isCurrent
+  };
+}
+
+function toDocumentVersionDto(
+  version: {
+    id: string;
+    document_id: string;
+    version_no: number;
+    markdown: string;
+    markdown_hash: string;
+    source_type: string;
+    source_file_id: string | null;
+    created_by: string;
+    created_at: Date;
+  },
+  isCurrent = false
+) {
   return {
     id: version.id,
     document_id: version.document_id,
     version_no: version.version_no,
     markdown: version.markdown,
     markdown_hash: version.markdown_hash,
+    source_type: version.source_type,
+    source_file_id: version.source_file_id,
     created_by: version.created_by,
-    created_at: version.created_at.toISOString()
+    created_at: version.created_at.toISOString(),
+    is_current: isCurrent
   };
 }
 

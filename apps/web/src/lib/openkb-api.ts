@@ -344,7 +344,19 @@ export type DocumentVersion = {
   version_no: number;
   markdown: string;
   markdown_hash: string;
+  source_type: string;
+  source_file_id: string | null;
   created_at: string;
+  created_by: string;
+  is_current: boolean;
+};
+
+export type DocumentVersionSummary = Omit<DocumentVersion, "markdown">;
+
+export type DocumentVersionDiff = {
+  added: number;
+  removed: number;
+  changed: number;
 };
 
 export type DocumentDetail = DocumentSummary & {
@@ -829,6 +841,20 @@ export function updateDocument(id: string, input: UpdateDocumentInput) {
   return apiFetch<DocumentDetail>(`/api/documents/${id}`, {
     method: "PUT",
     body: JSON.stringify(input)
+  });
+}
+
+export function listDocumentVersions(id: string) {
+  return apiFetch<DocumentVersionSummary[]>(`/api/documents/${id}/versions`);
+}
+
+export function getDocumentVersion(id: string, versionId: string) {
+  return apiFetch<DocumentVersion>(`/api/documents/${id}/versions/${versionId}`);
+}
+
+export function restoreDocumentVersion(id: string, versionId: string) {
+  return apiFetch<DocumentDetail>(`/api/documents/${id}/restore/${versionId}`, {
+    method: "POST"
   });
 }
 

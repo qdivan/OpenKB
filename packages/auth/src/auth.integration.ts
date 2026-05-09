@@ -321,6 +321,102 @@ describe("AuthService integration", () => {
     expect(JSON.stringify(auditLogs.map((log) => log.metadata))).not.toContain("new-password");
   });
 
+  it("soft-deletes users while preserving historical creator identity and removing access", async () => {
+    await createDefaultSettings({ email_verification_required: false });
+    const auth = service();
+    await auth.register({ email: "admin@example.com", password: "password-123" });
+    const adminLogin = await auth.login({ email: "admin@example.com", password: "password-123" });
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: "default" } });
+
+    const created = await auth.createAdminUser(adminLogin.sessionToken, {
+      email: "author@example.com",
+      display_name: "Original Author",
+      tenant_role: "member"
+    });
+    const adminUser = await prisma.user.findUniqueOrThrow({
+      where: { email: "admin@example.com" }
+    });
+    const workspace = await prisma.workspace.create({
+      data: {
+        tenant_id: tenant.id,
+        name: "Docs",
+        slug: "docs",
+        created_by: adminUser.id
+      }
+    });
+    await prisma.workspaceMember.create({
+      data: {
+        tenant_id: tenant.id,
+        workspace_id: workspace.id,
+        user_id: created.user.id,
+        role: "member"
+      }
+    });
+    const knowledgeBase = await prisma.knowledgeBase.create({
+      data: {
+        tenant_id: tenant.id,
+        workspace_id: workspace.id,
+        title: "KB",
+        slug: "kb",
+        visibility: "private",
+        status: "active",
+        created_by: adminUser.id
+      }
+    });
+    const document = await prisma.document.create({
+      data: {
+        tenant_id: tenant.id,
+        workspace_id: workspace.id,
+        knowledge_base_id: knowledgeBase.id,
+        type: "page",
+        title: "Authored doc",
+        slug: "authored-doc",
+        status: "published",
+        created_by: created.user.id,
+        updated_by: created.user.id
+      }
+    });
+    await prisma.collaborator.create({
+      data: {
+        tenant_id: tenant.id,
+        object_type: "document",
+        object_id: document.id,
+        subject_type: "user",
+        subject_id: created.user.id,
+        role: "editor",
+        source: "direct",
+        created_by: adminUser.id
+      }
+    });
+
+    const deleted = await auth.softDeleteUser(adminLogin.sessionToken, created.user.id);
+
+    expect(deleted).toMatchObject({
+      displayName: "Original Author",
+      status: "deleted",
+      tenantRole: null,
+      activeSessionCount: 0
+    });
+    await expect(
+      prisma.user.findUniqueOrThrow({ where: { id: created.user.id } })
+    ).resolves.toMatchObject({
+      display_name: "Original Author",
+      status: "deleted"
+    });
+    await expect(
+      prisma.document.findUniqueOrThrow({ where: { id: document.id } })
+    ).resolves.toMatchObject({
+      created_by: created.user.id
+    });
+    expect(await prisma.workspaceMember.count({ where: { user_id: created.user.id } })).toBe(0);
+    expect(
+      await prisma.collaborator.count({
+        where: { subject_type: "user", subject_id: created.user.id }
+      })
+    ).toBe(0);
+    expect(await prisma.tenantMembership.count({ where: { user_id: created.user.id } })).toBe(0);
+  });
+
   it("enforces strict admin role safety rules", async () => {
     await createDefaultSettings({ email_verification_required: false });
     const auth = service();
@@ -349,6 +445,10 @@ describe("AuthService integration", () => {
       email: "second-root@example.com",
       tenant_role: "system_admin"
     });
+    const memberForDelete = await auth.createAdminUser(rootLogin.sessionToken, {
+      email: "member-delete@example.com",
+      tenant_role: "member"
+    });
 
     await expect(
       auth.setTenantRole(rootLogin.sessionToken, rootLogin.me.user.id, "member")
@@ -364,6 +464,16 @@ describe("AuthService integration", () => {
       auth.setTenantRole(tenantAdminLogin.sessionToken, secondSystemAdmin.user.id, "member")
     ).rejects.toMatchObject({
       code: "ADMIN_REQUIRED"
+    });
+    await expect(
+      auth.softDeleteUser(tenantAdminLogin.sessionToken, memberForDelete.user.id)
+    ).rejects.toMatchObject({
+      code: "ADMIN_REQUIRED"
+    });
+    await expect(
+      prisma.user.findUniqueOrThrow({ where: { id: memberForDelete.user.id } })
+    ).resolves.toMatchObject({
+      status: "active"
     });
 
     await auth.suspendUser(rootLogin.sessionToken, secondSystemAdmin.user.id);

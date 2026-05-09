@@ -83,13 +83,17 @@ import {
   getImportJob,
   getKnowledgeBase,
   getKnowledgeBaseTree,
+  getDocumentVersion,
   getMe,
   isUnauthorized,
+  listDocumentVersions,
+  listKnowledgeBaseChunks,
   listKnowledgeBases,
   listImportJobs,
   listWorkspaces,
   logout,
   publishDocument,
+  restoreDocumentVersion,
   updateDocument,
   updateWorkspace,
   unpublishDocument,
@@ -97,7 +101,10 @@ import {
   type AuthMe,
   type AccessObjectType,
   type DocumentDetail,
+  type DocumentChunk,
   type DocumentSummary,
+  type DocumentVersion,
+  type DocumentVersionSummary,
   type ImportJob,
   type KnowledgeBase,
   type Workspace
@@ -111,6 +118,7 @@ export type WorkbenchClientProps = {
 
 type EditorMode = "read" | "edit" | "source";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
+type DocumentSideTab = "outline" | "chunks" | "versions";
 type TreeNode = DocumentSummary & { children: TreeNode[] };
 type TreeDropPosition = "before" | "inside" | "after";
 type DocumentMoveUpdate = {
@@ -184,6 +192,15 @@ export function WorkbenchClient({
   const [replaceText, setReplaceText] = useState("");
   const [findReplaceMatchCase, setFindReplaceMatchCase] = useState(false);
   const [activeWorkbenchPanel, setActiveWorkbenchPanel] = useState<"access" | "share" | null>(null);
+  const [documentSideTab, setDocumentSideTab] = useState<DocumentSideTab>("outline");
+  const [documentChunks, setDocumentChunks] = useState<DocumentChunk[]>([]);
+  const [documentChunksLoading, setDocumentChunksLoading] = useState(false);
+  const [documentVersions, setDocumentVersions] = useState<DocumentVersionSummary[]>([]);
+  const [documentVersionsLoading, setDocumentVersionsLoading] = useState(false);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
+  const [selectedVersionLoading, setSelectedVersionLoading] = useState(false);
+  const [documentSideRefreshKey, setDocumentSideRefreshKey] = useState(0);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const selectedKnowledgeBase = knowledgeBases.find(
@@ -246,6 +263,111 @@ export function WorkbenchClient({
       setMode("read");
     }
   }, [canEditCurrentDocument, currentDocument, mode]);
+
+  useEffect(() => {
+    setDocumentChunks([]);
+    setDocumentVersions([]);
+    setSelectedVersion(null);
+    setSelectedVersionId(null);
+  }, [currentDocument?.id]);
+
+  useEffect(() => {
+    if (documentSideTab !== "chunks" || !currentDocument || !selectedKnowledgeBaseId) {
+      return;
+    }
+
+    let cancelled = false;
+    setDocumentChunksLoading(true);
+    listKnowledgeBaseChunks(selectedKnowledgeBaseId, {
+      document_id: currentDocument.id,
+      limit: 200
+    })
+      .then((chunks) => {
+        if (!cancelled) {
+          setDocumentChunks(chunks);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          handleApiError(error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDocumentChunksLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDocument, documentSideRefreshKey, documentSideTab, selectedKnowledgeBaseId]);
+
+  useEffect(() => {
+    if (documentSideTab !== "versions" || !currentDocument) {
+      return;
+    }
+
+    let cancelled = false;
+    setDocumentVersionsLoading(true);
+    listDocumentVersions(currentDocument.id)
+      .then((versions) => {
+        if (cancelled) {
+          return;
+        }
+        setDocumentVersions(versions);
+        setSelectedVersionId((current) => {
+          if (current && versions.some((version) => version.id === current)) {
+            return current;
+          }
+          return versions.find((version) => version.is_current)?.id ?? versions[0]?.id ?? null;
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          handleApiError(error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDocumentVersionsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDocument, documentSideRefreshKey, documentSideTab]);
+
+  useEffect(() => {
+    if (documentSideTab !== "versions" || !currentDocument || !selectedVersionId) {
+      setSelectedVersion(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedVersionLoading(true);
+    getDocumentVersion(currentDocument.id, selectedVersionId)
+      .then((version) => {
+        if (!cancelled) {
+          setSelectedVersion(version);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          handleApiError(error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSelectedVersionLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDocument, documentSideTab, selectedVersionId]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -1197,8 +1319,11 @@ export function WorkbenchClient({
       setSavedMarkdown(updated.currentVersion?.markdown ?? "");
       setBaseVersionId(updated.currentVersion?.id ?? null);
       setDocuments((items) => updateDocumentInList(items, updated));
+      setDocumentSideRefreshKey((value) => value + 1);
       setMessage(
-        updated.status === "published" ? t("Document published.") : t("Document unpublished.")
+        updated.status === "published"
+          ? t("Document published. Rebuild the search index to refresh retrieval.")
+          : t("Document unpublished. Rebuild the search index to remove stale retrieval results.")
       );
     } catch (error) {
       handleApiError(error);
@@ -1245,6 +1370,45 @@ export function WorkbenchClient({
       await openDocument(currentDocument.id);
     } catch (error) {
       handleApiError(error);
+    }
+  }
+
+  async function handleRestoreVersion(versionId: string) {
+    if (!currentDocument) {
+      return;
+    }
+    const confirmed = await dialog.requestConfirmation({
+      title: t("Restore version"),
+      description: t("Restore this version as a new current version?"),
+      confirmLabel: t("Restore"),
+      tone: "danger"
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const restored = await restoreDocumentVersion(currentDocument.id, versionId);
+      setCurrentDocument(restored);
+      setDraftTitle(restored.title);
+      setSavedTitle(restored.title);
+      setDraftMarkdown(restored.currentVersion?.markdown ?? "");
+      setSavedMarkdown(restored.currentVersion?.markdown ?? "");
+      setBaseVersionId(restored.currentVersion?.id ?? null);
+      setSaveState("saved");
+      setEditorResetKey((value) => value + 1);
+      setDocuments((items) => updateDocumentInList(items, restored));
+      setSelectedVersionId(restored.currentVersion?.id ?? null);
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(
+        t("Version restored. Rebuild chunks and search index if this document is published.")
+      );
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
     }
   }
 
@@ -1751,15 +1915,29 @@ export function WorkbenchClient({
             </article>
 
             <aside className="hidden min-h-0 border-l border-zinc-200 bg-zinc-50/70 xl:block">
-              <div className="border-b border-zinc-200 px-4 py-3">
-                <p className="text-sm font-semibold">{t("Outline")}</p>
-                <p className="text-xs text-zinc-500">
-                  {t("{count} headings", { count: outline.length })}
-                </p>
-              </div>
-              <Outline activeId={activeOutlineId} items={outline} onSelect={jumpToOutlineItem} />
-              <ReferencesPanel
+              <DocumentSidePanel
+                activeOutlineId={activeOutlineId}
+                chunks={documentChunks}
+                chunksLoading={documentChunksLoading}
+                currentDocument={currentDocument}
+                currentMarkdown={savedMarkdown}
+                onOpenDashboard={() => {
+                  if (selectedKnowledgeBaseId) {
+                    void selectKnowledgeBase(selectedKnowledgeBaseId);
+                  }
+                }}
+                onRestoreVersion={(versionId) => void handleRestoreVersion(versionId)}
+                onSelectOutline={jumpToOutlineItem}
+                onSelectTab={setDocumentSideTab}
+                onSelectVersion={setSelectedVersionId}
+                outline={outline}
                 references={markdownReferences}
+                selectedVersion={selectedVersion}
+                selectedVersionId={selectedVersionId}
+                selectedVersionLoading={selectedVersionLoading}
+                tab={documentSideTab}
+                versions={documentVersions}
+                versionsLoading={documentVersionsLoading}
                 onOpenDocument={(documentId) => void selectDocument(documentId)}
               />
               <div className="border-t border-zinc-200 px-4 py-4">
@@ -1965,6 +2143,260 @@ function TreeGuides({ depth }: { depth: number }) {
       ))}
     </span>
   );
+}
+
+function DocumentSidePanel({
+  activeOutlineId,
+  chunks,
+  chunksLoading,
+  currentDocument,
+  currentMarkdown,
+  onOpenDashboard,
+  onOpenDocument,
+  onRestoreVersion,
+  onSelectOutline,
+  onSelectTab,
+  onSelectVersion,
+  outline,
+  references,
+  selectedVersion,
+  selectedVersionId,
+  selectedVersionLoading,
+  tab,
+  versions,
+  versionsLoading
+}: {
+  activeOutlineId: string | null;
+  chunks: DocumentChunk[];
+  chunksLoading: boolean;
+  currentDocument: DocumentDetail | null;
+  currentMarkdown: string;
+  onOpenDashboard: () => void;
+  onOpenDocument: (documentId: string) => void;
+  onRestoreVersion: (versionId: string) => void;
+  onSelectOutline: (item: MarkdownOutlineItem) => void;
+  onSelectTab: (tab: DocumentSideTab) => void;
+  onSelectVersion: (versionId: string) => void;
+  outline: MarkdownOutlineItem[];
+  references: MarkdownReferenceExtraction;
+  selectedVersion: DocumentVersion | null;
+  selectedVersionId: string | null;
+  selectedVersionLoading: boolean;
+  tab: DocumentSideTab;
+  versions: DocumentVersionSummary[];
+  versionsLoading: boolean;
+}) {
+  const { t } = useI18n();
+  const canRestore = currentDocument ? canEditDocumentRole(currentDocument.role) : false;
+  const selectedVersionSummary = versions.find((version) => version.id === selectedVersionId);
+  const diff = selectedVersion
+    ? summarizeMarkdownDiff(currentMarkdown, selectedVersion.markdown)
+    : null;
+
+  return (
+    <div className="min-h-0">
+      <div className="border-b border-zinc-200 px-3 py-3">
+        <div className="grid grid-cols-3 gap-1 rounded-md bg-zinc-100 p-1">
+          {(["outline", "chunks", "versions"] as const).map((item) => (
+            <button
+              className={`rounded px-2 py-1.5 text-xs font-medium ${
+                tab === item
+                  ? "bg-white text-zinc-950 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-950"
+              }`}
+              key={item}
+              onClick={() => onSelectTab(item)}
+              type="button"
+            >
+              {t(sideTabLabel(item))}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === "outline" ? (
+        <>
+          <div className="border-b border-zinc-200 px-4 py-3">
+            <p className="text-sm font-semibold">{t("Outline")}</p>
+            <p className="text-xs text-zinc-500">
+              {t("{count} headings", { count: outline.length })}
+            </p>
+          </div>
+          <Outline activeId={activeOutlineId} items={outline} onSelect={onSelectOutline} />
+          <ReferencesPanel references={references} onOpenDocument={onOpenDocument} />
+        </>
+      ) : null}
+
+      {tab === "chunks" ? (
+        <div className="space-y-3 px-4 py-4">
+          <div>
+            <p className="text-sm font-semibold">{t("Document chunks")}</p>
+            <p className="text-xs text-zinc-500">
+              {currentDocument
+                ? t("{count} chunks", { count: chunks.length })
+                : t("No document selected")}
+            </p>
+          </div>
+          {chunksLoading ? (
+            <EmptyPanel title={t("Loading chunks")} action={t("Reading PostgreSQL chunks.")} />
+          ) : chunks.length > 0 ? (
+            <div className="space-y-2">
+              {chunks.map((chunk) => (
+                <div
+                  className="rounded-md border border-zinc-200 bg-white p-2 text-xs"
+                  key={chunk.id}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5 text-zinc-500">
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+                      {t(chunk.chunk_type)}
+                    </span>
+                    <span>#{chunk.ordinal}</span>
+                    <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
+                  </div>
+                  <p className="mt-1 line-clamp-4 text-zinc-700">{chunk.content_text}</p>
+                  <p className="mt-1 truncate text-[11px] text-zinc-400" title={chunk.version_id}>
+                    {t("Version id")}: {chunk.version_id}
+                  </p>
+                  {chunk.heading_path.length > 0 ? (
+                    <p className="mt-1 truncate text-[11px] text-sky-700">
+                      {chunk.heading_path.join(" / ")}
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <EmptyPanel
+                title={t("No chunks for this document")}
+                action={t("Publish or rebuild chunks before this document can be searched.")}
+              />
+              <button
+                className="inline-flex w-full items-center justify-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={onOpenDashboard}
+                type="button"
+              >
+                {t("Open KB dashboard")}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {tab === "versions" ? (
+        <div className="space-y-3 px-4 py-4">
+          <div>
+            <p className="text-sm font-semibold">{t("Versions")}</p>
+            <p className="text-xs text-zinc-500">
+              {versionsLoading
+                ? t("Loading versions")
+                : t("{count} versions", { count: versions.length })}
+            </p>
+          </div>
+
+          {versions.length > 0 ? (
+            <div className="space-y-1">
+              {versions.map((version) => (
+                <button
+                  className={`w-full rounded-md border px-2 py-2 text-left text-xs ${
+                    selectedVersionId === version.id
+                      ? "border-sky-300 bg-sky-50 text-sky-900"
+                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                  key={version.id}
+                  onClick={() => onSelectVersion(version.id)}
+                  type="button"
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="font-medium">
+                      {t("Version {version}", { version: version.version_no })}
+                    </span>
+                    {version.is_current ? (
+                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                        {t("Current")}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="mt-1 block truncate text-[11px] text-zinc-500">
+                    {formatDateTime(version.created_at)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : versionsLoading ? (
+            <EmptyPanel title={t("Loading versions")} action={t("Reading document history.")} />
+          ) : (
+            <EmptyPanel title={t("No versions")} action={t("Save the page to create history.")} />
+          )}
+
+          {selectedVersion ? (
+            <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold">
+                  {t("Version {version}", { version: selectedVersion.version_no })}
+                </p>
+                <span className="text-zinc-400">{selectedVersion.source_type}</span>
+              </div>
+              {diff ? (
+                <p className="mt-2 text-zinc-500">
+                  {diff.changed === 0
+                    ? t("No Markdown changes from current version.")
+                    : t("{count} changed lines", { count: diff.changed })}
+                </p>
+              ) : null}
+              <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-950 p-2 text-[11px] leading-5 text-zinc-50">
+                {selectedVersion.markdown || " "}
+              </pre>
+              <button
+                className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+                disabled={
+                  !canRestore || selectedVersionSummary?.is_current || selectedVersionLoading
+                }
+                onClick={() => onRestoreVersion(selectedVersion.id)}
+                type="button"
+              >
+                {selectedVersionLoading ? t("Loading...") : t("Restore")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function sideTabLabel(tab: DocumentSideTab): string {
+  if (tab === "chunks") {
+    return "Chunks";
+  }
+  if (tab === "versions") {
+    return "Versions";
+  }
+  return "Outline";
+}
+
+function summarizeMarkdownDiff(currentMarkdown: string, versionMarkdown: string) {
+  const currentLines = currentMarkdown.split(/\r?\n/);
+  const versionLines = versionMarkdown.split(/\r?\n/);
+  const maxLines = Math.max(currentLines.length, versionLines.length);
+  let changed = 0;
+  for (let index = 0; index < maxLines; index += 1) {
+    if ((currentLines[index] ?? "") !== (versionLines[index] ?? "")) {
+      changed += 1;
+    }
+  }
+  return { changed };
+}
+
+function formatDateTime(value: string) {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "short",
+      timeStyle: "short"
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
 function Outline({

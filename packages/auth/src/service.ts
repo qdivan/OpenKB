@@ -680,6 +680,9 @@ export class AuthService {
     const target = await this.getTargetUserForAdmin(admin, userId);
     const targetRole = await this.getTenantRole(admin.tenantId, userId);
     this.assertCanManageTarget(admin, target.id, targetRole);
+    if (!admin.roles.includes("system_admin")) {
+      throw new AuthError("ADMIN_REQUIRED", "Only system admins can soft-delete users.", 403);
+    }
     if (target.id === admin.user.id) {
       throw new AuthError("INVALID_INPUT", "Admins cannot delete themselves.", 400);
     }
@@ -697,7 +700,21 @@ export class AuthService {
         where: { user_id: userId, revoked_at: null },
         data: { revoked_at: now }
       });
-      await this.writeAuditLog(tx, admin, "admin.user.delete", "user", updated.id);
+      const [workspaceMemberships, collaborators, tenantMemberships] = await Promise.all([
+        tx.workspaceMember.deleteMany({ where: { user_id: userId } }),
+        tx.collaborator.deleteMany({
+          where: {
+            subject_type: "user",
+            subject_id: userId
+          }
+        }),
+        tx.tenantMembership.deleteMany({ where: { user_id: userId } })
+      ]);
+      await this.writeAuditLog(tx, admin, "admin.user.delete", "user", updated.id, {
+        removed_workspace_memberships: workspaceMemberships.count,
+        removed_collaborators: collaborators.count,
+        removed_tenant_memberships: tenantMemberships.count
+      });
       return updated;
     });
     return this.toAdminUser(admin.tenantId, user);

@@ -39,6 +39,37 @@ export class DocumentController {
     }
   }
 
+  @Get(":id/versions")
+  async versions(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.listDocumentVersions(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get(":id/versions/:versionId")
+  async version(
+    @Param("id") id: string,
+    @Param("versionId") versionId: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.getDocumentVersion(
+        getSessionToken(request, this.auth),
+        id,
+        versionId
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Put(":id")
   async update(
     @Param("id") id: string,
@@ -78,6 +109,24 @@ export class DocumentController {
   ) {
     try {
       return await this.content.unpublishDocument(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post(":id/restore/:versionId")
+  async restore(
+    @Param("id") id: string,
+    @Param("versionId") versionId: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.restoreDocumentVersion(
+        getSessionToken(request, this.auth),
+        id,
+        versionId
+      );
     } catch (error) {
       return sendJsonError(error, reply);
     }

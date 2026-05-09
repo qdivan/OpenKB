@@ -81,7 +81,7 @@ DELETE /api/documents/:id
 POST   /api/documents/:id/publish
 POST   /api/documents/:id/unpublish
 GET    /api/documents/:id/versions
-POST   /api/documents/:id/versions
+GET    /api/documents/:id/versions/:versionId
 POST   /api/documents/:id/restore/:versionId
 ```
 
