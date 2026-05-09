@@ -115,6 +115,7 @@ prompts/
 - Instance-level model configuration is `system_admin` only; `tenant_admin` may inspect retrieval state but cannot save model settings or secrets.
 - Treat share links as read-only only in v0.x; do not add link-edit capabilities.
 - Treat folders as `documents.type = folder`; do not create a separate folders table unless the spec is explicitly changed.
+- Do not use browser-native `window.prompt`, `window.confirm`, or `window.alert` for app interactions. Use OpenKB Web dialog components instead; `beforeunload` is the only allowed native prompt for browser tab close/refresh with unsaved drafts.
 
 ## v0.3.3 clarifications
 

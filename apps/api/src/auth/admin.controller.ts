@@ -37,9 +37,18 @@ type TenantRoleBody = {
 type AuditLogsQuery = {
   action?: string;
   object_type?: string;
+  object_id?: string;
   actor_user_id?: string;
+  actor_type?: string;
+  date_from?: string;
+  date_to?: string;
   limit?: string;
   offset?: string;
+};
+
+type AuthSettingsQuery = {
+  scope?: "instance" | "tenant";
+  tenant_id?: string;
 };
 
 @Controller("api/admin")
@@ -168,7 +177,11 @@ export class AdminController {
       return await this.auth.listAuditLogs(this.getSessionToken(request), {
         action: query.action,
         object_type: query.object_type,
+        object_id: query.object_id,
         actor_user_id: query.actor_user_id,
+        actor_type: query.actor_type,
+        date_from: query.date_from,
+        date_to: query.date_to,
         limit: parseOptionalInt(query.limit),
         offset: parseOptionalInt(query.offset)
       });
@@ -192,11 +205,12 @@ export class AdminController {
 
   @Get("auth-settings")
   async getAuthSettings(
+    @Query() query: AuthSettingsQuery = {},
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
   ) {
     try {
-      return await this.auth.getAuthSettings(this.getSessionToken(request));
+      return await this.auth.getAuthSettings(this.getSessionToken(request), query);
     } catch (error) {
       return sendJsonError(error, reply);
     }

@@ -224,12 +224,18 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 
 ## Phase 17 - Admin 运维管理 UI
 
-输出：
-- Dify key 管理、范围绑定、轮换和撤销。
-- MCP PAT / OAuth 管理入口。
-- Milvus collection、alias、rebuild jobs 管理页。
-- 完整 audit logs 页面。
-- Auth settings 页面。
+输出（Phase 17 已实现最小闭环）：
+- `/app/admin/auth-settings`：租户感知注册、邮箱验证、邀请必需、默认激活状态和域名白名单配置。
+- `/app/admin/audit`：完整审计列表和 action/object/actor/date 过滤。
+- `/app/admin/indexing`：Milvus health、active alias/profile、profiles、rebuild jobs、rebuild job 创建和 alias switch。
+- `/app/admin/dify`：Dify API key 创建、reveal、rotate、revoke，以及 knowledge_id mapping 管理。
+- `/app/admin/mcp`：MCP PAT 创建/撤销、OAuth client 创建/禁用、OAuth grant 查看/撤销。
+- Admin API 补齐对应 Dify、MCP、Milvus、Audit、Auth Settings 运维接口；Dify key 新增加密存储字段，旧 hash-only key 只能 rotate 后 reveal。
+
+边界：
+- 不实现完整 MCP OAuth authorize/token/refresh 流程，保留到 Phase 20。
+- 不改变 MCP user-bound / Dify app-key-bound / PostgreSQL final permission check 规则。
+- 普通 list/detail DTO、audit 和日志不返回 raw secret；Dify raw key 只通过显式 reveal，PAT raw token 只在创建时显示一次。
 
 ## Phase 18 - 文档版本与检索解释
 

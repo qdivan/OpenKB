@@ -61,6 +61,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 
+import { useDialog } from "@/components/dialog-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { KnowledgeBaseDashboard } from "@/components/workbench/knowledge-base-dashboard";
 import { AccessPanel, type AccessTarget } from "@/components/workbench/access-panel";
@@ -125,12 +126,28 @@ const LazyMilkdownEditor = lazy(async () => {
   ForwardRefExoticComponent<MilkdownEditorProps & RefAttributes<MilkdownCommandBridge>>
 >;
 
+function pushWorkbenchUrl(path: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const currentPath = `${window.location.pathname}${window.location.search}`;
+  if (currentPath === path) {
+    return;
+  }
+
+  // Workbench content switches have already loaded the target state locally.
+  // Updating history directly keeps shareable URLs without remounting the whole workbench.
+  window.history.pushState({ openkbWorkbench: true }, "", path);
+}
+
 export function WorkbenchClient({
   initialWorkspaceId,
   initialKnowledgeBaseId,
   initialDocumentId
 }: WorkbenchClientProps) {
   const { t } = useI18n();
+  const dialog = useDialog();
   const router = useRouter();
   const saveRunRef = useRef(0);
   const latestDraftRef = useRef({ title: "", markdown: "" });
@@ -213,6 +230,8 @@ export function WorkbenchClient({
       return;
     }
 
+    // Browsers only allow native beforeunload prompts for tab close/refresh.
+    // All in-app navigation confirmations use the OpenKB DialogProvider instead.
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
@@ -313,13 +332,18 @@ export function WorkbenchClient({
     setEditorResetKey((key) => key + 1);
   }, []);
 
-  const confirmDiscardDraft = useCallback(() => {
+  const confirmDiscardDraft = useCallback(async () => {
     if (!hasUnsavedChanges) {
       return true;
     }
 
-    return window.confirm(t("You have unsaved changes. Leave this document anyway?"));
-  }, [hasUnsavedChanges, t]);
+    return dialog.requestConfirmation({
+      title: t("Unsaved changes"),
+      description: t("You have unsaved changes. Leave this document anyway?"),
+      confirmLabel: t("Leave"),
+      tone: "danger"
+    });
+  }, [dialog, hasUnsavedChanges, t]);
 
   const openDocument = useCallback(async (documentId: string) => {
     const document = await getDocument(documentId);
@@ -616,7 +640,7 @@ export function WorkbenchClient({
     if (workspaceId === selectedWorkspaceId) {
       return;
     }
-    if (!confirmDiscardDraft()) {
+    if (!(await confirmDiscardDraft())) {
       return;
     }
 
@@ -628,10 +652,10 @@ export function WorkbenchClient({
       setKnowledgeBases(nextKnowledgeBases);
       const firstKnowledgeBase = nextKnowledgeBases[0] ?? null;
       if (firstKnowledgeBase) {
-        router.push(`/app/kb/${firstKnowledgeBase.id}`);
+        pushWorkbenchUrl(`/app/kb/${firstKnowledgeBase.id}`);
         await loadKnowledgeBase(firstKnowledgeBase.id);
       } else {
-        router.push(`/app/workspaces/${workspaceId}`);
+        pushWorkbenchUrl(`/app/workspaces/${workspaceId}`);
         setSelectedKnowledgeBaseId(null);
         setDocuments([]);
         setImportJobs([]);
@@ -649,28 +673,28 @@ export function WorkbenchClient({
       if (!currentDocument) {
         return;
       }
-      if (!confirmDiscardDraft()) {
+      if (!(await confirmDiscardDraft())) {
         return;
       }
       setIsBusy(true);
       setMessage("");
       try {
-        router.push(`/app/kb/${knowledgeBaseId}`);
+        pushWorkbenchUrl(`/app/kb/${knowledgeBaseId}`);
         clearDocumentState();
       } finally {
         setIsBusy(false);
       }
       return;
     }
-    if (!confirmDiscardDraft()) {
+    if (!(await confirmDiscardDraft())) {
       return;
     }
 
     setIsBusy(true);
     setMessage("");
     try {
-      router.push(`/app/kb/${knowledgeBaseId}`);
       await loadKnowledgeBase(knowledgeBaseId);
+      pushWorkbenchUrl(`/app/kb/${knowledgeBaseId}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -682,7 +706,7 @@ export function WorkbenchClient({
     if (documentId === currentDocument?.id) {
       return;
     }
-    if (!confirmDiscardDraft()) {
+    if (!(await confirmDiscardDraft())) {
       return;
     }
 
@@ -690,7 +714,7 @@ export function WorkbenchClient({
     setMessage("");
     try {
       const document = await openDocument(documentId);
-      router.push(`/app/kb/${document.knowledge_base_id}/docs/${document.id}`);
+      pushWorkbenchUrl(`/app/kb/${document.knowledge_base_id}/docs/${document.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -699,15 +723,20 @@ export function WorkbenchClient({
   }
 
   async function handleCreateWorkspace() {
-    const name = window.prompt(t("Workspace name"));
-    if (!name?.trim()) {
+    const name = await dialog.requestTextInput({
+      title: t("Create workspace"),
+      label: t("Workspace name"),
+      placeholder: t("Workspace name"),
+      confirmLabel: t("Create")
+    });
+    if (!name) {
       return;
     }
 
     setIsBusy(true);
     try {
       const workspace = await createWorkspace({
-        name: name.trim(),
+        name,
         slug: slugFromTitle(name, "workspace")
       });
       setWorkspaces((items) => [...items, workspace]);
@@ -723,14 +752,19 @@ export function WorkbenchClient({
     if (!selectedWorkspace) {
       return;
     }
-    const name = window.prompt(t("Workspace name"), selectedWorkspace.name);
-    if (!name?.trim() || name.trim() === selectedWorkspace.name) {
+    const name = await dialog.requestTextInput({
+      title: t("Rename workspace"),
+      label: t("Workspace name"),
+      defaultValue: selectedWorkspace.name,
+      confirmLabel: t("Rename")
+    });
+    if (!name || name === selectedWorkspace.name) {
       return;
     }
 
     setIsBusy(true);
     try {
-      const workspace = await updateWorkspace(selectedWorkspace.id, { name: name.trim() });
+      const workspace = await updateWorkspace(selectedWorkspace.id, { name });
       setWorkspaces((items) =>
         items.map((item) => (item.id === workspace.id ? { ...item, ...workspace } : item))
       );
@@ -745,8 +779,13 @@ export function WorkbenchClient({
     if (!selectedWorkspaceId) {
       return;
     }
-    const title = window.prompt(t("Knowledge base title"));
-    if (!title?.trim()) {
+    const title = await dialog.requestTextInput({
+      title: t("Create knowledge base"),
+      label: t("Knowledge base title"),
+      placeholder: t("Knowledge base title"),
+      confirmLabel: t("Create")
+    });
+    if (!title) {
       return;
     }
 
@@ -754,13 +793,13 @@ export function WorkbenchClient({
     try {
       const knowledgeBase = await createKnowledgeBase({
         workspace_id: selectedWorkspaceId,
-        title: title.trim(),
+        title,
         slug: slugFromTitle(title, "kb"),
         visibility: "workspace"
       });
       setKnowledgeBases((items) => [...items, knowledgeBase]);
-      router.push(`/app/kb/${knowledgeBase.id}`);
       await loadKnowledgeBase(knowledgeBase.id);
+      pushWorkbenchUrl(`/app/kb/${knowledgeBase.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -772,8 +811,13 @@ export function WorkbenchClient({
     if (!selectedKnowledgeBaseId) {
       return;
     }
-    const title = window.prompt(type === "folder" ? t("Folder title") : t("Document title"));
-    if (!title?.trim()) {
+    const title = await dialog.requestTextInput({
+      title: type === "folder" ? t("Create folder") : t("Create document"),
+      label: type === "folder" ? t("Folder title") : t("Document title"),
+      placeholder: type === "folder" ? t("Folder title") : t("Document title"),
+      confirmLabel: t("Create")
+    });
+    if (!title) {
       return;
     }
 
@@ -784,14 +828,14 @@ export function WorkbenchClient({
         knowledge_base_id: selectedKnowledgeBaseId,
         parent_id: parentId,
         type,
-        title: title.trim(),
+        title,
         slug: slugFromTitle(title, type),
-        markdown: type === "page" ? `# ${title.trim()}\n` : ""
+        markdown: type === "page" ? `# ${title}\n` : ""
       });
       const nextTree = await getKnowledgeBaseTree(selectedKnowledgeBaseId);
       setDocuments(nextTree);
       await openDocument(document.id);
-      router.push(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
+      pushWorkbenchUrl(`/app/kb/${selectedKnowledgeBaseId}/docs/${document.id}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -813,7 +857,12 @@ export function WorkbenchClient({
 
     const parentId = currentDocument?.type === "folder" ? currentDocument.id : null;
     const defaultTitle = file.name.replace(/\.[^.]+$/, "");
-    const title = window.prompt(t("Imported document title"), defaultTitle);
+    const title = await dialog.requestTextInput({
+      title: t("Import file"),
+      label: t("Imported document title"),
+      defaultValue: defaultTitle,
+      confirmLabel: t("Import")
+    });
     if (title === null) {
       if (importFileInputRef.current) {
         importFileInputRef.current.value = "";
@@ -833,7 +882,7 @@ export function WorkbenchClient({
         source_asset_id: asset.id,
         knowledge_base_id: selectedKnowledgeBaseId,
         parent_id: parentId,
-        title: title.trim() || defaultTitle,
+        title: title || defaultTitle,
         converter: "auto"
       });
       setImportJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]);
@@ -849,7 +898,7 @@ export function WorkbenchClient({
     }
   }
 
-  function handleToolbarAction(action: EditorToolbarAction) {
+  async function handleToolbarAction(action: EditorToolbarAction) {
     if (currentDocument?.type !== "page" || mode !== "edit") {
       return;
     }
@@ -886,7 +935,13 @@ export function WorkbenchClient({
         editor?.inlineCode();
         break;
       case "clear_format": {
-        if (!window.confirm(t("Clear basic inline Markdown formatting in this document?"))) {
+        const shouldClear = await dialog.requestConfirmation({
+          title: t("Clear basic formatting"),
+          description: t("Clear basic inline Markdown formatting in this document?"),
+          confirmLabel: t("Clear"),
+          tone: "danger"
+        });
+        if (!shouldClear) {
           break;
         }
         const result = clearBasicMarkdownFormatting(draftMarkdown);
@@ -900,10 +955,15 @@ export function WorkbenchClient({
         break;
       }
       case "link": {
-        const href = window.prompt(t("Link URL"));
-        if (href?.trim()) {
-          if (!editor?.link(href.trim())) {
-            editor?.insertMarkdown(`[${t("Link")}](${href.trim()})`, true);
+        const href = await dialog.requestTextInput({
+          title: t("Insert link"),
+          label: t("Link URL"),
+          placeholder: "https://example.com",
+          confirmLabel: t("Insert")
+        });
+        if (href) {
+          if (!editor?.link(href)) {
+            editor?.insertMarkdown(`[${t("Link")}](${href})`, true);
           }
         }
         break;
@@ -1060,7 +1120,7 @@ export function WorkbenchClient({
           setDocuments(nextTree);
           if (job.document_id) {
             await openDocument(job.document_id);
-            router.push(`/app/kb/${knowledgeBaseId}/docs/${job.document_id}`);
+            pushWorkbenchUrl(`/app/kb/${knowledgeBaseId}/docs/${job.document_id}`);
           }
           setMessage("");
           return;
@@ -1082,7 +1142,13 @@ export function WorkbenchClient({
     if (!currentDocument) {
       return;
     }
-    if (!window.confirm(t('Delete "{title}"?', { title: currentDocument.title }))) {
+    const shouldDelete = await dialog.requestConfirmation({
+      title: t("Delete document"),
+      description: t('Delete "{title}"?', { title: currentDocument.title }),
+      confirmLabel: t("Delete"),
+      tone: "danger"
+    });
+    if (!shouldDelete) {
       return;
     }
 
@@ -1096,9 +1162,12 @@ export function WorkbenchClient({
       const nextDocument = nextTree.find((document) => document.type === "page") ?? nextTree[0];
       if (nextDocument) {
         await openDocument(nextDocument.id);
-        router.push(`/app/kb/${nextDocument.knowledge_base_id}/docs/${nextDocument.id}`);
+        pushWorkbenchUrl(`/app/kb/${nextDocument.knowledge_base_id}/docs/${nextDocument.id}`);
       } else {
         clearDocumentState();
+        if (selectedKnowledgeBaseId) {
+          pushWorkbenchUrl(`/app/kb/${selectedKnowledgeBaseId}`);
+        }
       }
     } catch (error) {
       handleApiError(error);
@@ -1139,7 +1208,7 @@ export function WorkbenchClient({
   }
 
   async function handleLogout() {
-    if (!confirmDiscardDraft()) {
+    if (!(await confirmDiscardDraft())) {
       return;
     }
 
@@ -1150,8 +1219,8 @@ export function WorkbenchClient({
     }
   }
 
-  function handleOpenSearch() {
-    if (!confirmDiscardDraft()) {
+  async function handleOpenSearch() {
+    if (!(await confirmDiscardDraft())) {
       return;
     }
     router.push(
@@ -1161,8 +1230,8 @@ export function WorkbenchClient({
     );
   }
 
-  function handleOpenAdmin() {
-    if (!confirmDiscardDraft()) {
+  async function handleOpenAdmin() {
+    if (!(await confirmDiscardDraft())) {
       return;
     }
     router.push("/app/admin");
@@ -1342,7 +1411,7 @@ export function WorkbenchClient({
             <LanguageSwitcher compact />
             <button
               className="icon-button"
-              onClick={handleOpenSearch}
+              onClick={() => void handleOpenSearch()}
               title={t("Search")}
               type="button"
             >
@@ -1351,7 +1420,7 @@ export function WorkbenchClient({
             {isAdmin ? (
               <button
                 className="icon-button"
-                onClick={handleOpenAdmin}
+                onClick={() => void handleOpenAdmin()}
                 title={t("Admin")}
                 type="button"
               >

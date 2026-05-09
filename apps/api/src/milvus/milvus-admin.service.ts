@@ -14,6 +14,12 @@ export type CreateRebuildJobInput = {
   target_alias?: string;
 };
 
+export type ListRebuildJobsInput = {
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
 export type SwitchAliasInput = {
   alias?: string;
   collection_name?: string;
@@ -68,7 +74,7 @@ export class MilvusAdminService {
   }
 
   async createRebuildJob(sessionToken: string | null, input: CreateRebuildJobInput = {}) {
-    const me = await this.requireAdmin(sessionToken);
+    const me = await this.requireSystemAdmin(sessionToken);
     const config = getMilvusConfig();
     const targetCollection =
       normalizeOptionalText(input.target_collection) ??
@@ -95,6 +101,36 @@ export class MilvusAdminService {
     return toIndexRebuildJobDto(job);
   }
 
+  async listRebuildJobs(sessionToken: string | null, input: ListRebuildJobsInput = {}) {
+    const me = await this.requireAdmin(sessionToken);
+    const limit = normalizeLimit(input.limit, 50);
+    const offset = normalizeOffset(input.offset);
+    const where: Prisma.IndexRebuildJobWhereInput = {
+      ...jobTenantWhere(me)
+    };
+    const status = normalizeOptionalText(input.status);
+    if (status) {
+      where.status = status;
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.indexRebuildJob.findMany({
+        where,
+        orderBy: { started_at: "desc" },
+        take: limit,
+        skip: offset
+      }),
+      this.prisma.indexRebuildJob.count({ where })
+    ]);
+
+    return {
+      items: items.map(toIndexRebuildJobDto),
+      limit,
+      offset,
+      total
+    };
+  }
+
   async getRebuildJob(sessionToken: string | null, id: string) {
     const me = await this.requireAdmin(sessionToken);
     const job = await this.prisma.indexRebuildJob.findFirst({
@@ -112,7 +148,7 @@ export class MilvusAdminService {
   }
 
   async switchAlias(sessionToken: string | null, input: SwitchAliasInput = {}) {
-    const me = await this.requireAdmin(sessionToken);
+    const me = await this.requireSystemAdmin(sessionToken);
     const config = getMilvusConfig();
     const alias = normalizeOptionalText(input.alias) ?? config.activeAlias;
     const collectionName = normalizeOptionalText(input.collection_name);
@@ -172,6 +208,14 @@ export class MilvusAdminService {
     return me;
   }
 
+  private async requireSystemAdmin(sessionToken: string | null): Promise<AuthenticatedUser> {
+    const me = await this.auth.getMe(sessionToken);
+    if (!me.roles.includes("system_admin")) {
+      throw new AuthError("ADMIN_REQUIRED", "System admin role is required.", 403);
+    }
+    return me;
+  }
+
   private getMilvus(): OpenKBMilvus {
     if (!this.milvus) {
       this.milvus = createOpenKBMilvus();
@@ -191,6 +235,20 @@ function jobTenantWhere(me: AuthenticatedUser): Prisma.IndexRebuildJobWhereInput
 function normalizeOptionalText(value: string | undefined | null): string | null {
   const normalized = value?.trim();
   return normalized || null;
+}
+
+function normalizeLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.trunc(value), 1), 200);
+}
+
+function normalizeOffset(value: number | undefined): number {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    return 0;
+  }
+  return Math.max(Math.trunc(value), 0);
 }
 
 function toMilvusIndexProfileDto(profile: {

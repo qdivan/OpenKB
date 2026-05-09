@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { useDialog } from "@/components/dialog-provider";
 import { useI18n } from "@/lib/i18n-provider";
 import {
   ApiRequestError,
@@ -52,6 +53,7 @@ export function AccessPanel({
   targets: AccessTarget[];
 }) {
   const { t } = useI18n();
+  const dialog = useDialog();
   const [targetType, setTargetType] = useState<AccessObjectType>(initialTargetType);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
@@ -183,7 +185,13 @@ export function AccessPanel({
   }
 
   async function handleRemoveMember(member: WorkspaceMember) {
-    if (!window.confirm(t("Remove this member?"))) {
+    const shouldRemove = await dialog.requestConfirmation({
+      title: t("Remove member"),
+      description: t("Remove this member?"),
+      confirmLabel: t("Remove"),
+      tone: "danger"
+    });
+    if (!shouldRemove) {
       return;
     }
     setIsSaving(true);
@@ -198,7 +206,13 @@ export function AccessPanel({
   }
 
   async function handleRemoveCollaborator(collaborator: Collaborator) {
-    if (!window.confirm(t("Remove this collaborator?"))) {
+    const shouldRemove = await dialog.requestConfirmation({
+      title: t("Remove collaborator"),
+      description: t("Remove this collaborator?"),
+      confirmLabel: t("Remove"),
+      tone: "danger"
+    });
+    if (!shouldRemove) {
       return;
     }
     setIsSaving(true);

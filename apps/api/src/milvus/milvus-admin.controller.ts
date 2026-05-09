@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
 import { AuthService } from "@openkb/auth";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
@@ -53,6 +53,23 @@ export class MilvusAdminController {
     }
   }
 
+  @Get("rebuild-jobs")
+  async listRebuildJobs(
+    @Query() query: { status?: string; limit?: string; offset?: string } = {},
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.milvusAdmin.listRebuildJobs(getSessionToken(request, this.auth), {
+        status: query.status,
+        limit: parseOptionalInt(query.limit),
+        offset: parseOptionalInt(query.offset)
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Get("rebuild-jobs/:id")
   async getRebuildJob(
     @Param("id") id: string,
@@ -78,4 +95,11 @@ export class MilvusAdminController {
       return sendJsonError(error, reply);
     }
   }
+}
+
+function parseOptionalInt(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") {
+    return undefined;
+  }
+  return Number.parseInt(value, 10);
 }

@@ -60,7 +60,7 @@ const MODEL_COPY: Record<
   },
   language: {
     title: "Language",
-    description: "Instance-level LLM endpoint. Phase 15 only probes connectivity.",
+    description: "Instance-level LLM endpoint. OpenKB currently probes connectivity only.",
     formatLabel: "Request format",
     formatDescription: "Choose the wire format used by the language endpoint.",
     endpointPlaceholder: "https://api.openai.com/v1/responses",

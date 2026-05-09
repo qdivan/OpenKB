@@ -1,6 +1,6 @@
 export const OPENKB_PROJECT_NAME = "OpenKB";
 export const OPENKB_VERSION = "0.3.3";
-export const OPENKB_PHASE = "phase-15-admin-models";
+export const OPENKB_PHASE = "phase-17-admin-ops";
 
 export type ServiceHealth = {
   status: "ok";

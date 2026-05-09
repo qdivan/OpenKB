@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { DialogProvider } from "@/components/dialog-provider";
 import { I18nProvider } from "@/lib/i18n-provider";
 
 import "./globals.css";
@@ -13,7 +14,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <I18nProvider>{children}</I18nProvider>
+        <I18nProvider>
+          <DialogProvider>{children}</DialogProvider>
+        </I18nProvider>
       </body>
     </html>
   );

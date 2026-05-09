@@ -1,6 +1,16 @@
 "use client";
 
-import { ArrowLeft, BrainCircuit, Database, ShieldCheck, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  BrainCircuit,
+  ClipboardList,
+  Database,
+  KeyRound,
+  ListChecks,
+  PlugZap,
+  ShieldCheck,
+  Users
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, type ReactNode } from "react";
@@ -16,6 +26,12 @@ const adminNavItems = [
     description: "Accounts and tenant roles"
   },
   {
+    href: "/app/admin/auth-settings",
+    icon: <ShieldCheck className="h-4 w-4" />,
+    label: "Auth Settings",
+    description: "Registration and login policy"
+  },
+  {
     href: "/app/admin/retrieval",
     icon: <Database className="h-4 w-4" />,
     label: "Retrieval",
@@ -26,6 +42,30 @@ const adminNavItems = [
     icon: <BrainCircuit className="h-4 w-4" />,
     label: "Models",
     description: "Embedding, rerank, and LLM"
+  },
+  {
+    href: "/app/admin/indexing",
+    icon: <ListChecks className="h-4 w-4" />,
+    label: "Indexing",
+    description: "Milvus aliases and rebuild jobs"
+  },
+  {
+    href: "/app/admin/dify",
+    icon: <PlugZap className="h-4 w-4" />,
+    label: "Dify",
+    description: "External Knowledge keys"
+  },
+  {
+    href: "/app/admin/mcp",
+    icon: <KeyRound className="h-4 w-4" />,
+    label: "MCP",
+    description: "PAT and OAuth clients"
+  },
+  {
+    href: "/app/admin/audit",
+    icon: <ClipboardList className="h-4 w-4" />,
+    label: "Audit Logs",
+    description: "Security and admin events"
   },
   {
     href: "/app/admin/permission-boundary",

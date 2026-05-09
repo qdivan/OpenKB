@@ -76,6 +76,145 @@ export type AuditLogListResponse = {
   total: number;
 };
 
+export type AuthSettingsScope = "instance" | "tenant";
+
+export type AdminAuthSettings = {
+  tenant_id: string | null;
+  scope: AuthSettingsScope;
+  registration_enabled: boolean;
+  email_verification_required: boolean;
+  default_signup_status: "active" | "pending_activation";
+  invited_user_auto_active: boolean;
+  allowed_email_domains: string[];
+  invite_required: boolean;
+  first_user_becomes_admin: boolean;
+};
+
+export type UpdateAdminAuthSettingsInput = Partial<
+  Pick<
+    AdminAuthSettings,
+    | "registration_enabled"
+    | "email_verification_required"
+    | "default_signup_status"
+    | "invited_user_auto_active"
+    | "allowed_email_domains"
+    | "invite_required"
+    | "first_user_becomes_admin"
+  >
+> & {
+  scope?: AuthSettingsScope;
+  tenant_id?: string | null;
+};
+
+export type DifyApiKey = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  status: string;
+  allowed_knowledge_base_ids: string[];
+  allowed_metadata_filters: unknown;
+  retrieval_top_k_limit: number;
+  expires_at: string | null;
+  last_used_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  api_key_last4: string | null;
+  can_reveal: boolean;
+};
+
+export type DifyKnowledgeMapping = {
+  id: string;
+  tenant_id: string;
+  dify_knowledge_id: string;
+  knowledge_base_id: string;
+  status: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DifyApiKeyListResponse = {
+  items: DifyApiKey[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type DifyMappingListResponse = {
+  items: DifyKnowledgeMapping[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type SecretCreateResponse<T> = {
+  item: T;
+  api_key?: string;
+  token?: string;
+};
+
+export type McpPat = {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  user: UserSummary | null;
+  name: string;
+  scopes: string[];
+  status: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+export type McpOauthClient = {
+  id: string;
+  tenant_id: string;
+  client_id: string;
+  client_name: string;
+  redirect_uris: string[];
+  allowed_scopes: string[];
+  status: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type McpOauthGrant = {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  user: UserSummary | null;
+  client_id: string;
+  scopes: string[];
+  status: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+export type McpPatListResponse = {
+  items: McpPat[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type McpOauthClientListResponse = {
+  items: McpOauthClient[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type McpOauthGrantListResponse = {
+  items: McpOauthGrant[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
 export type Workspace = {
   id: string;
   tenant_id: string;
@@ -425,6 +564,37 @@ export type IndexRebuildJob = {
   started_at: string;
   finished_at: string | null;
   error: string | null;
+};
+
+export type MilvusIndexProfile = {
+  id: string;
+  tenant_id: string | null;
+  alias: string;
+  collection_name: string;
+  schema_version: string;
+  vector_dim: number;
+  embedding_function_name: string;
+  bm25_function_name: string | null;
+  rerank_function_name: string | null;
+  status: string;
+  function_metadata: unknown;
+  created_by: string;
+  created_at: string;
+  activated_at: string | null;
+};
+
+export type MilvusStatusResponse = {
+  health: unknown;
+  active_alias: string;
+  active_profile: MilvusIndexProfile | null;
+  alias: unknown;
+};
+
+export type IndexRebuildJobListResponse = {
+  items: IndexRebuildJob[];
+  limit: number;
+  offset: number;
+  total: number;
 };
 
 export type ChunkSettings = {
@@ -934,6 +1104,209 @@ export function createMilvusRebuildJob(
   });
 }
 
+export function getMilvusAdminStatus() {
+  return apiFetch<MilvusStatusResponse>("/api/admin/milvus/status");
+}
+
+export function listMilvusIndexProfiles() {
+  return apiFetch<MilvusIndexProfile[]>("/api/admin/milvus/index-profiles");
+}
+
+export function listMilvusRebuildJobs(
+  input: { status?: string; limit?: number; offset?: number } = {}
+) {
+  const params = new URLSearchParams();
+  if (input.status) params.set("status", input.status);
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<IndexRebuildJobListResponse>(
+    `/api/admin/milvus/rebuild-jobs${query ? `?${query}` : ""}`
+  );
+}
+
+export function switchMilvusAlias(input: { alias?: string; collection_name: string }) {
+  return apiFetch<{ alias: string; collection: string; profile_id: string }>(
+    "/api/admin/milvus/aliases/switch",
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function getAdminAuthSettings(
+  input: { scope?: AuthSettingsScope; tenant_id?: string } = {}
+) {
+  const params = new URLSearchParams();
+  if (input.scope) params.set("scope", input.scope);
+  if (input.tenant_id) params.set("tenant_id", input.tenant_id);
+  const query = params.toString();
+  return apiFetch<AdminAuthSettings>(`/api/admin/auth-settings${query ? `?${query}` : ""}`);
+}
+
+export function updateAdminAuthSettings(input: UpdateAdminAuthSettingsInput) {
+  return apiFetch<AdminAuthSettings>("/api/admin/auth-settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listDifyApiKeys(input: { limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<DifyApiKeyListResponse>(`/api/admin/dify/api-keys${query ? `?${query}` : ""}`);
+}
+
+export function createDifyApiKey(input: {
+  name: string;
+  knowledge_id: string;
+  knowledge_base_id: string;
+  allowed_knowledge_base_ids?: string[];
+  retrieval_top_k_limit?: number;
+  expires_at?: string | null;
+}) {
+  return apiFetch<SecretCreateResponse<DifyApiKey>>("/api/admin/dify/api-keys", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateDifyApiKey(
+  id: string,
+  input: Partial<
+    Pick<
+      DifyApiKey,
+      "name" | "status" | "allowed_knowledge_base_ids" | "retrieval_top_k_limit" | "expires_at"
+    >
+  >
+) {
+  return apiFetch<DifyApiKey>(`/api/admin/dify/api-keys/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function revealDifyApiKey(id: string) {
+  return apiFetch<SecretCreateResponse<DifyApiKey>>(`/api/admin/dify/api-keys/${id}/reveal`, {
+    method: "POST"
+  });
+}
+
+export function rotateDifyApiKey(id: string) {
+  return apiFetch<SecretCreateResponse<DifyApiKey>>(`/api/admin/dify/api-keys/${id}/rotate`, {
+    method: "POST"
+  });
+}
+
+export function revokeDifyApiKey(id: string) {
+  return apiFetch<DifyApiKey>(`/api/admin/dify/api-keys/${id}/revoke`, { method: "POST" });
+}
+
+export function listDifyMappings(input: { limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<DifyMappingListResponse>(`/api/admin/dify/mappings${query ? `?${query}` : ""}`);
+}
+
+export function upsertDifyMapping(input: {
+  dify_knowledge_id: string;
+  knowledge_base_id: string;
+  status?: string;
+}) {
+  return apiFetch<DifyKnowledgeMapping>("/api/admin/dify/mappings", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateDifyMapping(
+  id: string,
+  input: Partial<Pick<DifyKnowledgeMapping, "dify_knowledge_id" | "knowledge_base_id" | "status">>
+) {
+  return apiFetch<DifyKnowledgeMapping>(`/api/admin/dify/mappings/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listMcpPats(input: { limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<McpPatListResponse>(`/api/admin/mcp/pats${query ? `?${query}` : ""}`);
+}
+
+export function createMcpPat(input: {
+  user_email: string;
+  name: string;
+  scopes?: string[];
+  expires_at?: string | null;
+}) {
+  return apiFetch<SecretCreateResponse<McpPat>>("/api/admin/mcp/pats", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function revokeMcpPat(id: string) {
+  return apiFetch<McpPat>(`/api/admin/mcp/pats/${id}/revoke`, { method: "POST" });
+}
+
+export function listMcpOauthClients(input: { limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<McpOauthClientListResponse>(
+    `/api/admin/mcp/oauth-clients${query ? `?${query}` : ""}`
+  );
+}
+
+export function createMcpOauthClient(input: {
+  client_id?: string;
+  client_name: string;
+  redirect_uris?: string[];
+  allowed_scopes?: string[];
+  status?: string;
+}) {
+  return apiFetch<McpOauthClient>("/api/admin/mcp/oauth-clients", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateMcpOauthClient(
+  id: string,
+  input: Partial<
+    Pick<McpOauthClient, "client_name" | "redirect_uris" | "allowed_scopes" | "status">
+  >
+) {
+  return apiFetch<McpOauthClient>(`/api/admin/mcp/oauth-clients/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listMcpOauthGrants(input: { limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<McpOauthGrantListResponse>(
+    `/api/admin/mcp/oauth-grants${query ? `?${query}` : ""}`
+  );
+}
+
+export function revokeMcpOauthGrant(id: string) {
+  return apiFetch<McpOauthGrant>(`/api/admin/mcp/oauth-grants/${id}/revoke`, { method: "POST" });
+}
+
 export function listAdminUsers(
   input: {
     status?: AdminUserStatus | "all";
@@ -1012,7 +1385,11 @@ export function listAuditLogs(
   input: {
     action?: string;
     object_type?: string;
+    object_id?: string;
     actor_user_id?: string;
+    actor_type?: string;
+    date_from?: string;
+    date_to?: string;
     limit?: number;
     offset?: number;
   } = {}
@@ -1020,7 +1397,11 @@ export function listAuditLogs(
   const params = new URLSearchParams();
   if (input.action) params.set("action", input.action);
   if (input.object_type) params.set("object_type", input.object_type);
+  if (input.object_id) params.set("object_id", input.object_id);
   if (input.actor_user_id) params.set("actor_user_id", input.actor_user_id);
+  if (input.actor_type) params.set("actor_type", input.actor_type);
+  if (input.date_from) params.set("date_from", input.date_from);
+  if (input.date_to) params.set("date_to", input.date_to);
   if (input.limit) params.set("limit", String(input.limit));
   if (input.offset) params.set("offset", String(input.offset));
   const query = params.toString();

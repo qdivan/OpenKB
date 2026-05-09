@@ -14,7 +14,9 @@ export type AuthErrorCode =
   | "INVALID_INPUT"
   | "INVALID_OR_EXPIRED_TOKEN"
   | "INVITE_REQUIRED"
+  | "OBJECT_NOT_FOUND"
   | "REGISTRATION_DISABLED"
+  | "SECRET_NOT_AVAILABLE"
   | "USER_NOT_ACTIVE"
   | "USER_NOT_FOUND";
 
@@ -84,6 +86,8 @@ export type LoginInput = {
 };
 
 export type UpdateAuthSettingsInput = {
+  scope?: "instance" | "tenant";
+  tenant_id?: string | null;
   registration_enabled?: boolean;
   email_verification_required?: boolean;
   default_signup_status?: "active" | "pending_activation";
@@ -115,7 +119,11 @@ export type ListAdminUsersInput = {
 export type ListAuditLogsInput = {
   action?: string;
   object_type?: string;
+  object_id?: string;
   actor_user_id?: string;
+  actor_type?: string;
+  date_from?: string;
+  date_to?: string;
   limit?: number;
   offset?: number;
 };
@@ -797,8 +805,22 @@ export class AuthService {
     if (input.object_type?.trim()) {
       where.object_type = input.object_type.trim();
     }
+    if (input.object_id?.trim()) {
+      where.object_id = input.object_id.trim();
+    }
     if (input.actor_user_id?.trim()) {
       where.actor_user_id = input.actor_user_id.trim();
+    }
+    if (input.actor_type?.trim()) {
+      where.actor_type = input.actor_type.trim();
+    }
+    const dateFrom = parseOptionalDate(input.date_from);
+    const dateTo = parseOptionalDate(input.date_to);
+    if (dateFrom || dateTo) {
+      where.created_at = {
+        ...(dateFrom ? { gte: dateFrom } : {}),
+        ...(dateTo ? { lte: dateTo } : {})
+      };
     }
 
     const [items, total] = await Promise.all([
@@ -819,15 +841,17 @@ export class AuthService {
     };
   }
 
-  async getAuthSettings(adminSessionToken: string) {
-    await this.requireAdmin(adminSessionToken);
-    const settings = await this.ensureInstanceAuthSettings();
+  async getAuthSettings(adminSessionToken: string, input: UpdateAuthSettingsInput = {}) {
+    const admin = await this.requireAdmin(adminSessionToken);
+    const tenantId = await this.resolveAuthSettingsTenantId(admin, input);
+    const settings = await this.ensureAuthSettingsForTenant(tenantId);
     return toAuthSettingsDto(settings);
   }
 
   async updateAuthSettings(adminSessionToken: string, input: UpdateAuthSettingsInput) {
     const admin = await this.requireAdmin(adminSessionToken);
-    const current = await this.ensureInstanceAuthSettings();
+    const tenantId = await this.resolveAuthSettingsTenantId(admin, input);
+    const current = await this.ensureAuthSettingsForTenant(tenantId);
     const data = normalizeAuthSettingsInput(input);
     const updated = await this.prisma.authSetting.update({
       where: { id: current.id },
@@ -841,7 +865,8 @@ export class AuthService {
       admin,
       "admin.auth_settings.update",
       "auth_settings",
-      updated.id
+      updated.id,
+      { scope: updated.tenant_id ? "tenant" : "instance", tenant_id: updated.tenant_id }
     );
     return toAuthSettingsDto(updated);
   }
@@ -1074,6 +1099,57 @@ export class AuthService {
     });
   }
 
+  private async ensureAuthSettingsForTenant(
+    tenantId: string | null,
+    tx: Prisma.TransactionClient | PrismaClient = this.prisma
+  ) {
+    if (tenantId === null) {
+      return this.ensureInstanceAuthSettings(tx);
+    }
+
+    const existing = await tx.authSetting.findFirst({ where: { tenant_id: tenantId } });
+    if (existing) {
+      return existing;
+    }
+
+    const defaults = await this.ensureInstanceAuthSettings(tx);
+    const now = this.now();
+    return tx.authSetting.create({
+      data: {
+        tenant_id: tenantId,
+        registration_enabled: defaults.registration_enabled,
+        email_verification_required: defaults.email_verification_required,
+        default_signup_status: defaults.default_signup_status,
+        invited_user_auto_active: defaults.invited_user_auto_active,
+        allowed_email_domains: defaults.allowed_email_domains,
+        invite_required: defaults.invite_required,
+        first_user_becomes_admin: defaults.first_user_becomes_admin,
+        created_at: now,
+        updated_at: now
+      }
+    });
+  }
+
+  private async resolveAuthSettingsTenantId(
+    admin: AuthenticatedUser,
+    input: Pick<UpdateAuthSettingsInput, "scope" | "tenant_id"> = {}
+  ): Promise<string | null> {
+    if (!admin.roles.includes("system_admin")) {
+      return admin.tenantId;
+    }
+
+    if (input.scope === "tenant" || input.tenant_id) {
+      const tenantId = input.tenant_id?.trim() || admin.tenantId;
+      const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+      if (!tenant) {
+        throw new AuthError("OBJECT_NOT_FOUND", "Tenant was not found.", 404);
+      }
+      return tenant.id;
+    }
+
+    return null;
+  }
+
   private async getEffectiveAuthSettings(
     tenantId: string,
     tx: Prisma.TransactionClient | PrismaClient = this.prisma
@@ -1292,6 +1368,8 @@ export function toPublicUser(user: {
 
 function toAuthSettingsDto(settings: AuthSettingsRecord) {
   return {
+    tenant_id: settings.tenant_id,
+    scope: settings.tenant_id ? "tenant" : "instance",
     registration_enabled: settings.registration_enabled,
     email_verification_required: settings.email_verification_required,
     default_signup_status: settings.default_signup_status,
@@ -1300,6 +1378,17 @@ function toAuthSettingsDto(settings: AuthSettingsRecord) {
     invite_required: settings.invite_required,
     first_user_becomes_admin: settings.first_user_becomes_admin
   };
+}
+
+function parseOptionalDate(value: string | undefined): Date | null {
+  if (!value?.trim()) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new AuthError("INVALID_INPUT", "Date value is invalid.", 400);
+  }
+  return date;
 }
 
 function toAuditLogEntry(entry: {

@@ -3,6 +3,8 @@ import { AuthService } from "@openkb/auth";
 import { PermissionService } from "@openkb/permissions";
 import { RetrievalService } from "@openkb/retrieval";
 
+import { AdminOpsController } from "./admin-ops/admin-ops.controller";
+import { AdminOpsService } from "./admin-ops/admin-ops.service";
 import { AdminController } from "./auth/admin.controller";
 import { AuthController } from "./auth/auth.controller";
 import { AssetController } from "./content/asset.controller";
@@ -42,7 +44,8 @@ import { SearchController } from "./search/search.controller";
     MilvusAdminController,
     ModelSettingsAdminController,
     RetrievalSettingsAdminController,
-    SearchController
+    SearchController,
+    AdminOpsController
   ],
   providers: [
     AuthService,
@@ -52,7 +55,8 @@ import { SearchController } from "./search/search.controller";
     MilvusAdminService,
     ModelSettingsAdminService,
     RetrievalSettingsAdminService,
-    RetrievalService
+    RetrievalService,
+    AdminOpsService
   ]
 })
 export class AppModule {}

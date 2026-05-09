@@ -36,7 +36,7 @@
 
 OpenKB 是一个开源、自托管的团队知识库。它关注写作体验、权限边界和可信检索：内容与权限以 PostgreSQL 为准，Milvus 只做检索索引，Web、MCP、Dify 返回结果前都会再次校验权限。
 
-当前版本处于 `v0.3.x / Phase 16` 协作与分享 UI，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
+当前版本处于 `v0.3.x / Phase 17` Admin 运维管理 UI，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
 
 ## 特性
 
@@ -103,8 +103,9 @@ pnpm dev:local:web
 - Phase 15：Admin Models 配置中心，支持 system_admin 管理实例级 embedding、rerank、language model endpoint/model 和加密 secret。
 - Phase 15.1：稳定化收口，补本地启动脚本、文档状态、i18n/Models/工作台回归和浏览器冷/热启动验证。
 - Phase 16：协作与分享 UI，支持 Workspace/KB/document 成员与协作者面板、邮箱邀请、审批、只读分享链接、密码访问、member-only、关闭/重置链接、`/invite/:token` 和 `/share/:token`。
+- Phase 17：Admin 运维管理 UI，补齐 Auth Settings、Audit Logs、Indexing、Dify key/mapping 和 MCP PAT/OAuth client/grant 管理入口。
 
-下一批路线是 Phase 17-20：Admin 运维管理 UI、文档版本与检索解释、复杂导入 adapter、生产增强。当前本机开发移交见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
+下一批路线是 Phase 18-20：文档版本与检索解释、复杂导入 adapter、生产增强。当前本机开发移交见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
 
 ## 开发验证
 

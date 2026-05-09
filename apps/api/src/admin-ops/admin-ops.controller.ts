@@ -1,0 +1,278 @@
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, Res } from "@nestjs/common";
+import { AuthService } from "@openkb/auth";
+import type { FastifyReply, FastifyRequest } from "fastify";
+
+import { sendJsonError } from "../auth/http";
+import { getSessionToken } from "../content/session";
+import {
+  AdminOpsService,
+  type CreateDifyApiKeyInput,
+  type CreateMcpOauthClientInput,
+  type CreateMcpPatInput,
+  type UpdateDifyApiKeyInput,
+  type UpdateMcpOauthClientInput,
+  type UpsertDifyMappingInput
+} from "./admin-ops.service";
+
+type ListQuery = {
+  limit?: string;
+  offset?: string;
+};
+
+@Controller("api/admin")
+export class AdminOpsController {
+  constructor(
+    @Inject(AuthService) private readonly auth: AuthService,
+    @Inject(AdminOpsService) private readonly adminOps: AdminOpsService
+  ) {}
+
+  @Get("dify/api-keys")
+  async listDifyApiKeys(
+    @Query() query: ListQuery = {},
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.listDifyApiKeys(getSessionToken(request, this.auth), {
+        limit: parseOptionalInt(query.limit),
+        offset: parseOptionalInt(query.offset)
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/api-keys")
+  async createDifyApiKey(
+    @Body() body: CreateDifyApiKeyInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.createDifyApiKey(getSessionToken(request, this.auth), body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Patch("dify/api-keys/:id")
+  async updateDifyApiKey(
+    @Param("id") id: string,
+    @Body() body: UpdateDifyApiKeyInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.updateDifyApiKey(getSessionToken(request, this.auth), id, body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/api-keys/:id/reveal")
+  async revealDifyApiKey(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.revealDifyApiKey(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/api-keys/:id/rotate")
+  async rotateDifyApiKey(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.rotateDifyApiKey(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/api-keys/:id/revoke")
+  async revokeDifyApiKey(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.revokeDifyApiKey(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("dify/mappings")
+  async listDifyMappings(
+    @Query() query: ListQuery = {},
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.listDifyMappings(getSessionToken(request, this.auth), {
+        limit: parseOptionalInt(query.limit),
+        offset: parseOptionalInt(query.offset)
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/mappings")
+  async upsertDifyMapping(
+    @Body() body: UpsertDifyMappingInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.upsertDifyMapping(getSessionToken(request, this.auth), body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Patch("dify/mappings/:id")
+  async updateDifyMapping(
+    @Param("id") id: string,
+    @Body() body: UpsertDifyMappingInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.updateDifyMapping(getSessionToken(request, this.auth), id, body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("mcp/pats")
+  async listMcpPats(
+    @Query() query: ListQuery = {},
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.listMcpPats(getSessionToken(request, this.auth), {
+        limit: parseOptionalInt(query.limit),
+        offset: parseOptionalInt(query.offset)
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("mcp/pats")
+  async createMcpPat(
+    @Body() body: CreateMcpPatInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.createMcpPat(getSessionToken(request, this.auth), body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("mcp/pats/:id/revoke")
+  async revokeMcpPat(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.revokeMcpPat(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("mcp/oauth-clients")
+  async listMcpOauthClients(
+    @Query() query: ListQuery = {},
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.listMcpOauthClients(getSessionToken(request, this.auth), {
+        limit: parseOptionalInt(query.limit),
+        offset: parseOptionalInt(query.offset)
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("mcp/oauth-clients")
+  async createMcpOauthClient(
+    @Body() body: CreateMcpOauthClientInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.createMcpOauthClient(getSessionToken(request, this.auth), body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Patch("mcp/oauth-clients/:id")
+  async updateMcpOauthClient(
+    @Param("id") id: string,
+    @Body() body: UpdateMcpOauthClientInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.updateMcpOauthClient(
+        getSessionToken(request, this.auth),
+        id,
+        body
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("mcp/oauth-grants")
+  async listMcpOauthGrants(
+    @Query() query: ListQuery = {},
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.listMcpOauthGrants(getSessionToken(request, this.auth), {
+        limit: parseOptionalInt(query.limit),
+        offset: parseOptionalInt(query.offset)
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("mcp/oauth-grants/:id/revoke")
+  async revokeMcpOauthGrant(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.revokeMcpOauthGrant(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+}
+
+function parseOptionalInt(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") {
+    return undefined;
+  }
+  return Number.parseInt(value, 10);
+}

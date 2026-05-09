@@ -142,7 +142,45 @@ Phase 16 已实现最小协作/分享闭环：
 - 密码分享通过 `POST /api/share/:token/verify-password` 设置短期 `httpOnly` share cookie；不新增分享会话表。
 - `POST /api/share-links/:id/reset` 会关闭旧 token，并创建同配置的新 token；旧 token 立即失效。
 
-## 5. 搜索
+## 5. Admin 运维接口（Phase 17）
+
+```http
+GET  /api/admin/auth-settings
+PUT  /api/admin/auth-settings
+GET  /api/admin/audit-logs
+GET  /api/admin/milvus/status
+GET  /api/admin/milvus/index-profiles
+GET  /api/admin/milvus/rebuild-jobs
+POST /api/admin/milvus/rebuild-jobs
+POST /api/admin/milvus/aliases/switch
+
+GET   /api/admin/dify/api-keys
+POST  /api/admin/dify/api-keys
+PATCH /api/admin/dify/api-keys/:id
+POST  /api/admin/dify/api-keys/:id/reveal
+POST  /api/admin/dify/api-keys/:id/rotate
+POST  /api/admin/dify/api-keys/:id/revoke
+GET   /api/admin/dify/mappings
+POST  /api/admin/dify/mappings
+PATCH /api/admin/dify/mappings/:id
+
+GET   /api/admin/mcp/pats
+POST  /api/admin/mcp/pats
+POST  /api/admin/mcp/pats/:id/revoke
+GET   /api/admin/mcp/oauth-clients
+POST  /api/admin/mcp/oauth-clients
+PATCH /api/admin/mcp/oauth-clients/:id
+GET   /api/admin/mcp/oauth-grants
+POST  /api/admin/mcp/oauth-grants/:id/revoke
+```
+
+规则：
+- `tenant_admin` 只能管理本租户 Dify/MCP/Auth Settings；`system_admin` 可以管理实例默认和跨租户配置。
+- Dify key 认证仍使用 hash；Phase 17 后创建或 rotate 的 key 会额外保存加密密文和 last4，用于显式 reveal。旧 hash-only key 不能 reveal，只能 rotate。
+- MCP PAT 仍为 hash-only，创建后只显示一次 raw token；普通 list/detail DTO 不返回 raw secret。
+- 敏感操作必须写入 `audit_logs`，metadata 不记录 raw Dify key、PAT、OAuth token 或 password。
+
+## 6. 搜索
 
 ```http
 POST /api/search
@@ -164,7 +202,7 @@ POST /api/search
 
 `context_mode` 可选，支持 `chunk`、`parent_child`、`paragraph_parent_child`、`full_text`。响应只能包含当前用户有权限访问且已发布、当前版本的结果；rerank 必须发生在最终权限过滤之后，父块/全文回填发生在 rerank 之后。
 
-## 6. 导入
+## 7. 导入
 
 ```http
 POST /api/uploads

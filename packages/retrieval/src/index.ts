@@ -162,14 +162,14 @@ export const retrievalPackageStatus: RetrievalPackageStatus = {
 
 export class RetrievalService {
   private readonly prisma: PrismaClient;
-  private readonly milvus: OpenKBMilvus;
+  private milvus: OpenKBMilvus | null;
   private readonly permissions: PermissionService;
   private readonly modelClientOverride?: OpenKBModelClient;
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: RetrievalServiceOptions = {}) {
     this.prisma = options.prisma ?? createDatabaseClient();
-    this.milvus = options.milvus ?? createOpenKBMilvus();
+    this.milvus = options.milvus ?? null;
     this.permissions = options.permissions ?? new PermissionService({ prisma: this.prisma });
     this.modelClientOverride = options.modelClient;
     this.env = options.env ?? process.env;
@@ -201,7 +201,7 @@ export class RetrievalService {
 
     let candidates: MilvusSearchChunkResult[];
     try {
-      candidates = await this.milvus.searchChunks({
+      candidates = await this.getMilvus().searchChunks({
         query: normalized.query,
         mode: toMilvusSearchMode(mode.effectiveMode),
         queryVector,
@@ -275,7 +275,7 @@ export class RetrievalService {
 
     let candidates: MilvusSearchChunkResult[];
     try {
-      candidates = await this.milvus.searchScopedChunks({
+      candidates = await this.getMilvus().searchScopedChunks({
         query: normalized.query,
         mode: toMilvusSearchMode(mode.effectiveMode),
         queryVector,
@@ -334,7 +334,7 @@ export class RetrievalService {
       }),
       this.prisma.milvusIndexProfile.findFirst({
         where: {
-          alias: this.milvus.config.activeAlias,
+          alias: this.getMilvus().config.activeAlias,
           status: "active",
           OR: [{ tenant_id: tenantId }, { tenant_id: null }]
         },
@@ -361,7 +361,7 @@ export class RetrievalService {
         503,
         {
           mode: resolution.effectiveMode,
-          active_alias: this.milvus.config.activeAlias,
+          active_alias: this.getMilvus().config.activeAlias,
           required_embedding_dim: effectiveModelClient.config.embedding.dim,
           required_embedding_model: effectiveModelClient.config.embedding.model ?? null
         }
@@ -382,6 +382,13 @@ export class RetrievalService {
     return createOpenKBModelClient(
       getOpenKBModelClientConfig(this.env, settings.map(toStoredModelSetting))
     );
+  }
+
+  private getMilvus(): OpenKBMilvus {
+    if (!this.milvus) {
+      this.milvus = createOpenKBMilvus();
+    }
+    return this.milvus;
   }
 
   private toSearchResponse(

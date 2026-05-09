@@ -572,6 +572,8 @@ model DifyApiKey {
   tenant_id                  String    @db.Uuid
   name                       String
   key_hash                   String
+  encrypted_key              String?
+  api_key_last4              String?
   status                     String
   allowed_knowledge_base_ids String[]  @default([]) @db.Uuid
   allowed_metadata_filters   Json      @default("{}")

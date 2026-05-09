@@ -17,6 +17,7 @@ import {
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { useDialog } from "@/components/dialog-provider";
 import {
   activateAdminUser,
   ApiRequestError,
@@ -52,6 +53,7 @@ const ROLE_OPTIONS: TenantRole[] = ["member", "tenant_admin", "system_admin"];
 export function AdminUsersClient() {
   const router = useRouter();
   const { t } = useI18n();
+  const dialog = useDialog();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [statusFilter, setStatusFilter] = useState<AdminUserStatus | "all">("all");
@@ -177,6 +179,49 @@ export function AdminUsersClient() {
     setMessage(t("Reset link copied."));
   }
 
+  async function handleRenameUser(user: AdminUser) {
+    const nextName = await dialog.requestTextInput({
+      title: t("Rename user"),
+      label: t("Display name"),
+      defaultValue: user.displayName,
+      confirmLabel: t("Rename")
+    });
+    if (!nextName) {
+      return;
+    }
+    await runUserAction(
+      user.id,
+      () => updateAdminUser(user.id, { display_name: nextName }),
+      t("Display name updated.")
+    );
+  }
+
+  async function handleSuspendUser(user: AdminUser) {
+    const shouldSuspend = await dialog.requestConfirmation({
+      title: t("Suspend user"),
+      description: t("Suspend {email}?", { email: user.email }),
+      confirmLabel: t("Suspend"),
+      tone: "danger"
+    });
+    if (!shouldSuspend) {
+      return;
+    }
+    await runUserAction(user.id, () => suspendAdminUser(user.id), t("User suspended."));
+  }
+
+  async function handleDeleteUser(user: AdminUser) {
+    const shouldDelete = await dialog.requestConfirmation({
+      title: t("Soft-delete user"),
+      description: t("Soft-delete {email}?", { email: user.email }),
+      confirmLabel: t("Delete"),
+      tone: "danger"
+    });
+    if (!shouldDelete) {
+      return;
+    }
+    await runUserAction(user.id, () => softDeleteAdminUser(user.id), t("User soft-deleted."));
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -288,25 +333,8 @@ export function AdminUsersClient() {
                             t("User activated.")
                           )
                         }
-                        onDelete={() => {
-                          if (window.confirm(t("Soft-delete {email}?", { email: user.email }))) {
-                            void runUserAction(
-                              user.id,
-                              () => softDeleteAdminUser(user.id),
-                              t("User soft-deleted.")
-                            );
-                          }
-                        }}
-                        onRename={() => {
-                          const nextName = window.prompt(t("Display name"), user.displayName);
-                          if (nextName?.trim()) {
-                            void runUserAction(
-                              user.id,
-                              () => updateAdminUser(user.id, { display_name: nextName.trim() }),
-                              t("Display name updated.")
-                            );
-                          }
-                        }}
+                        onDelete={() => void handleDeleteUser(user)}
+                        onRename={() => void handleRenameUser(user)}
                         onResetPassword={() =>
                           void runUserAction(
                             user.id,
@@ -328,15 +356,7 @@ export function AdminUsersClient() {
                             t("Tenant role updated.")
                           )
                         }
-                        onSuspend={() => {
-                          if (window.confirm(t("Suspend {email}?", { email: user.email }))) {
-                            void runUserAction(
-                              user.id,
-                              () => suspendAdminUser(user.id),
-                              t("User suspended.")
-                            );
-                          }
-                        }}
+                        onSuspend={() => void handleSuspendUser(user)}
                         user={user}
                       />
                     ))}

@@ -16,8 +16,13 @@
 /app/search
 /app/admin
 /app/admin/users
+/app/admin/auth-settings
 /app/admin/retrieval
 /app/admin/models
+/app/admin/indexing
+/app/admin/dify
+/app/admin/mcp
+/app/admin/audit
 /password-reset
 /invite/:token
 /share/:token
@@ -28,13 +33,10 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 ## 2. 当前未实现页面
 
 ```text
-/admin/auth-settings
-/admin/milvus
-/admin/milvus/rebuild-jobs
 /admin/audit-logs
 ```
 
-当前已实现 `/app/admin`、`/app/admin/users`、`/app/admin/retrieval` 和 `/app/admin/models` 最小页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Models 页面是实例级 `system_admin` 配置中心，Admin 页面不显示“给某个知识库单独配置模型”的入口。
+当前已实现 `/app/admin`、`/app/admin/users`、`/app/admin/auth-settings`、`/app/admin/retrieval`、`/app/admin/models`、`/app/admin/indexing`、`/app/admin/dify`、`/app/admin/mcp` 和 `/app/admin/audit` 页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Models 页面是实例级 `system_admin` 配置中心，Admin 页面不显示“给某个知识库单独配置模型”的入口。Phase 17 起，Admin 运维页提供 Auth Settings、Audit Logs、Indexing、Dify key/mapping 和 MCP PAT/OAuth client/grant 管理入口。
 
 ## 3. 文档页面布局
 
@@ -67,6 +69,7 @@ Phase 16 已实现：
 - 邀请优先按邮箱创建，支持 `require_approval`、过期时间和最大使用次数；`/invite/:token` 用于登录用户接受邀请，待审批邀请需管理员批准后才授权。
 - 顶部“分享”按钮打开 SharePanel，支持只读分享链接、密码访问、登录要求、仅工作区成员、关闭分享和重置链接。
 - `/share/:token` 是最小只读页；文档分享展示只读 Markdown，知识库分享展示文档树和只读文档内容入口，workspace 分享展示共享知识库列表。
+- 前端交互禁止使用浏览器原生 `window.prompt` / `window.confirm` / `window.alert`；创建、重命名、删除、移除、未保存离开等应用内交互必须使用 OpenKB Web 弹窗。唯一例外是浏览器刷新/关闭标签页时的 `beforeunload` 未保存保护。
 
 仍未实现：分享链接编辑权限、owner 转让、宽泛用户搜索、完整分享访问日志 UI。
 

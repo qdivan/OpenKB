@@ -7,7 +7,7 @@ describe("@openkb/api health", () => {
     expect(getApiHealth()).toMatchObject({
       status: "ok",
       service: "openkb-api",
-      phase: "phase-15-admin-models"
+      phase: "phase-17-admin-ops"
     });
   });
 });
