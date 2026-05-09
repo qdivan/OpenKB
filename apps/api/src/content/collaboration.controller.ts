@@ -31,6 +31,50 @@ export class CollaborationController {
     }
   }
 
+  @Get("workspaces/:id/members")
+  async listWorkspaceMembers(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.listWorkspaceMembers(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Put("workspace-members/:id")
+  async updateWorkspaceMember(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.updateWorkspaceMember(
+        getSessionToken(request, this.auth),
+        id,
+        body as never
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Delete("workspace-members/:id")
+  async deleteWorkspaceMember(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.deleteWorkspaceMember(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Post("objects/:objectType/:objectId/collaborators")
   async createCollaborator(
     @Param("objectType") objectType: string,
@@ -102,6 +146,36 @@ export class CollaborationController {
     }
   }
 
+  @Get("objects/:objectType/:objectId/invitations")
+  async listInvitations(
+    @Param("objectType") objectType: string,
+    @Param("objectId") objectId: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.listInvitations(
+        getSessionToken(request, this.auth),
+        objectType,
+        objectId
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("invitations/:token")
+  async getInvitation(
+    @Param("token") token: string,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.getInvitationByToken(token);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Post("invitations/:token/accept")
   async acceptInvitation(
     @Param("token") token: string,
@@ -123,6 +197,19 @@ export class CollaborationController {
   ) {
     try {
       return await this.content.revokeInvitation(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("invitations/:id/approve")
+  async approveInvitation(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.approveInvitation(getSessionToken(request, this.auth), id);
     } catch (error) {
       return sendJsonError(error, reply);
     }

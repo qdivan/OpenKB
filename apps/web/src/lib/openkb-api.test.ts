@@ -3,14 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiRequestError,
   apiFetch,
+  createInvitation,
+  createShareLink,
   clearAdminModelSecret,
   createAdminUser,
+  getShare,
   isUnauthorized,
   listAdminUsers,
+  listShareLinks,
   probeAdminModel,
+  resetShareLink,
   searchKnowledge,
   setAdminUserTenantRole,
-  updateAdminModelSetting
+  updateAdminModelSetting,
+  verifySharePassword
 } from "./openkb-api";
 
 describe("OpenKB API client", () => {
@@ -229,6 +235,72 @@ describe("OpenKB API client", () => {
         credentials: "include",
         method: "DELETE"
       })
+    );
+  });
+
+  it("builds collaboration and share requests", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createInvitation("knowledge_base", "kb_1", {
+      email: "new@example.com",
+      role: "viewer",
+      require_approval: true
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/objects/knowledge_base/kb_1/invitations",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          email: "new@example.com",
+          role: "viewer",
+          require_approval: true
+        })
+      })
+    );
+
+    await listShareLinks("document", "doc_1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/objects/document/doc_1/share-links",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    await createShareLink("document", "doc_1", {
+      password: "reader",
+      require_login: true,
+      restrict_to_workspace_members: true
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/objects/document/doc_1/share-links",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          password: "reader",
+          require_login: true,
+          restrict_to_workspace_members: true
+        })
+      })
+    );
+
+    await getShare("token", "doc_1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/share/token?document_id=doc_1",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    await verifySharePassword("token", "reader");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/share/token/verify-password",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ password: "reader" })
+      })
+    );
+
+    await resetShareLink("share_1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/share-links/share_1/reset",
+      expect.objectContaining({ method: "POST" })
     );
   });
 });

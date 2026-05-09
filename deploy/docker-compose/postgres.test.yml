@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: openkb
       POSTGRES_PASSWORD: openkb
     ports:
-      - "55432:5432"
+      - "${OPENKB_TEST_POSTGRES_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openkb -d openkb_test"]
       interval: 2s

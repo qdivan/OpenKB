@@ -108,22 +108,39 @@ POST   /api/documents/:id/restore/:versionId
 ## 4. 协作者、邀请、分享
 
 ```http
+GET  /api/workspaces/:id/members
+PUT  /api/workspace-members/:id
+DELETE /api/workspace-members/:id
+
 GET  /api/objects/:objectType/:objectId/collaborators
 POST /api/objects/:objectType/:objectId/collaborators
 PUT  /api/collaborators/:id
 DELETE /api/collaborators/:id
 
+GET  /api/objects/:objectType/:objectId/invitations
 POST /api/objects/:objectType/:objectId/invitations
 GET  /api/invitations/:token
 POST /api/invitations/:token/accept
 POST /api/invitations/:id/approve
 POST /api/invitations/:id/revoke
 
+GET  /api/objects/:objectType/:objectId/share-links
 POST /api/objects/:objectType/:objectId/share-links
 GET  /api/share/:token
 POST /api/share/:token/verify-password
+POST /api/share-links/:id/reset
 POST /api/share-links/:id/revoke
 ```
+
+Phase 16 已实现最小协作/分享闭环：
+
+- `workspace` 成员仍写入 `workspace_members`，角色只能是 `owner/admin/member/guest`；普通邀请和成员更新不能授予 `owner`。
+- `knowledge_base/document` 协作者仍写入 `collaborators`，角色只能是 `owner/manager/editor/viewer`；普通邀请不能授予 `owner`。
+- `POST /api/objects/:objectType/:objectId/invitations` 支持 `email`、`role`、`require_approval`、`expires_at`、`max_uses`，并写入开发 `auth_email_outbox`。
+- `require_approval=true` 的邀请接受后进入 `awaiting_approval`，审批通过后才写入成员或协作者关系。
+- 分享链接 v0.x 固定 `permission=view`，支持 `password`、`require_login`、`restrict_to_workspace_members`、`expires_at`。
+- 密码分享通过 `POST /api/share/:token/verify-password` 设置短期 `httpOnly` share cookie；不新增分享会话表。
+- `POST /api/share-links/:id/reset` 会关闭旧 token，并创建同配置的新 token；旧 token 立即失效。
 
 ## 5. 搜索
 

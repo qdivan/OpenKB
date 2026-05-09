@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { AuthService, type AuthenticatedUser } from "@openkb/auth";
@@ -6,11 +6,13 @@ import {
   CONTENT_INVITATION_ROLES,
   CONTENT_ROLES,
   createDatabaseClient,
+  WORKSPACE_ROLES,
   WORKSPACE_INVITATION_ROLES,
   type ContentInvitationRole,
   type ContentRole,
   type Prisma,
   type PrismaClient,
+  type WorkspaceRole,
   type WorkspaceInvitationRole
 } from "@openkb/db";
 import { normalizeMarkdownSource, validateMarkdownSource } from "@openkb/editor";
@@ -24,6 +26,7 @@ import {
   type ContentObjectType,
   type PermissionObjectType
 } from "@openkb/permissions";
+import bcrypt from "bcryptjs";
 
 import { ContentError } from "./errors";
 import { toImportJobDto } from "./import.service";
@@ -104,14 +107,27 @@ type CreateInvitationInput = {
   email?: string;
   invited_user_id?: string;
   role?: string;
+  require_approval?: boolean;
   expires_at?: string | null;
   max_uses?: number | null;
 };
 
 type CreateShareLinkInput = {
+  password?: string | null;
   require_login?: boolean;
   restrict_to_workspace_members?: boolean;
   expires_at?: string | null;
+};
+
+type UpdateWorkspaceMemberInput = {
+  role?: string;
+};
+
+type UserSummary = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  status: string;
 };
 
 @Injectable()
@@ -871,6 +887,75 @@ export class ContentService {
     return { ok: true };
   }
 
+  async listWorkspaceMembers(sessionToken: string | null, workspaceId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanManage(me.user.id, "workspace", workspaceId);
+    await this.assertObjectExists("workspace", workspaceId);
+
+    const members = await this.prisma.workspaceMember.findMany({
+      where: { workspace_id: workspaceId },
+      orderBy: { created_at: "asc" }
+    });
+    const userMap = await this.loadUsersById(members.map((member) => member.user_id));
+
+    return members.map((member) =>
+      toWorkspaceMemberDto(member, userMap.get(member.user_id) ?? null)
+    );
+  }
+
+  async updateWorkspaceMember(
+    sessionToken: string | null,
+    memberId: string,
+    input: UpdateWorkspaceMemberInput
+  ) {
+    const me = await this.requireMe(sessionToken);
+    const member = await this.getWorkspaceMemberOrThrow(memberId);
+    await this.permissions.requireCanManage(me.user.id, "workspace", member.workspace_id);
+
+    if (member.role === "owner") {
+      throw new ContentError("INVALID_INPUT", "Owner transfer is not part of this phase.", 400);
+    }
+
+    const updated = await this.prisma.workspaceMember.update({
+      where: { id: memberId },
+      data: {
+        role: normalizeGrantableWorkspaceRole(input.role)
+      }
+    });
+    const userMap = await this.loadUsersById([updated.user_id]);
+    await this.writeAuditLog(
+      this.prisma,
+      me,
+      "workspace_member.update",
+      "workspace_member",
+      updated.id
+    );
+    return toWorkspaceMemberDto(updated, userMap.get(updated.user_id) ?? null);
+  }
+
+  async deleteWorkspaceMember(sessionToken: string | null, memberId: string) {
+    const me = await this.requireMe(sessionToken);
+    const member = await this.getWorkspaceMemberOrThrow(memberId);
+    await this.permissions.requireCanManage(me.user.id, "workspace", member.workspace_id);
+
+    if (member.role === "owner") {
+      throw new ContentError("INVALID_INPUT", "Owner transfer is not part of this phase.", 400);
+    }
+    if (member.user_id === me.user.id) {
+      throw new ContentError("INVALID_INPUT", "Managers cannot remove themselves.", 400);
+    }
+
+    await this.prisma.workspaceMember.delete({ where: { id: memberId } });
+    await this.writeAuditLog(
+      this.prisma,
+      me,
+      "workspace_member.delete",
+      "workspace_member",
+      memberId
+    );
+    return { ok: true };
+  }
+
   async listCollaborators(sessionToken: string | null, objectTypeInput: string, objectId: string) {
     const me = await this.requireMe(sessionToken);
     const objectType = this.permissions.requireContentObjectType(objectTypeInput);
@@ -884,7 +969,15 @@ export class ContentService {
       orderBy: { created_at: "asc" }
     });
 
-    return collaborators.map(toCollaboratorDto);
+    const userMap = await this.loadUsersById(
+      collaborators
+        .filter((collaborator) => collaborator.subject_type === "user")
+        .map((collaborator) => collaborator.subject_id)
+    );
+
+    return collaborators.map((collaborator) =>
+      toCollaboratorDto(collaborator, userMap.get(collaborator.subject_id) ?? null)
+    );
   }
 
   async createCollaborator(
@@ -932,7 +1025,14 @@ export class ContentService {
       "collaborator",
       collaborator.id
     );
-    return toCollaboratorDto(collaborator);
+    const user =
+      collaborator.subject_type === "user"
+        ? await this.prisma.user.findUnique({
+            where: { id: collaborator.subject_id },
+            select: { id: true, email: true, display_name: true, status: true }
+          })
+        : null;
+    return toCollaboratorDto(collaborator, user);
   }
 
   async updateCollaborator(
@@ -965,7 +1065,14 @@ export class ContentService {
       "collaborator",
       collaborator.id
     );
-    return toCollaboratorDto(collaborator);
+    const user =
+      collaborator.subject_type === "user"
+        ? await this.prisma.user.findUnique({
+            where: { id: collaborator.subject_id },
+            select: { id: true, email: true, display_name: true, status: true }
+          })
+        : null;
+    return toCollaboratorDto(collaborator, user);
   }
 
   async deleteCollaborator(sessionToken: string | null, collaboratorId: string) {
@@ -1018,17 +1125,74 @@ export class ContentService {
         role,
         token_hash: hashToken(rawToken),
         status: "pending",
+        require_approval: Boolean(input.require_approval),
         invited_by: me.user.id,
         expires_at: input.expires_at ? new Date(input.expires_at) : null,
         max_uses: Number.isInteger(input.max_uses) ? Number(input.max_uses) : null,
         created_at: now
       }
     });
+    if (invitation.email) {
+      await this.prisma.authEmailOutbox.create({
+        data: {
+          tenant_id: invitation.tenant_id,
+          to_email: invitation.email,
+          template: "email_verification",
+          subject: "You have been invited to OpenKB",
+          link_url: buildWebUrl(`/invite/${rawToken}`),
+          payload: {
+            kind: "invitation",
+            object_type: invitation.object_type,
+            object_id: invitation.object_id,
+            role: invitation.role,
+            require_approval: invitation.require_approval
+          },
+          status: "pending",
+          created_at: now
+        }
+      });
+    }
     await this.writeAuditLog(this.prisma, me, "invitation.create", "invitation", invitation.id);
 
     return {
       ...toInvitationDto(invitation),
       token: rawToken
+    };
+  }
+
+  async listInvitations(sessionToken: string | null, objectTypeInput: string, objectId: string) {
+    const me = await this.requireMe(sessionToken);
+    const objectType = this.permissions.requireObjectType(objectTypeInput);
+    await this.permissions.requireCanManage(me.user.id, objectType, objectId);
+
+    const invitations = await this.prisma.invitation.findMany({
+      where: {
+        object_type: objectType,
+        object_id: objectId
+      },
+      orderBy: { created_at: "desc" }
+    });
+
+    return invitations.map(toInvitationDto);
+  }
+
+  async getInvitationByToken(rawToken: string) {
+    const invitation = await this.prisma.invitation.findFirst({
+      where: { token_hash: hashToken(rawToken) }
+    });
+    if (!invitation || invitation.status === "revoked") {
+      throw new ContentError("INVITATION_NOT_FOUND", "Invitation was not found.", 404);
+    }
+    if (invitation.expires_at && invitation.expires_at <= new Date()) {
+      throw new ContentError("INVITATION_NOT_FOUND", "Invitation has expired.", 404);
+    }
+    const object = await this.describeInvitationObject(
+      invitation.object_type,
+      invitation.object_id
+    );
+    return {
+      invitation: toInvitationDto(invitation),
+      object
     };
   }
 
@@ -1058,6 +1222,25 @@ export class ContentService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      if (invitation.require_approval) {
+        await tx.invitation.update({
+          where: { id: invitation.id },
+          data: {
+            status: "awaiting_approval",
+            invited_user_id: me.user.id,
+            used_count: { increment: 1 }
+          }
+        });
+        await this.writeAuditLog(
+          tx,
+          me,
+          "invitation.accept.awaiting_approval",
+          "invitation",
+          invitation.id
+        );
+        return;
+      }
+
       if (invitation.object_type === "workspace") {
         await tx.workspaceMember.upsert({
           where: {
@@ -1115,6 +1298,80 @@ export class ContentService {
       await this.writeAuditLog(tx, me, "invitation.accept", "invitation", invitation.id);
     });
 
+    return { ok: true, status: invitation.require_approval ? "awaiting_approval" : "accepted" };
+  }
+
+  async approveInvitation(sessionToken: string | null, invitationId: string) {
+    const me = await this.requireMe(sessionToken);
+    const invitation = await this.prisma.invitation.findUnique({ where: { id: invitationId } });
+    if (!invitation) {
+      throw new ContentError("INVITATION_NOT_FOUND", "Invitation was not found.", 404);
+    }
+    await this.permissions.requireCanManage(
+      me.user.id,
+      invitation.object_type as PermissionObjectType,
+      invitation.object_id
+    );
+    if (invitation.status !== "awaiting_approval" || !invitation.invited_user_id) {
+      throw new ContentError("INVALID_INPUT", "Invitation is not awaiting approval.", 400);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      if (invitation.object_type === "workspace") {
+        await tx.workspaceMember.upsert({
+          where: {
+            workspace_id_user_id: {
+              workspace_id: invitation.object_id,
+              user_id: invitation.invited_user_id!
+            }
+          },
+          create: {
+            tenant_id: invitation.tenant_id,
+            workspace_id: invitation.object_id,
+            user_id: invitation.invited_user_id!,
+            role: invitation.role,
+            created_at: new Date()
+          },
+          update: { role: invitation.role }
+        });
+      } else {
+        await tx.collaborator.upsert({
+          where: {
+            object_type_object_id_subject_type_subject_id: {
+              object_type: invitation.object_type,
+              object_id: invitation.object_id,
+              subject_type: "user",
+              subject_id: invitation.invited_user_id!
+            }
+          },
+          create: {
+            tenant_id: invitation.tenant_id,
+            object_type: invitation.object_type,
+            object_id: invitation.object_id,
+            subject_type: "user",
+            subject_id: invitation.invited_user_id!,
+            role: invitation.role,
+            source: "invitation",
+            created_by: invitation.invited_by,
+            created_at: new Date()
+          },
+          update: {
+            role: invitation.role,
+            source: "invitation"
+          }
+        });
+      }
+
+      await tx.invitation.update({
+        where: { id: invitation.id },
+        data: {
+          status: "accepted",
+          approved_by: me.user.id
+        }
+      });
+      await this.writeAuditLog(tx, me, "invitation.approve", "invitation", invitation.id);
+    });
+
     return { ok: true };
   }
 
@@ -1144,35 +1401,74 @@ export class ContentService {
     input: CreateShareLinkInput
   ) {
     const me = await this.requireMe(sessionToken);
-    const objectType = this.permissions.requireContentObjectType(objectTypeInput);
-    if (!(await this.permissions.canCreateShareLink(me.user.id, objectType, objectId))) {
+    const objectType = this.permissions.requireObjectType(objectTypeInput);
+    const canCreate =
+      objectType === "workspace"
+        ? await this.permissions.canManage(me.user.id, "workspace", objectId)
+        : await this.permissions.canCreateShareLink(me.user.id, objectType, objectId);
+    if (!canCreate) {
       throw new ContentError("INVALID_INPUT", "You cannot create a share link.", 403);
     }
-    await this.assertContentObjectExists(objectType, objectId);
+    await this.assertObjectExists(objectType, objectId);
 
     const rawToken = createRawToken();
-    const shareLink = await this.prisma.shareLink.create({
-      data: {
-        tenant_id: me.tenantId,
-        object_type: objectType,
-        object_id: objectId,
-        token_hash: hashToken(rawToken),
-        permission: "view",
-        require_login: Boolean(input.require_login),
-        restrict_to_workspace_members: Boolean(input.restrict_to_workspace_members),
-        expires_at: input.expires_at ? new Date(input.expires_at) : null,
-        created_by: me.user.id,
-        created_at: new Date()
-      }
+    const passwordHash = input.password ? await bcrypt.hash(input.password, 12) : null;
+    const now = new Date();
+    const shareLink = await this.prisma.$transaction(async (tx) => {
+      await tx.shareLink.updateMany({
+        where: {
+          object_type: objectType,
+          object_id: objectId,
+          revoked_at: null
+        },
+        data: { revoked_at: now }
+      });
+      return tx.shareLink.create({
+        data: {
+          tenant_id: me.tenantId,
+          object_type: objectType,
+          object_id: objectId,
+          token_hash: hashToken(rawToken),
+          permission: "view",
+          password_hash: passwordHash,
+          require_login: Boolean(input.require_login),
+          restrict_to_workspace_members: Boolean(input.restrict_to_workspace_members),
+          expires_at: input.expires_at ? new Date(input.expires_at) : null,
+          created_by: me.user.id,
+          created_at: now
+        }
+      });
     });
     await this.writeAuditLog(this.prisma, me, "share_link.create", "share_link", shareLink.id);
     return {
       ...toShareLinkDto(shareLink),
-      token: rawToken
+      token: rawToken,
+      url: buildWebUrl(`/share/${rawToken}`)
     };
   }
 
-  async getShare(rawToken: string, sessionToken: string | null) {
+  async listShareLinks(sessionToken: string | null, objectTypeInput: string, objectId: string) {
+    const me = await this.requireMe(sessionToken);
+    const objectType = this.permissions.requireObjectType(objectTypeInput);
+    await this.permissions.requireCanManage(me.user.id, objectType, objectId);
+
+    const shareLinks = await this.prisma.shareLink.findMany({
+      where: {
+        object_type: objectType,
+        object_id: objectId
+      },
+      orderBy: { created_at: "desc" }
+    });
+
+    return shareLinks.map(toShareLinkDto);
+  }
+
+  async getShare(
+    rawToken: string,
+    sessionToken: string | null,
+    cookieHeader?: string,
+    documentId?: string
+  ) {
     const shareLink = await this.prisma.shareLink.findFirst({
       where: {
         token_hash: hashToken(rawToken),
@@ -1182,6 +1478,9 @@ export class ContentService {
     if (!shareLink || (shareLink.expires_at && shareLink.expires_at <= new Date())) {
       throw new ContentError("SHARE_LINK_NOT_FOUND", "Share link was not found.", 404);
     }
+    if (shareLink.password_hash && !hasValidShareAccessCookie(cookieHeader, shareLink)) {
+      throw new ContentError("SHARE_PASSWORD_REQUIRED", "Share password is required.", 403);
+    }
 
     let me: AuthenticatedUser | null = null;
     if (shareLink.require_login || shareLink.restrict_to_workspace_members) {
@@ -1189,8 +1488,9 @@ export class ContentService {
     }
 
     const object = await this.resolveShareObject(
-      shareLink.object_type as ContentObjectType,
-      shareLink.object_id
+      shareLink.object_type as PermissionObjectType,
+      shareLink.object_id,
+      documentId
     );
     if (shareLink.restrict_to_workspace_members && me) {
       const role = await this.permissions.resolveWorkspaceRole(me.user.id, object.workspaceId);
@@ -1205,6 +1505,43 @@ export class ContentService {
     };
   }
 
+  async verifySharePassword(rawToken: string, password: string) {
+    const shareLink = await this.prisma.shareLink.findFirst({
+      where: {
+        token_hash: hashToken(rawToken),
+        revoked_at: null
+      }
+    });
+    if (
+      !shareLink ||
+      (shareLink.expires_at && shareLink.expires_at <= new Date()) ||
+      !shareLink.password_hash
+    ) {
+      throw new ContentError("SHARE_LINK_NOT_FOUND", "Share link was not found.", 404);
+    }
+    if (!(await bcrypt.compare(password ?? "", shareLink.password_hash))) {
+      throw new ContentError("SHARE_PASSWORD_REQUIRED", "Share password is incorrect.", 403);
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenant_id: shareLink.tenant_id,
+        actor_user_id: null,
+        actor_type: "system",
+        action: "share_link.password.verify",
+        object_type: "share_link",
+        object_id: shareLink.id,
+        metadata: {},
+        created_at: new Date()
+      }
+    });
+
+    return {
+      ok: true,
+      cookie: createShareAccessCookie(shareLink)
+    };
+  }
+
   async revokeShareLink(sessionToken: string | null, shareLinkId: string) {
     const me = await this.requireMe(sessionToken);
     const shareLink = await this.prisma.shareLink.findUnique({ where: { id: shareLinkId } });
@@ -1213,7 +1550,7 @@ export class ContentService {
     }
     await this.permissions.requireCanManage(
       me.user.id,
-      shareLink.object_type as ContentObjectType,
+      shareLink.object_type as PermissionObjectType,
       shareLink.object_id
     );
     await this.prisma.shareLink.update({
@@ -1222,6 +1559,49 @@ export class ContentService {
     });
     await this.writeAuditLog(this.prisma, me, "share_link.revoke", "share_link", shareLinkId);
     return { ok: true };
+  }
+
+  async resetShareLink(sessionToken: string | null, shareLinkId: string) {
+    const me = await this.requireMe(sessionToken);
+    const current = await this.prisma.shareLink.findUnique({ where: { id: shareLinkId } });
+    if (!current) {
+      throw new ContentError("SHARE_LINK_NOT_FOUND", "Share link was not found.", 404);
+    }
+    await this.permissions.requireCanManage(
+      me.user.id,
+      current.object_type as PermissionObjectType,
+      current.object_id
+    );
+
+    const rawToken = createRawToken();
+    const now = new Date();
+    const next = await this.prisma.$transaction(async (tx) => {
+      await tx.shareLink.update({
+        where: { id: shareLinkId },
+        data: { revoked_at: now }
+      });
+      return tx.shareLink.create({
+        data: {
+          tenant_id: current.tenant_id,
+          object_type: current.object_type,
+          object_id: current.object_id,
+          token_hash: hashToken(rawToken),
+          permission: "view",
+          password_hash: current.password_hash,
+          require_login: current.require_login,
+          restrict_to_workspace_members: current.restrict_to_workspace_members,
+          expires_at: current.expires_at,
+          created_by: me.user.id,
+          created_at: now
+        }
+      });
+    });
+    await this.writeAuditLog(this.prisma, me, "share_link.reset", "share_link", next.id);
+    return {
+      ...toShareLinkDto(next),
+      token: rawToken,
+      url: buildWebUrl(`/share/${rawToken}`)
+    };
   }
 
   private async requireMe(sessionToken: string | null): Promise<AuthenticatedUser> {
@@ -1396,6 +1776,31 @@ export class ContentService {
     return collaborator;
   }
 
+  private async getWorkspaceMemberOrThrow(memberId: string) {
+    const member = await this.prisma.workspaceMember.findUnique({ where: { id: memberId } });
+    if (!member) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Workspace member was not found.", 404);
+    }
+    return member;
+  }
+
+  private async loadUsersById(userIds: string[]) {
+    const uniqueIds = Array.from(new Set(userIds)).filter(Boolean);
+    if (uniqueIds.length === 0) {
+      return new Map<string, UserSummary>();
+    }
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: uniqueIds } },
+      select: {
+        id: true,
+        email: true,
+        display_name: true,
+        status: true
+      }
+    });
+    return new Map(users.map((user) => [user.id, user]));
+  }
+
   private async assertObjectExists(objectType: PermissionObjectType, objectId: string) {
     if (objectType === "workspace") {
       const workspace = await this.prisma.workspace.findUnique({ where: { id: objectId } });
@@ -1471,20 +1876,92 @@ export class ContentService {
     return false;
   }
 
-  private async resolveShareObject(objectType: ContentObjectType, objectId: string) {
+  private async describeInvitationObject(objectType: string, objectId: string) {
+    if (objectType === "workspace") {
+      const workspace = await this.prisma.workspace.findUnique({ where: { id: objectId } });
+      if (!workspace) {
+        throw new ContentError("INVITATION_NOT_FOUND", "Invitation object was not found.", 404);
+      }
+      return { type: "workspace", id: workspace.id, title: workspace.name };
+    }
+    if (objectType === "knowledge_base") {
+      const knowledgeBase = await this.prisma.knowledgeBase.findUnique({ where: { id: objectId } });
+      if (!knowledgeBase) {
+        throw new ContentError("INVITATION_NOT_FOUND", "Invitation object was not found.", 404);
+      }
+      return { type: "knowledge_base", id: knowledgeBase.id, title: knowledgeBase.title };
+    }
+    const document = await this.prisma.document.findUnique({ where: { id: objectId } });
+    if (!document) {
+      throw new ContentError("INVITATION_NOT_FOUND", "Invitation object was not found.", 404);
+    }
+    return { type: "document", id: document.id, title: document.title };
+  }
+
+  private async resolveShareObject(
+    objectType: PermissionObjectType,
+    objectId: string,
+    requestedDocumentId?: string
+  ) {
+    if (objectType === "workspace") {
+      const workspace = await this.prisma.workspace.findUnique({ where: { id: objectId } });
+      if (!workspace) {
+        throw new ContentError("SHARE_LINK_NOT_FOUND", "Share link was not found.", 404);
+      }
+      const knowledgeBases = await this.prisma.knowledgeBase.findMany({
+        where: {
+          workspace_id: objectId,
+          status: "active"
+        },
+        orderBy: [{ created_at: "asc" }]
+      });
+      return {
+        workspaceId: workspace.id,
+        payload: {
+          ...toWorkspaceDto(workspace),
+          knowledge_bases: knowledgeBases.map(toKnowledgeBaseDto)
+        }
+      };
+    }
+
     if (objectType === "knowledge_base") {
       const knowledgeBase = await this.prisma.knowledgeBase.findUnique({ where: { id: objectId } });
       if (!knowledgeBase) {
         throw new ContentError("SHARE_LINK_NOT_FOUND", "Share link was not found.", 404);
       }
+      const documents = await this.prisma.document.findMany({
+        where: {
+          knowledge_base_id: objectId,
+          status: { not: "deleted" }
+        },
+        orderBy: [{ sort_order: "asc" }, { created_at: "asc" }]
+      });
+      const selected =
+        (requestedDocumentId
+          ? documents.find((document) => document.id === requestedDocumentId)
+          : documents.find((document) => document.type === "page")) ?? null;
+      const version = selected?.current_version_id
+        ? await this.prisma.documentVersion.findUnique({
+            where: { id: selected.current_version_id }
+          })
+        : null;
       return {
         workspaceId: knowledgeBase.workspace_id,
-        payload: toKnowledgeBaseDto(knowledgeBase)
+        payload: {
+          ...toKnowledgeBaseDto(knowledgeBase),
+          documents: documents.map(toDocumentDto),
+          selectedDocument: selected
+            ? {
+                ...toDocumentDto(selected),
+                currentVersion: version ? toDocumentVersionDto(version) : null
+              }
+            : null
+        }
       };
     }
 
     const document = await this.prisma.document.findUnique({ where: { id: objectId } });
-    if (!document) {
+    if (!document || document.status === "deleted") {
       throw new ContentError("SHARE_LINK_NOT_FOUND", "Share link was not found.", 404);
     }
     const version = document.current_version_id
@@ -1609,6 +2086,16 @@ function normalizeGrantableContentRole(value: string | undefined): ContentInvita
   throw new ContentError("INVALID_INPUT", "role is invalid.", 400);
 }
 
+function normalizeGrantableWorkspaceRole(value: string | undefined): WorkspaceInvitationRole {
+  if (WORKSPACE_INVITATION_ROLES.includes(value as WorkspaceInvitationRole)) {
+    return value as WorkspaceInvitationRole;
+  }
+  if (WORKSPACE_ROLES.includes(value as WorkspaceRole)) {
+    throw new ContentError("INVALID_INPUT", "owner cannot be granted through this API.", 400);
+  }
+  throw new ContentError("INVALID_INPUT", "role is invalid.", 400);
+}
+
 function normalizeContentInvitationRole(value: string | undefined): ContentInvitationRole {
   if (CONTENT_INVITATION_ROLES.includes(value as ContentInvitationRole)) {
     return value as ContentInvitationRole;
@@ -1633,6 +2120,94 @@ function createRawToken(): string {
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function buildWebUrl(path: string): string {
+  const baseUrl = process.env.WEB_BASE_URL || process.env.APP_BASE_URL || "http://localhost:3100";
+  return `${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function shareAccessCookieName(shareLinkId: string): string {
+  return `openkb_share_${shareLinkId}`;
+}
+
+function createShareAccessCookie(shareLink: { id: string; password_hash: string | null }): string {
+  if (!shareLink.password_hash) {
+    throw new ContentError("INVALID_INPUT", "Share link has no password.", 400);
+  }
+  const expiresAt = new Date(
+    Date.now() + parsePositiveInt(process.env.SHARE_ACCESS_TTL_HOURS, 24) * 60 * 60 * 1000
+  );
+  const exp = Math.floor(expiresAt.getTime() / 1000);
+  const signature = signShareAccessCookie(shareLink.id, exp, shareLink.password_hash);
+  const parts = [
+    `${shareAccessCookieName(shareLink.id)}=${encodeURIComponent(`${exp}.${signature}`)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Expires=${expiresAt.toUTCString()}`
+  ];
+  if (shouldUseSecureCookie()) {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
+function hasValidShareAccessCookie(
+  cookieHeader: string | undefined,
+  shareLink: { id: string; password_hash: string | null }
+): boolean {
+  if (!cookieHeader || !shareLink.password_hash) {
+    return false;
+  }
+  const value = getCookieValue(cookieHeader, shareAccessCookieName(shareLink.id));
+  if (!value) {
+    return false;
+  }
+  const [rawExp, signature] = value.split(".");
+  const exp = Number(rawExp);
+  if (!Number.isInteger(exp) || !signature || exp <= Math.floor(Date.now() / 1000)) {
+    return false;
+  }
+  const expected = signShareAccessCookie(shareLink.id, exp, shareLink.password_hash);
+  return safeEqual(signature, expected);
+}
+
+function signShareAccessCookie(shareLinkId: string, exp: number, passwordHash: string): string {
+  return createHmac("sha256", passwordHash).update(`${shareLinkId}.${exp}`).digest("base64url");
+}
+
+function safeEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function getCookieValue(cookieHeader: string, name: string): string | null {
+  for (const cookie of cookieHeader.split(";")) {
+    const [rawKey, ...rawValue] = cookie.trim().split("=");
+    if (rawKey === name) {
+      return decodeURIComponent(rawValue.join("="));
+    }
+  }
+  return null;
+}
+
+function shouldUseSecureCookie(): boolean {
+  const value = process.env.AUTH_COOKIE_SECURE?.toLowerCase();
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  const baseUrl = process.env.APP_BASE_URL || process.env.WEB_BASE_URL || "";
+  return baseUrl.startsWith("https://");
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function markdownHash(markdown: string): string {
@@ -1745,18 +2320,50 @@ function toDocumentVersionDto(version: {
   };
 }
 
-function toCollaboratorDto(collaborator: {
-  id: string;
-  tenant_id: string;
-  object_type: string;
-  object_id: string;
-  subject_type: string;
-  subject_id: string;
-  role: string;
-  source: string;
-  created_by: string | null;
-  created_at: Date;
-}) {
+function toWorkspaceMemberDto(
+  member: {
+    id: string;
+    tenant_id: string;
+    workspace_id: string;
+    user_id: string;
+    role: string;
+    created_at: Date;
+  },
+  user: UserSummary | null = null
+) {
+  return {
+    id: member.id,
+    tenant_id: member.tenant_id,
+    workspace_id: member.workspace_id,
+    user_id: member.user_id,
+    role: member.role,
+    created_at: member.created_at.toISOString(),
+    user: user
+      ? {
+          id: user.id,
+          email: user.email,
+          display_name: user.display_name,
+          status: user.status
+        }
+      : null
+  };
+}
+
+function toCollaboratorDto(
+  collaborator: {
+    id: string;
+    tenant_id: string;
+    object_type: string;
+    object_id: string;
+    subject_type: string;
+    subject_id: string;
+    role: string;
+    source: string;
+    created_by: string | null;
+    created_at: Date;
+  },
+  user: UserSummary | null = null
+) {
   return {
     id: collaborator.id,
     tenant_id: collaborator.tenant_id,
@@ -1767,7 +2374,15 @@ function toCollaboratorDto(collaborator: {
     role: collaborator.role,
     source: collaborator.source,
     created_by: collaborator.created_by,
-    created_at: collaborator.created_at.toISOString()
+    created_at: collaborator.created_at.toISOString(),
+    user: user
+      ? {
+          id: user.id,
+          email: user.email,
+          display_name: user.display_name,
+          status: user.status
+        }
+      : null
   };
 }
 
@@ -1780,6 +2395,8 @@ function toInvitationDto(invitation: {
   invited_user_id: string | null;
   role: string;
   status: string;
+  require_approval: boolean;
+  approved_by: string | null;
   expires_at: Date | null;
   max_uses: number | null;
   used_count: number;
@@ -1795,6 +2412,8 @@ function toInvitationDto(invitation: {
     invited_user_id: invitation.invited_user_id,
     role: invitation.role,
     status: invitation.status,
+    require_approval: invitation.require_approval,
+    approved_by: invitation.approved_by,
     expires_at: invitation.expires_at ? invitation.expires_at.toISOString() : null,
     max_uses: invitation.max_uses,
     used_count: invitation.used_count,
@@ -1809,6 +2428,7 @@ function toShareLinkDto(shareLink: {
   object_type: string;
   object_id: string;
   permission: string;
+  password_hash?: string | null;
   require_login: boolean;
   restrict_to_workspace_members: boolean;
   expires_at: Date | null;
@@ -1822,6 +2442,7 @@ function toShareLinkDto(shareLink: {
     object_type: shareLink.object_type,
     object_id: shareLink.object_id,
     permission: shareLink.permission,
+    has_password: Boolean(shareLink.password_hash),
     require_login: shareLink.require_login,
     restrict_to_workspace_members: shareLink.restrict_to_workspace_members,
     expires_at: shareLink.expires_at ? shareLink.expires_at.toISOString() : null,

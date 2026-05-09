@@ -78,6 +78,12 @@ importers:
       '@openkb/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@types/bcryptjs':
+        specifier: ^2.4.6
+        version: 2.4.6
+      bcryptjs:
+        specifier: ^2.4.3
+        version: 2.4.3
       fastify:
         specifier: 5.8.5
         version: 5.8.5

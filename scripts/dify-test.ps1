@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+. .\scripts\test-postgres-env.ps1
 
 function Invoke-Step {
   param(
@@ -13,9 +14,9 @@ function Invoke-Step {
 }
 
 try {
+  Set-OpenKBTestPostgresEnv
   Invoke-Step { pnpm db:test:up } "db:test:up"
   Invoke-Step { pnpm milvus:test:up } "milvus:test:up"
-  $env:DATABASE_URL = "postgresql://openkb:openkb@localhost:55432/openkb_test?schema=public"
   $env:MILVUS_URI = "localhost:59530"
   $env:MILVUS_ACTIVE_ALIAS = "openkb_chunks_active"
   $env:MILVUS_COLLECTION_PREFIX = "openkb_chunks"

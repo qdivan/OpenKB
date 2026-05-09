@@ -1,4 +1,7 @@
 $ErrorActionPreference = "Stop"
+. .\scripts\test-postgres-env.ps1
+
+Set-OpenKBTestPostgresEnv
 
 $pidDir = Join-Path (Resolve-Path ".") ".turbo"
 $pidFile = Join-Path $pidDir "openkb-wsl-keepalive.pid"
@@ -17,13 +20,28 @@ if (-not $keepalive) {
   Set-Content -Path $pidFile -Value $process.Id
 }
 
-wsl docker compose -f deploy/docker-compose/postgres.test.yml up -d
+wsl env OPENKB_TEST_POSTGRES_PORT=$env:OPENKB_TEST_POSTGRES_PORT docker compose -f deploy/docker-compose/postgres.test.yml up -d
+if ($LASTEXITCODE -ne 0) {
+  throw "Unable to start openkb-postgres-test. Check whether localhost:$env:OPENKB_TEST_POSTGRES_PORT is already in use."
+}
 
 for ($i = 0; $i -lt 60; $i++) {
   $status = wsl docker inspect -f "{{.State.Health.Status}}" openkb-postgres-test 2>$null
 
   if ($LASTEXITCODE -eq 0 -and $status -eq "healthy") {
     Write-Host "openkb-postgres-test is healthy."
+    $databaseExists = wsl docker exec openkb-postgres-test psql -U openkb -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='openkb_test';"
+    if ($LASTEXITCODE -ne 0) {
+      throw "Unable to inspect openkb_test database."
+    }
+
+    if ($databaseExists.Trim() -ne "1") {
+      Write-Host "Creating missing openkb_test database."
+      wsl docker exec openkb-postgres-test createdb -U openkb openkb_test
+      if ($LASTEXITCODE -ne 0) {
+        throw "Unable to create openkb_test database."
+      }
+    }
     exit 0
   }
 

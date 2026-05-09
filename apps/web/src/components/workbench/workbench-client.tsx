@@ -63,7 +63,9 @@ import { useRouter } from "next/navigation";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { KnowledgeBaseDashboard } from "@/components/workbench/knowledge-base-dashboard";
+import { AccessPanel, type AccessTarget } from "@/components/workbench/access-panel";
 import { EditorToolbar, type EditorToolbarAction } from "@/components/workbench/editor-toolbar";
+import { SharePanel } from "@/components/workbench/share-panel";
 import type {
   MilkdownCommandBridge,
   MilkdownEditorProps
@@ -92,6 +94,7 @@ import {
   unpublishDocument,
   uploadFile,
   type AuthMe,
+  type AccessObjectType,
   type DocumentDetail,
   type DocumentSummary,
   type ImportJob,
@@ -163,6 +166,7 @@ export function WorkbenchClient({
   const [findText, setFindText] = useState("");
   const [replaceText, setReplaceText] = useState("");
   const [findReplaceMatchCase, setFindReplaceMatchCase] = useState(false);
+  const [activeWorkbenchPanel, setActiveWorkbenchPanel] = useState<"access" | "share" | null>(null);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const selectedKnowledgeBase = knowledgeBases.find(
@@ -190,6 +194,15 @@ export function WorkbenchClient({
   const canEditCurrentDocument = currentDocument
     ? canEditDocumentRole(currentDocument.role)
     : false;
+  const accessTargets = useMemo(
+    () => buildAccessTargets(selectedWorkspace, selectedKnowledgeBase, currentDocument, t),
+    [currentDocument, selectedKnowledgeBase, selectedWorkspace, t]
+  );
+  const defaultAccessTargetType: AccessObjectType = currentDocument
+    ? "document"
+    : selectedKnowledgeBase
+      ? "knowledge_base"
+      : "workspace";
 
   useEffect(() => {
     latestDraftRef.current = { title: draftTitle, markdown: draftMarkdown };
@@ -355,27 +368,46 @@ export function WorkbenchClient({
     setMessage("");
 
     try {
-      const [nextMe, nextWorkspaces] = await Promise.all([getMe(), listWorkspaces()]);
+      const [nextMe, nextWorkspaces, requestedKnowledgeBase] = await Promise.all([
+        getMe(),
+        listWorkspaces(),
+        initialKnowledgeBaseId ? getKnowledgeBase(initialKnowledgeBaseId) : Promise.resolve(null)
+      ]);
       setMe(nextMe);
       setWorkspaces(nextWorkspaces);
 
       const workspace =
-        nextWorkspaces.find((item) => item.id === initialWorkspaceId) ?? nextWorkspaces[0] ?? null;
+        (requestedKnowledgeBase
+          ? (nextWorkspaces.find((item) => item.id === requestedKnowledgeBase.workspace_id) ?? null)
+          : null) ??
+        nextWorkspaces.find((item) => item.id === initialWorkspaceId) ??
+        nextWorkspaces[0] ??
+        null;
       setSelectedWorkspaceId(workspace?.id ?? null);
 
       if (!workspace) {
-        setKnowledgeBases([]);
-        setDocuments([]);
-        setImportJobs([]);
-        clearDocumentState();
+        setKnowledgeBases(requestedKnowledgeBase ? [requestedKnowledgeBase] : []);
+        if (requestedKnowledgeBase) {
+          await loadKnowledgeBase(requestedKnowledgeBase.id, initialDocumentId);
+        } else {
+          setDocuments([]);
+          setImportJobs([]);
+          clearDocumentState();
+        }
         return;
       }
 
       const nextKnowledgeBases = await listKnowledgeBases(workspace.id);
-      setKnowledgeBases(nextKnowledgeBases);
+      const visibleKnowledgeBases =
+        requestedKnowledgeBase &&
+        !nextKnowledgeBases.some((item) => item.id === requestedKnowledgeBase.id)
+          ? [requestedKnowledgeBase, ...nextKnowledgeBases]
+          : nextKnowledgeBases;
+      setKnowledgeBases(visibleKnowledgeBases);
       const knowledgeBase =
-        nextKnowledgeBases.find((item) => item.id === initialKnowledgeBaseId) ??
-        nextKnowledgeBases[0] ??
+        requestedKnowledgeBase ??
+        visibleKnowledgeBases.find((item) => item.id === initialKnowledgeBaseId) ??
+        visibleKnowledgeBases[0] ??
         null;
 
       if (knowledgeBase) {
@@ -614,6 +646,20 @@ export function WorkbenchClient({
 
   async function selectKnowledgeBase(knowledgeBaseId: string) {
     if (knowledgeBaseId === selectedKnowledgeBaseId) {
+      if (!currentDocument) {
+        return;
+      }
+      if (!confirmDiscardDraft()) {
+        return;
+      }
+      setIsBusy(true);
+      setMessage("");
+      try {
+        router.push(`/app/kb/${knowledgeBaseId}`);
+        clearDocumentState();
+      } finally {
+        setIsBusy(false);
+      }
       return;
     }
     if (!confirmDiscardDraft()) {
@@ -1312,10 +1358,22 @@ export function WorkbenchClient({
                 <Settings2 className="h-4 w-4" />
               </button>
             ) : null}
-            <button className="icon-button" title={t("Collaborators")} type="button">
+            <button
+              className="icon-button"
+              disabled={accessTargets.length === 0}
+              onClick={() => setActiveWorkbenchPanel("access")}
+              title={t("Collaborators")}
+              type="button"
+            >
               <Users className="h-4 w-4" />
             </button>
-            <button className="icon-button" title={t("Share")} type="button">
+            <button
+              className="icon-button"
+              disabled={accessTargets.length === 0}
+              onClick={() => setActiveWorkbenchPanel("share")}
+              title={t("Share")}
+              type="button"
+            >
               <Share2 className="h-4 w-4" />
             </button>
             <button
@@ -1649,6 +1707,20 @@ export function WorkbenchClient({
           </div>
         )}
       </section>
+      {activeWorkbenchPanel === "access" && accessTargets.length > 0 ? (
+        <AccessPanel
+          initialTargetType={defaultAccessTargetType}
+          onClose={() => setActiveWorkbenchPanel(null)}
+          targets={accessTargets}
+        />
+      ) : null}
+      {activeWorkbenchPanel === "share" && accessTargets.length > 0 ? (
+        <SharePanel
+          initialTargetType={defaultAccessTargetType}
+          onClose={() => setActiveWorkbenchPanel(null)}
+          targets={accessTargets}
+        />
+      ) : null}
     </main>
   );
 }
@@ -2150,6 +2222,40 @@ function buildDocumentTree(documents: DocumentSummary[]): TreeNode[] {
   sort(roots);
 
   return roots;
+}
+
+function buildAccessTargets(
+  workspace: Workspace | undefined,
+  knowledgeBase: KnowledgeBase | undefined,
+  document: DocumentDetail | null,
+  t: (key: string) => string
+): AccessTarget[] {
+  const targets: AccessTarget[] = [];
+  if (workspace) {
+    targets.push({
+      type: "workspace",
+      id: workspace.id,
+      title: workspace.name,
+      subtitle: t("Workspace members")
+    });
+  }
+  if (knowledgeBase) {
+    targets.push({
+      type: "knowledge_base",
+      id: knowledgeBase.id,
+      title: knowledgeBase.title,
+      subtitle: t("Knowledge base collaborators")
+    });
+  }
+  if (document) {
+    targets.push({
+      type: "document",
+      id: document.id,
+      title: document.title,
+      subtitle: t("Document collaborators")
+    });
+  }
+  return targets;
 }
 
 function updateDocumentInList(

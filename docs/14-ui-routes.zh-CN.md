@@ -19,6 +19,8 @@
 /app/admin/retrieval
 /app/admin/models
 /password-reset
+/invite/:token
+/share/:token
 ```
 
 Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；选中文档后进入 Yuque-like 文档编辑器：左侧文档树、中心文档编辑器、右侧 outline，并支持 Read/Edit/Source、自动保存、上传导入、搜索入口和发布状态切换。
@@ -26,7 +28,6 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 ## 2. 当前未实现页面
 
 ```text
-/share/:token
 /admin/auth-settings
 /admin/milvus
 /admin/milvus/rebuild-jobs
@@ -50,7 +51,6 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 
 规划但未实现：
 
-- ShareAndCollaboratorPanel。
 - 文档版本列表和 restore UI。
 - 当前文档切片侧栏。
 - 当前文档检索命中解释。
@@ -59,18 +59,16 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 
 位置：文档/知识库顶部“分享”或“协作”按钮。
 
-规划包含：
+Phase 16 已实现：
 
-- 当前公开性。
-- 协作者列表。
-- 添加协作者。
-- 邀请链接。
-- 分享链接。
-- 密码访问。
-- 仅空间成员访问。
-- 关闭分享。
+- 工作台顶部“协作”按钮打开 AccessPanel，默认目标为当前文档；未选中文档时为知识库；面板内可切换 Workspace / KB / Document。
+- Workspace 使用 `workspace_members`，展示成员并允许管理 `admin/member/guest`；owner 锁定，不做 owner transfer。
+- KB/document 使用 `collaborators`，展示协作者并允许管理 `manager/editor/viewer`；owner 锁定。
+- 邀请优先按邮箱创建，支持 `require_approval`、过期时间和最大使用次数；`/invite/:token` 用于登录用户接受邀请，待审批邀请需管理员批准后才授权。
+- 顶部“分享”按钮打开 SharePanel，支持只读分享链接、密码访问、登录要求、仅工作区成员、关闭分享和重置链接。
+- `/share/:token` 是最小只读页；文档分享展示只读 Markdown，知识库分享展示文档树和只读文档内容入口，workspace 分享展示共享知识库列表。
 
-当前 Web 顶部已有分享/协作图标入口感知，但完整面板、密码分享、邀请审批和关闭/重置链接 UI 尚未实现。
+仍未实现：分享链接编辑权限、owner 转让、宽泛用户搜索、完整分享访问日志 UI。
 
 ## 5. 知识库 Dashboard
 

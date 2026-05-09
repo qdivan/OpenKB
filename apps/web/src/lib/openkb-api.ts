@@ -86,6 +86,88 @@ export type Workspace = {
   updated_at: string;
 };
 
+export type AccessObjectType = "workspace" | "knowledge_base" | "document";
+export type UserSummary = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  status: string;
+};
+export type WorkspaceMemberRole = "owner" | "admin" | "member" | "guest";
+export type CollaboratorRole = "owner" | "manager" | "editor" | "viewer";
+export type InvitationRole =
+  | Exclude<WorkspaceMemberRole, "owner">
+  | Exclude<CollaboratorRole, "owner">;
+
+export type WorkspaceMember = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  user_id: string;
+  role: WorkspaceMemberRole;
+  created_at: string;
+  user: UserSummary | null;
+};
+
+export type Collaborator = {
+  id: string;
+  tenant_id: string;
+  object_type: "knowledge_base" | "document";
+  object_id: string;
+  subject_type: "user" | "group";
+  subject_id: string;
+  role: CollaboratorRole;
+  source: string;
+  created_by: string | null;
+  created_at: string;
+  user: UserSummary | null;
+};
+
+export type Invitation = {
+  id: string;
+  tenant_id: string;
+  object_type: AccessObjectType;
+  object_id: string;
+  email: string | null;
+  invited_user_id: string | null;
+  role: InvitationRole;
+  status: "pending" | "awaiting_approval" | "accepted" | "revoked";
+  require_approval: boolean;
+  approved_by: string | null;
+  expires_at: string | null;
+  max_uses: number | null;
+  used_count: number;
+  invited_by: string;
+  created_at: string;
+  token?: string;
+};
+
+export type InvitationDetail = {
+  invitation: Invitation;
+  object: {
+    type: AccessObjectType;
+    id: string;
+    title: string;
+  };
+};
+
+export type ShareLink = {
+  id: string;
+  tenant_id: string;
+  object_type: AccessObjectType;
+  object_id: string;
+  permission: "view";
+  has_password: boolean;
+  require_login: boolean;
+  restrict_to_workspace_members: boolean;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_by: string;
+  created_at: string;
+  token?: string;
+  url?: string;
+};
+
 export type KnowledgeBase = {
   id: string;
   tenant_id: string;
@@ -129,6 +211,20 @@ export type DocumentVersion = {
 export type DocumentDetail = DocumentSummary & {
   currentVersion: DocumentVersion | null;
   role?: string | null;
+};
+
+export type SharedWorkspace = Workspace & {
+  knowledge_bases?: KnowledgeBase[];
+};
+
+export type SharedKnowledgeBase = KnowledgeBase & {
+  documents: DocumentSummary[];
+  selectedDocument: DocumentDetail | null;
+};
+
+export type ShareResponse = {
+  share: ShareLink;
+  object: SharedWorkspace | SharedKnowledgeBase | DocumentDetail;
 };
 
 export type DocumentAsset = {
@@ -498,6 +594,24 @@ export function updateWorkspace(id: string, input: { name?: string; slug?: strin
   });
 }
 
+export function listWorkspaceMembers(workspaceId: string) {
+  return apiFetch<WorkspaceMember[]>(`/api/workspaces/${workspaceId}/members`);
+}
+
+export function updateWorkspaceMember(
+  id: string,
+  input: { role: Exclude<WorkspaceMemberRole, "owner"> }
+) {
+  return apiFetch<WorkspaceMember>(`/api/workspace-members/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteWorkspaceMember(id: string) {
+  return apiFetch<{ ok: true }>(`/api/workspace-members/${id}`, { method: "DELETE" });
+}
+
 export function listKnowledgeBases(workspaceId?: string) {
   const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
   return apiFetch<KnowledgeBase[]>(`/api/knowledge-bases${query}`);
@@ -663,6 +777,108 @@ export function publishDocument(id: string) {
 
 export function unpublishDocument(id: string) {
   return apiFetch<DocumentDetail>(`/api/documents/${id}/unpublish`, { method: "POST" });
+}
+
+export function listCollaborators(objectType: "knowledge_base" | "document", objectId: string) {
+  return apiFetch<Collaborator[]>(`/api/objects/${objectType}/${objectId}/collaborators`);
+}
+
+export function updateCollaborator(
+  id: string,
+  input: { role: Exclude<CollaboratorRole, "owner"> }
+) {
+  return apiFetch<Collaborator>(`/api/collaborators/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteCollaborator(id: string) {
+  return apiFetch<{ ok: true }>(`/api/collaborators/${id}`, { method: "DELETE" });
+}
+
+export function listInvitations(objectType: AccessObjectType, objectId: string) {
+  return apiFetch<Invitation[]>(`/api/objects/${objectType}/${objectId}/invitations`);
+}
+
+export function createInvitation(
+  objectType: AccessObjectType,
+  objectId: string,
+  input: {
+    email: string;
+    role: InvitationRole;
+    require_approval?: boolean;
+    expires_at?: string | null;
+    max_uses?: number | null;
+  }
+) {
+  return apiFetch<Invitation>(`/api/objects/${objectType}/${objectId}/invitations`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function getInvitation(token: string) {
+  return apiFetch<InvitationDetail>(`/api/invitations/${encodeURIComponent(token)}`);
+}
+
+export function acceptInvitation(token: string) {
+  return apiFetch<{ ok: true; status: "accepted" | "awaiting_approval" }>(
+    `/api/invitations/${encodeURIComponent(token)}/accept`,
+    { method: "POST" }
+  );
+}
+
+export function approveInvitation(id: string) {
+  return apiFetch<{ ok: true }>(`/api/invitations/${id}/approve`, { method: "POST" });
+}
+
+export function revokeInvitation(id: string) {
+  return apiFetch<{ ok: true }>(`/api/invitations/${id}/revoke`, { method: "POST" });
+}
+
+export function listShareLinks(objectType: AccessObjectType, objectId: string) {
+  return apiFetch<ShareLink[]>(`/api/objects/${objectType}/${objectId}/share-links`);
+}
+
+export function createShareLink(
+  objectType: AccessObjectType,
+  objectId: string,
+  input: {
+    password?: string | null;
+    require_login?: boolean;
+    restrict_to_workspace_members?: boolean;
+    expires_at?: string | null;
+  }
+) {
+  return apiFetch<ShareLink>(`/api/objects/${objectType}/${objectId}/share-links`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function getShare(token: string, documentId?: string | null) {
+  const params = new URLSearchParams();
+  if (documentId) params.set("document_id", documentId);
+  const query = params.toString();
+  return apiFetch<ShareResponse>(
+    `/api/share/${encodeURIComponent(token)}${query ? `?${query}` : ""}`
+  );
+}
+
+export function verifySharePassword(token: string, password: string) {
+  return apiFetch<{ ok: true }>(`/api/share/${encodeURIComponent(token)}/verify-password`, {
+    method: "POST",
+    body: JSON.stringify({ password })
+  });
+}
+
+export function revokeShareLink(id: string) {
+  return apiFetch<{ ok: true }>(`/api/share-links/${id}/revoke`, { method: "POST" });
+}
+
+export function resetShareLink(id: string) {
+  return apiFetch<ShareLink>(`/api/share-links/${id}/reset`, { method: "POST" });
 }
 
 export function getRetrievalSettings() {

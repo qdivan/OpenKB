@@ -4,6 +4,7 @@ import { createDatabaseClient } from "@openkb/db";
 import { DEV_ADMIN_PASSWORD, seedDev } from "@openkb/db/seed-dev";
 import { AuthService } from "@openkb/auth";
 import { PermissionService } from "@openkb/permissions";
+import bcrypt from "bcryptjs";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { ContentService } from "./content.service";
@@ -138,6 +139,118 @@ describe("ContentService integration", () => {
     }
   });
 
+  it("requires approval before invitation grants access", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const admin = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const invitedUser = await createActiveUser(seed.tenantId, "viewer@openkb.local");
+      const invited = await auth.login({
+        email: invitedUser.email,
+        password: "OpenKB-test-123456"
+      });
+
+      const invitation = await content.createInvitation(
+        admin.sessionToken,
+        "knowledge_base",
+        seed.knowledgeBaseId,
+        {
+          email: invitedUser.email,
+          role: "viewer",
+          require_approval: true
+        }
+      );
+      const accepted = await content.acceptInvitation(invited.sessionToken, invitation.token);
+
+      expect(accepted.status).toBe("awaiting_approval");
+      expect(
+        await permissions.canRead(invited.me.user.id, "knowledge_base", seed.knowledgeBaseId)
+      ).toBe(false);
+
+      await content.approveInvitation(admin.sessionToken, invitation.id);
+      expect(
+        await permissions.canRead(invited.me.user.id, "knowledge_base", seed.knowledgeBaseId)
+      ).toBe(true);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("protects share links with password cookies and invalidates reset tokens", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const admin = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const share = await content.createShareLink(admin.sessionToken, "document", seed.documentId, {
+        password: "reader-pass"
+      });
+
+      await expect(content.getShare(share.token, null)).rejects.toMatchObject({
+        code: "SHARE_PASSWORD_REQUIRED"
+      });
+
+      const verified = await content.verifySharePassword(share.token, "reader-pass");
+      const shared = await content.getShare(share.token, null, verified.cookie);
+      expect(shared.object.id).toBe(seed.documentId);
+
+      const reset = await content.resetShareLink(admin.sessionToken, share.id);
+      await expect(content.getShare(share.token, null, verified.cookie)).rejects.toMatchObject({
+        code: "SHARE_LINK_NOT_FOUND"
+      });
+      await expect(content.getShare(reset.token, null, verified.cookie)).rejects.toMatchObject({
+        code: "SHARE_PASSWORD_REQUIRED"
+      });
+      const nextVerified = await content.verifySharePassword(reset.token, "reader-pass");
+      const nextShared = await content.getShare(reset.token, null, nextVerified.cookie);
+      expect(nextShared.object.id).toBe(seed.documentId);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("keeps member-only share links out of reach for workspace guests", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const admin = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const guestUser = await createActiveUser(seed.tenantId, "guest@openkb.local");
+      await prisma.workspaceMember.create({
+        data: {
+          tenant_id: seed.tenantId,
+          workspace_id: seed.workspaceId,
+          user_id: guestUser.id,
+          role: "guest"
+        }
+      });
+      const guest = await auth.login({
+        email: guestUser.email,
+        password: "OpenKB-test-123456"
+      });
+      const share = await content.createShareLink(admin.sessionToken, "document", seed.documentId, {
+        require_login: true,
+        restrict_to_workspace_members: true
+      });
+
+      await expect(content.getShare(share.token, guest.sessionToken)).rejects.toMatchObject({
+        code: "SHARE_LINK_NOT_FOUND"
+      });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
   it("rejects stale document saves with current version details", async () => {
     const seed = await seedDev({ prisma });
     const content = new ContentService(auth, permissions);
@@ -261,4 +374,29 @@ describe("ContentService integration", () => {
 
 function markdownHash(markdown: string): string {
   return createHash("sha256").update(markdown).digest("hex");
+}
+
+async function createActiveUser(tenantId: string, email: string) {
+  const now = new Date();
+  const passwordHash = await bcrypt.hash("OpenKB-test-123456", 12);
+  const user = await prisma.user.create({
+    data: {
+      email,
+      password_hash: passwordHash,
+      display_name: email,
+      status: "active",
+      email_verified_at: now,
+      created_at: now,
+      updated_at: now
+    }
+  });
+  await prisma.tenantMembership.create({
+    data: {
+      tenant_id: tenantId,
+      user_id: user.id,
+      role: "member",
+      created_at: now
+    }
+  });
+  return user;
 }

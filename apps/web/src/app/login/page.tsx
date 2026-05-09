@@ -44,7 +44,8 @@ export default function LoginPage() {
       setIsSubmitting(false);
     }
 
-    router.replace("/app");
+    const next = getSafeNextPath(new URLSearchParams(window.location.search).get("next"));
+    router.replace(next ?? "/app");
   }
 
   return (
@@ -90,4 +91,11 @@ export default function LoginPage() {
       </form>
     </main>
   );
+}
+
+function getSafeNextPath(value: string | null): string | null {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return null;
+  }
+  return value;
 }

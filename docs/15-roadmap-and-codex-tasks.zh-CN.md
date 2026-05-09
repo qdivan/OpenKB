@@ -211,11 +211,16 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 ## Phase 16 - 协作与分享 UI
 
 输出：
-- Workspace / KB / document 协作者面板。
-- 邀请链接创建、撤销、接受和审批入口。
-- 分享链接 UI：密码访问、member-only、关闭分享、重置链接。
-- `/share/:token` 最小只读页。
+- Workspace / KB / document 协作者面板（Phase 16 已实现）。
+- 邀请链接创建、撤销、接受和审批入口（Phase 16 已实现）。
+- 分享链接 UI：密码访问、member-only、关闭分享、重置链接（Phase 16 已实现）。
+- `/invite/:token` 邀请接受页和 `/share/:token` 最小只读页（Phase 16 已实现）。
 - 分享链接 v0.x 继续只读，不加入编辑权限。
+
+边界：
+- 不做 owner transfer，不做匿名编辑分享链接，不做宽泛用户搜索。
+- 外部 SMTP 仍未实现；邀请邮件继续写入开发 outbox。
+- PostgreSQL + `PermissionService` 仍是最终权限真相，管理员身份不默认读取私有内容。
 
 ## Phase 17 - Admin 运维管理 UI
 

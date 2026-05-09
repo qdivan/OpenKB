@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-截至 2026-05-08，本机代码已经推进到 `v0.3.x / Phase 15.1` 稳定化收口。Phase 15.1 之前的主线提交为 `889fd09 feat: add admin models and workbench polish`。
+截至 2026-05-09，本机代码已经推进到 `v0.3.x / Phase 16` 协作与分享 UI。Phase 15.1 之前的主线提交为 `6d66b83 Stabilize Phase 15.1 docs and local dev`。
 
 已完成的主线：
 
@@ -14,11 +14,11 @@
 - Phase 14 Admin 用户管理：创建账号、密码重置链接、激活/停用/软删除、租户角色、会话撤销和审计入口。
 - Phase 15 Admin Models 配置中心：`system_admin` 可管理实例级 embedding、rerank、language model endpoint/model 和加密 secret；不做知识库级模型配置。
 - Phase 15.1 稳定化：本地源码开发端口固定为 Web `3100` / API `4101`，并补充文档状态、i18n/Models/工作台回归和浏览器冷/热启动验证。
+- Phase 16 协作与分享 UI：工作台 AccessPanel / SharePanel、Workspace/KB/document 成员与协作者管理、邮箱邀请、待审批邀请、只读分享链接、密码访问、member-only、关闭/重置链接、`/invite/:token` 和 `/share/:token`。
 - Web、API、MCP Server、Dify Adapter、import worker、index worker 均已接入 Phase 15 最小闭环。
 
-Phase 16-20 建议后续优先补：
+Phase 17-20 建议后续优先补：
 
-- Phase 16：Workspace/KB/document 分享协作面板、邀请审批、密码分享、member-only、关闭/重置链接 UI 和 `/share/:token` 只读页。
 - Phase 17：Dify key Web 管理、MCP PAT/OAuth UI、Milvus/rebuild jobs 管理、完整 audit logs 和 auth settings 页面。
 - Phase 18：当前文档切片侧栏、文档版本列表/恢复、全局搜索 parent/child 命中解释、发布后 index rebuild 引导。
 - Phase 19：PDF/DOCX/PPTX/XLSX/图片 OCR/MinerU/MarkItDown/Pandoc adapter。
@@ -26,13 +26,14 @@ Phase 16-20 建议后续优先补：
 
 ## 工作树状态
 
-Phase 15.1 已在 Phase 15 Models 基础上做稳定化收口；后续接手时需要同时关注账号权限、协作权限、模型配置和检索链路四条线。
+Phase 16 已在 Phase 15.1 稳定化基础上补齐协作与分享 UI；后续接手时需要同时关注账号权限、协作权限、模型配置和检索链路四条线。
 
 关键新增内容：
 
 - Phase 14 Admin：`/app/admin`、`/app/admin/users`、`/password-reset`，以及账号创建、状态、角色、会话和审计 API。
 - Phase 15 Admin Models：`/app/admin/models`、模型配置 API、`model_settings`、`@openkb/model-client`、实例级加密 secret。
 - Phase 15.1 稳定化：`pnpm dev:local:web`、`pnpm dev:local:api`，Web `3100` / API `4101` 本地源码开发约定。
+- Phase 16 协作分享：`apps/api/src/content/collaboration.controller.ts`、`apps/api/src/content/share.controller.ts`、`apps/web/src/components/workbench/access-panel.tsx`、`apps/web/src/components/workbench/share-panel.tsx`、`apps/web/src/app/invite/[token]/`、`apps/web/src/app/share/[token]/`。
 - Prisma migration：`0005_phase13_chunk_experience`、`0006_phase13_legacy_chunk_settings`。
 - API：知识库 overview/chunk settings/chunk preview/chunks/chunk rebuild jobs，文档 publish/unpublish。
 - Web：`/app/kb/:kbId` 知识库 Dashboard，包含 Overview、Chunks、Retrieval Lab、Settings。

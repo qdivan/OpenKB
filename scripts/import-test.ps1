@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+. .\scripts\test-postgres-env.ps1
 
 function Invoke-Step {
   param(
@@ -13,9 +14,9 @@ function Invoke-Step {
 }
 
 try {
+  Set-OpenKBTestPostgresEnv
   Invoke-Step { pnpm db:test:up } "db:test:up"
   Invoke-Step { pnpm object-storage:test:up } "object-storage:test:up"
-  $env:DATABASE_URL = "postgresql://openkb:openkb@localhost:55432/openkb_test?schema=public"
   $env:S3_ENDPOINT = "http://localhost:59000"
   $env:S3_REGION = "us-east-1"
   $env:S3_BUCKET = "openkb-assets"
