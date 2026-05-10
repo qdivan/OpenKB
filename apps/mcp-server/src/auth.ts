@@ -9,13 +9,15 @@ import {
   type McpServerConfig
 } from "./config";
 import { OpenKBMcpError } from "./errors";
+import { McpOAuthService } from "./oauth";
 
 export type McpAuthContext = {
   userId: string;
   tenantId: string;
   scopes: McpScope[];
   clientId: string;
-  patId: string;
+  patId?: string;
+  oauthGrantId?: string;
 };
 
 export type CreateMcpPatInput = {
@@ -38,11 +40,13 @@ export type CreateMcpPatResult = {
 export class McpAuthService {
   private readonly prisma: PrismaClient;
   private readonly config: McpServerConfig;
+  private readonly oauth: McpOAuthService;
   private readonly now: () => Date;
 
   constructor(options: { prisma?: PrismaClient; env?: NodeJS.ProcessEnv; now?: () => Date } = {}) {
     this.prisma = options.prisma ?? createDatabaseClient();
     this.config = getMcpServerConfig(options.env);
+    this.oauth = new McpOAuthService({ prisma: this.prisma, env: options.env, now: options.now });
     this.now = options.now ?? (() => new Date());
   }
 
@@ -63,12 +67,14 @@ export class McpAuthService {
     }
 
     if (!bearer.startsWith(this.config.patPrefix)) {
-      throw new OpenKBMcpError(
-        "MCP_OAUTH_NOT_CONFIGURED",
-        "OAuth access tokens are not configured in this phase. Use a user-bound OpenKB PAT.",
-        401,
-        { resource_metadata_url: `${this.config.baseUrl}/.well-known/oauth-protected-resource` }
-      );
+      const oauth = await this.oauth.verifyAccessToken(bearer);
+      return {
+        userId: oauth.userId,
+        tenantId: oauth.tenantId,
+        scopes: oauth.scopes,
+        clientId: oauth.clientId,
+        oauthGrantId: oauth.grantId
+      };
     }
 
     const tokenHash = hashToken(bearer);

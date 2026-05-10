@@ -30,6 +30,7 @@ import {
 describe("OpenKB API client", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("sends credentialed JSON requests to the API origin", async () => {
@@ -45,6 +46,22 @@ describe("OpenKB API client", () => {
       expect.objectContaining({
         credentials: "include",
         headers: expect.objectContaining({ "content-type": "application/json" })
+      })
+    );
+  });
+
+  it("uses the configured CSRF cookie name for mutations", async () => {
+    vi.stubEnv("NEXT_PUBLIC_OPENKB_CSRF_COOKIE_NAME", "custom_csrf");
+    vi.stubGlobal("document", { cookie: "custom_csrf=csrf-token" });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch("/api/workspaces", { method: "POST", body: JSON.stringify({ name: "Docs" }) });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/workspaces",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-openkb-csrf": "csrf-token" })
       })
     );
   });

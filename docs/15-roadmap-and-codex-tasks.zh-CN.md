@@ -274,3 +274,9 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 - 监控、TLS、Ingress。
 - 完整 MCP OAuth 授权码流程。
 - 密钥轮换策略和安全运维文档。
+
+Phase 20 实现落点：
+- `@openkb/email`、`smtp_settings`、`/app/admin/email`：生产 SMTP、测试发送、outbox retry。
+- API double-submit CSRF：cookie-auth mutation 需要 `openkb_csrf` + `x-openkb-csrf`；Bearer 集成与登录/注册/分享密码验证使用独立鉴权。
+- MCP OAuth：`/.well-known/oauth-authorization-server`、`/oauth/authorize`、`/oauth/token`、`/oauth/revoke`，支持 Authorization Code + PKCE 和 refresh token。
+- 运维：`/app/admin/security`、`/api/admin/ops/health`、`/metrics`、`deploy/backup`、Helm Ingress/NetworkPolicy/ServiceMonitor/backup CronJob。

@@ -36,7 +36,7 @@
 
 OpenKB 是一个开源、自托管的团队知识库。它关注写作体验、权限边界和可信检索：内容与权限以 PostgreSQL 为准，Milvus 只做检索索引，Web、MCP、Dify 返回结果前都会再次校验权限。
 
-当前版本处于 `v0.3.x / Phase 19` 复杂导入适配器，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
+当前版本处于 `v0.3.x / Phase 20` 生产增强，适合本地开发、公网测试平台和私有化试跑；还不是生产 GA 版本。
 
 ## 特性
 
@@ -106,8 +106,9 @@ pnpm dev:local:web
 - Phase 17：Admin 运维管理 UI，补齐 Auth Settings、Audit Logs、Indexing、Dify key/mapping 和 MCP PAT/OAuth client/grant 管理入口。
 - Phase 18：文档版本列表/预览/restore、当前文档 chunk 侧栏、搜索 parent/child 命中解释和发布后 index rebuild 引导。
 - Phase 19：复杂导入 adapter 与系统级导入工具配置，支持 MarkItDown、MinerU、Pandoc、Tesseract OCR 的格式路由、fallback、warnings 和密文 secret。
+- Phase 20：生产增强，补生产 SMTP、CSRF、MCP OAuth 授权码 + PKCE、备份/恢复、metrics、TLS/Ingress、密钥轮换和安全运维入口。
 
-下一批路线是 Phase 20：生产增强。当前本机开发移交见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
+当前本机开发移交见 [docs/23-docs-code-gap-analysis.zh-CN.md](docs/23-docs-code-gap-analysis.zh-CN.md)。
 
 ## 开发验证
 

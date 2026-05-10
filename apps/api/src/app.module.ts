@@ -25,6 +25,8 @@ import { MilvusAdminController } from "./milvus/milvus-admin.controller";
 import { MilvusAdminService } from "./milvus/milvus-admin.service";
 import { ModelSettingsAdminController } from "./models/model-settings-admin.controller";
 import { ModelSettingsAdminService } from "./models/model-settings-admin.service";
+import { ProductionAdminController } from "./production/production-admin.controller";
+import { ProductionAdminService } from "./production/production-admin.service";
 import { RetrievalSettingsAdminController } from "./retrieval/retrieval-settings-admin.controller";
 import { RetrievalSettingsAdminService } from "./retrieval/retrieval-settings-admin.service";
 import { SearchController } from "./search/search.controller";
@@ -48,7 +50,8 @@ import { SearchController } from "./search/search.controller";
     ModelSettingsAdminController,
     RetrievalSettingsAdminController,
     SearchController,
-    AdminOpsController
+    AdminOpsController,
+    ProductionAdminController
   ],
   providers: [
     AuthService,
@@ -60,7 +63,8 @@ import { SearchController } from "./search/search.controller";
     RetrievalSettingsAdminService,
     RetrievalService,
     AdminOpsService,
-    ImportToolsAdminService
+    ImportToolsAdminService,
+    ProductionAdminService
   ]
 })
 export class AppModule {}

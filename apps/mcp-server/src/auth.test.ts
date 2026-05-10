@@ -25,7 +25,7 @@ describe("MCP auth helpers", () => {
     expect(() => assertAllowedScopes(["admin:all"])).toThrow(/Unsupported MCP scopes/);
   });
 
-  it("exposes protected resource metadata without enabling full OAuth", () => {
+  it("exposes protected resource metadata with OAuth discovery", () => {
     const metadata = getProtectedResourceMetadata({
       MCP_SERVER_BASE_URL: "http://localhost:4100/",
       MCP_PAT_PREFIX: "kbpat_"
@@ -45,7 +45,7 @@ describe("MCP auth helpers", () => {
         "toc:write"
       ],
       openkb_auth: {
-        oauth_status: "not_configured_in_phase_9"
+        oauth_status: "authorization_code_pkce"
       }
     });
   });

@@ -1,0 +1,77 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openkb.fullname" . }}
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          {{- if .Values.mcp.enabled }}
+          - path: /.well-known/oauth-protected-resource
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openkb.fullname" . }}-mcp-server
+                port:
+                  number: {{ .Values.mcp.service.port }}
+          - path: /.well-known/oauth-authorization-server
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openkb.fullname" . }}-mcp-server
+                port:
+                  number: {{ .Values.mcp.service.port }}
+          - path: /oauth
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openkb.fullname" . }}-mcp-server
+                port:
+                  number: {{ .Values.mcp.service.port }}
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openkb.fullname" . }}-mcp-server
+                port:
+                  number: {{ .Values.mcp.service.port }}
+          {{- end }}
+          {{- if .Values.difyAdapter.enabled }}
+          - path: /retrieval
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openkb.fullname" . }}-dify-adapter
+                port:
+                  number: {{ .Values.difyAdapter.service.port }}
+          {{- end }}
+          {{- if .Values.api.enabled }}
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openkb.fullname" . }}-api
+                port:
+                  number: {{ .Values.api.service.port }}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openkb.fullname" . }}-web
+                port:
+                  number: {{ .Values.web.service.port }}
+{{- end }}

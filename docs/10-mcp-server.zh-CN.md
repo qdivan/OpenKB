@@ -17,6 +17,11 @@ MCP 与 Web Search、Dify、附件、导出一样，必须复用同一套 Permis
 ```text
 POST /mcp
 GET  /.well-known/oauth-protected-resource
+GET  /.well-known/oauth-authorization-server
+GET  /oauth/authorize
+POST /oauth/authorize
+POST /oauth/token
+POST /oauth/revoke
 ```
 
 v0.x 不实现任意 stdio command spawn。即使后续提供语雀式本地快速安装体验，也只能是安全 stdio bridge：
@@ -36,6 +41,8 @@ stdio bridge 只允许把 MCP JSON-RPC 转发到固定 OpenKB HTTP MCP endpoint�
 ```text
 MCP client -> OAuth authorize -> access token -> /mcp
 ```
+
+Phase 20 实现 Authorization Code + PKCE。OAuth client 仍由 Admin 预创建，不做动态客户端注册；refresh token 只保存 hash，access token 为短期签名 token。
 
 access token 必须包含或可解析：
 

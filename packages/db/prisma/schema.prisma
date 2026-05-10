@@ -83,6 +83,9 @@ model AuthEmailOutbox {
   link_url    String?
   payload     Json      @default("{}")
   status      String    @default("pending")
+  error       String?
+  attempts    Int       @default(0)
+  last_attempt_at DateTime? @db.Timestamptz(6)
   sent_at     DateTime? @db.Timestamptz(6)
   created_at  DateTime  @default(now()) @db.Timestamptz(6)
 
@@ -90,6 +93,25 @@ model AuthEmailOutbox {
   @@index([user_id])
   @@index([to_email])
   @@map("auth_email_outbox")
+}
+
+model SmtpSetting {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope              String   @unique @default("instance")
+  enabled            Boolean  @default(false)
+  host               String?
+  port               Int?
+  secure             Boolean  @default(true)
+  username           String?
+  from_email         String?
+  reply_to           String?
+  encrypted_password String?
+  password_last4     String?
+  updated_by         String   @db.Uuid
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("smtp_settings")
 }
 
 model AuthSetting {
@@ -553,6 +575,9 @@ model McpOauthAuthorizationCode {
   tenant_id    String    @db.Uuid
   grant_id     String    @db.Uuid
   code_hash    String
+  code_challenge String?
+  code_challenge_method String?
+  resource     String?
   redirect_uri String
   scopes       String[]  @default([])
   expires_at   DateTime  @db.Timestamptz(6)

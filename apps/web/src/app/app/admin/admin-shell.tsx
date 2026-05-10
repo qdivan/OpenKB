@@ -5,7 +5,9 @@ import {
   BrainCircuit,
   ClipboardList,
   Database,
+  Gauge,
   FileCog,
+  Mail,
   KeyRound,
   ListChecks,
   PlugZap,
@@ -32,6 +34,13 @@ const adminNavItems = [
     icon: <ShieldCheck className="h-4 w-4" />,
     label: "Auth Settings",
     description: "Registration and login policy"
+  },
+  {
+    href: "/app/admin/email",
+    icon: <Mail className="h-4 w-4" />,
+    label: "Email",
+    description: "SMTP and outbox",
+    systemOnly: true
   },
   {
     href: "/app/admin/retrieval",
@@ -76,6 +85,13 @@ const adminNavItems = [
     icon: <ClipboardList className="h-4 w-4" />,
     label: "Audit Logs",
     description: "Security and admin events"
+  },
+  {
+    href: "/app/admin/security",
+    icon: <Gauge className="h-4 w-4" />,
+    label: "Security Ops",
+    description: "Health and secret rotation",
+    systemOnly: true
   },
   {
     href: "/app/admin/permission-boundary",

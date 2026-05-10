@@ -678,6 +678,43 @@ Object.assign(ZH_CN_TRANSLATIONS, {
     "吊销 {email} 的当前会话？这只会让用户重新登录，不会改变账号状态或权限。"
 });
 
+Object.assign(ZH_CN_TRANSLATIONS, {
+  Email: "邮件",
+  "SMTP and outbox": "SMTP 与发信队列",
+  "Configure production SMTP and inspect email outbox.": "配置生产 SMTP，并查看发信队列状态。",
+  "SMTP settings": "SMTP 设置",
+  "Enable SMTP": "启用 SMTP",
+  Host: "主机",
+  Port: "端口",
+  Username: "用户名",
+  "From email": "发件地址",
+  "Reply to": "回复地址",
+  "Use TLS": "使用 TLS",
+  "Send test": "发送测试邮件",
+  "Test email sent.": "测试邮件已发送。",
+  "Test email failed.": "测试邮件失败。",
+  "Email outbox": "发信队列",
+  Recipient: "收件人",
+  Subject: "主题",
+  Attempts: "尝试次数",
+  Retry: "重试",
+  "Retry succeeded.": "重试成功。",
+  "Retry failed.": "重试失败。",
+  "No email outbox records.": "暂无发信记录。",
+  "Security Ops": "安全运维",
+  "Health and secret rotation": "健康检查与密钥轮换",
+  "Production health, metrics, and secret rotation.": "生产健康状态、监控指标和密钥轮换。",
+  Database: "数据库",
+  "MCP OAuth": "MCP OAuth",
+  "Secret inventory": "密钥清单",
+  "Raw secrets are never shown here. Use dedicated pages to rotate stored credentials.":
+    "这里不会显示原始密钥。请在对应管理页轮换已保存的凭据。",
+  "Revoke refresh tokens": "撤销刷新令牌",
+  "Revoked {count} tokens.": "已撤销 {count} 个令牌。",
+  "Check succeeded.": "检测成功。",
+  "Secret set": "已设置密钥"
+});
+
 const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   en: {},
   "zh-CN": ZH_CN_TRANSLATIONS

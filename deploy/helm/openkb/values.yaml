@@ -1,6 +1,6 @@
 image:
   repository: openkb
-  tag: phase-11
+  tag: phase-20
   pullPolicy: IfNotPresent
 
 web:
@@ -152,6 +152,37 @@ auth:
   sessionTtlDays: "30"
   emailVerificationTtlHours: "24"
   passwordResetTtlHours: "2"
+
+ingress:
+  enabled: false
+  className: ""
+  host: openkb.example.com
+  tls:
+    enabled: true
+    secretName: openkb-tls
+
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+  prometheusAnnotations: false
+
+networkPolicy:
+  enabled: false
+
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  storage:
+    size: 20Gi
+
+smtp:
+  host: ""
+  port: "587"
+  secure: "false"
+  user: ""
+  from: ""
+  replyTo: ""
 
 seed:
   adminEmail: admin@openkb.local

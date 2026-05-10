@@ -10,6 +10,7 @@ import { McpAuthService, type McpAuthContext } from "./auth";
 import { MCP_ALLOWED_SCOPES, getMcpServerConfig } from "./config";
 import { OpenKBMcpError, toJsonError } from "./errors";
 import { McpContentService, jsonText, type McpRequestMeta } from "./service";
+import { McpOAuthService, type OAuthHttpResult } from "./oauth";
 
 type OpenKBIncomingMessage = IncomingMessage & {
   auth?: AuthInfo;
@@ -26,6 +27,7 @@ export type OpenKBMcpHttpServerOptions = {
   env?: NodeJS.ProcessEnv;
   auth?: McpAuthService;
   content?: McpContentService;
+  oauth?: McpOAuthService;
 };
 
 const searchInputSchema = {
@@ -331,20 +333,55 @@ export function createOpenKBMcpHttpServer(options: OpenKBMcpHttpServerOptions = 
   const env = options.env ?? process.env;
   const auth = options.auth ?? new McpAuthService({ env });
   const content = options.content ?? new McpContentService({ env, auth });
+  const oauth = options.oauth ?? new McpOAuthService({ env });
 
   return createServer(async (request: OpenKBIncomingMessage, response) => {
     try {
+      const url = new URL(request.url ?? "/", getMcpServerConfig(env).baseUrl);
       if (request.method === "GET" && request.url === "/health") {
         sendJson(response, 200, getMcpHealth());
         return;
       }
 
-      if (request.method === "GET" && request.url === "/.well-known/oauth-protected-resource") {
+      if (request.method === "GET" && url.pathname === "/metrics") {
+        sendText(response, 200, getMetrics());
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/.well-known/oauth-protected-resource") {
         sendJson(response, 200, getProtectedResourceMetadata(env));
         return;
       }
 
-      if ((request.method === "POST" || request.method === "GET") && request.url === "/mcp") {
+      if (request.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
+        sendJson(response, 200, oauth.getAuthorizationServerMetadata());
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/oauth/authorize") {
+        sendOAuthResult(response, await oauth.authorizeGet(url, request.headers.cookie));
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/oauth/authorize") {
+        sendOAuthResult(
+          response,
+          await oauth.authorizePost(await readTextBody(request, 64 * 1024), request.headers.cookie)
+        );
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/oauth/token") {
+        sendOAuthResult(response, await oauth.token(await readTextBody(request, 64 * 1024)));
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/oauth/revoke") {
+        sendOAuthResult(response, await oauth.revoke(await readTextBody(request, 64 * 1024)));
+        return;
+      }
+
+      if ((request.method === "POST" || request.method === "GET") && url.pathname === "/mcp") {
         const context = await auth.authenticateAuthorizationHeader(request.headers.authorization);
         request.auth = toSdkAuthInfo(context);
         const meta = getRequestMeta(request);
@@ -375,12 +412,12 @@ export function getProtectedResourceMetadata(env: NodeJS.ProcessEnv = process.en
   const config = getMcpServerConfig(env);
   return {
     resource: `${config.baseUrl}/mcp`,
-    authorization_servers: [],
+    authorization_servers: [config.issuer],
     bearer_methods_supported: ["header"],
     scopes_supported: MCP_ALLOWED_SCOPES,
     openkb_auth: {
       pat_prefix: config.patPrefix,
-      oauth_status: "not_configured_in_phase_9"
+      oauth_status: "authorization_code_pkce"
     }
   };
 }
@@ -427,13 +464,14 @@ async function toolJson(callback: () => Promise<unknown>) {
 
 function toSdkAuthInfo(context: McpAuthContext): AuthInfo {
   return {
-    token: context.patId,
+    token: context.patId ?? context.oauthGrantId ?? context.clientId,
     clientId: context.clientId,
     scopes: context.scopes,
     extra: {
       user_id: context.userId,
       tenant_id: context.tenantId,
-      pat_id: context.patId
+      pat_id: context.patId,
+      oauth_grant_id: context.oauthGrantId
     }
   };
 }
@@ -458,4 +496,56 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   }
   response.writeHead(statusCode, { "content-type": "application/json", ...SECURITY_HEADERS });
   response.end(JSON.stringify(payload));
+}
+
+function sendText(response: ServerResponse, statusCode: number, body: string): void {
+  if (response.headersSent) {
+    return;
+  }
+  response.writeHead(statusCode, {
+    "content-type": "text/plain; charset=utf-8",
+    ...SECURITY_HEADERS
+  });
+  response.end(body);
+}
+
+function sendOAuthResult(response: ServerResponse, result: OAuthHttpResult): void {
+  if (response.headersSent) {
+    return;
+  }
+  const headers = {
+    "content-type":
+      typeof result.body === "string" ? "text/html; charset=utf-8" : "application/json",
+    ...SECURITY_HEADERS,
+    ...(result.headers ?? {})
+  };
+  response.writeHead(result.status, headers);
+  response.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
+}
+
+async function readTextBody(request: IncomingMessage, maxBytes: number): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > maxBytes) {
+      throw new OpenKBMcpError("INVALID_INPUT", "Request body is too large.", 413);
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function getMetrics(): string {
+  return (
+    [
+      "# HELP openkb_mcp_info OpenKB MCP service info.",
+      "# TYPE openkb_mcp_info gauge",
+      'openkb_mcp_info{service="openkb-mcp-server"} 1',
+      "# HELP openkb_mcp_uptime_seconds OpenKB MCP process uptime.",
+      "# TYPE openkb_mcp_uptime_seconds gauge",
+      `openkb_mcp_uptime_seconds ${Math.floor(process.uptime())}`
+    ].join("\n") + "\n"
+  );
 }

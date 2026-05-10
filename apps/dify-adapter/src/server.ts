@@ -21,6 +21,11 @@ export function createDifyAdapterHttpServer(
         return;
       }
 
+      if (request.method === "GET" && request.url === "/metrics") {
+        writeText(response, 200, getMetrics());
+        return;
+      }
+
       if (request.method === "POST" && request.url === "/retrieval") {
         const body = await readJsonBody(request, getRequestMaxBytes());
         const result = await service.retrieve(request.headers.authorization, body, {
@@ -48,6 +53,27 @@ export function createDifyAdapterHttpServer(
 function writeJson(response: ServerResponse, statusCode: number, body: unknown) {
   response.writeHead(statusCode, { "content-type": "application/json", ...SECURITY_HEADERS });
   response.end(JSON.stringify(body));
+}
+
+function writeText(response: ServerResponse, statusCode: number, body: string) {
+  response.writeHead(statusCode, {
+    "content-type": "text/plain; charset=utf-8",
+    ...SECURITY_HEADERS
+  });
+  response.end(body);
+}
+
+function getMetrics(): string {
+  return (
+    [
+      "# HELP openkb_dify_adapter_info OpenKB Dify adapter service info.",
+      "# TYPE openkb_dify_adapter_info gauge",
+      'openkb_dify_adapter_info{service="openkb-dify-adapter"} 1',
+      "# HELP openkb_dify_adapter_uptime_seconds OpenKB Dify adapter process uptime.",
+      "# TYPE openkb_dify_adapter_uptime_seconds gauge",
+      `openkb_dify_adapter_uptime_seconds ${Math.floor(process.uptime())}`
+    ].join("\n") + "\n"
+  );
 }
 
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {

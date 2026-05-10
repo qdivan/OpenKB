@@ -76,6 +76,80 @@ export type AuditLogListResponse = {
   total: number;
 };
 
+export type AdminSmtpSettings = {
+  id: string | null;
+  enabled: boolean;
+  host: string | null;
+  port: number | null;
+  secure: boolean;
+  username: string | null;
+  from_email: string | null;
+  reply_to: string | null;
+  has_password: boolean;
+  password_last4: string | null;
+  source: "db" | "env" | "dev";
+  env_configured: boolean;
+  updated_by: string | null;
+  updated_at: string | null;
+};
+
+export type UpdateAdminSmtpSettingsInput = Partial<
+  Pick<
+    AdminSmtpSettings,
+    "enabled" | "host" | "port" | "secure" | "username" | "from_email" | "reply_to"
+  >
+> & {
+  password?: string | null;
+  clear_password?: boolean;
+};
+
+export type AdminEmailOutboxItem = {
+  id: string;
+  tenant_id: string | null;
+  to_email: string;
+  template: string;
+  subject: string;
+  status: string;
+  error: string | null;
+  attempts: number;
+  last_attempt_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+};
+
+export type AdminEmailOutboxListResponse = {
+  items: AdminEmailOutboxItem[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type AdminOpsHealth = {
+  tenant_id: string;
+  database: string;
+  redis: string;
+  s3: string;
+  milvus: string;
+  smtp: {
+    source: string;
+    enabled: boolean;
+    ok: boolean;
+    error: string | null;
+  };
+  mcp_oauth: {
+    issuer: string | null;
+    access_token_ttl_seconds: number;
+    refresh_token_ttl_days: number;
+  };
+  email_outbox: Record<string, number>;
+  checked_at: string;
+};
+
+export type AdminSecuritySecrets = {
+  config_encryption_key_set: boolean;
+  items: Array<Record<string, unknown> & { kind: string }>;
+};
+
 export type AuthSettingsScope = "instance" | "tenant";
 
 export type AdminAuthSettings = {
@@ -796,10 +870,12 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 async function apiFetchRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData =
     typeof FormData !== "undefined" && init.body !== undefined && init.body instanceof FormData;
+  const method = (init.method ?? "GET").toUpperCase();
   const response = await fetch(authApiUrl(path), {
     ...init,
     headers: {
       ...(init.body && !isFormData ? { "content-type": "application/json" } : {}),
+      ...csrfHeader(method),
       ...init.headers
     },
     credentials: "include"
@@ -811,6 +887,28 @@ async function apiFetchRequest<T>(path: string, init: RequestInit = {}): Promise
   }
 
   return body as T;
+}
+
+function csrfHeader(method: string): Record<string, string> {
+  if (["GET", "HEAD", "OPTIONS"].includes(method) || typeof document === "undefined") {
+    return {};
+  }
+  const token = getCookieValue(csrfCookieName());
+  return token ? { "x-openkb-csrf": token } : {};
+}
+
+function csrfCookieName(): string {
+  return process.env.NEXT_PUBLIC_OPENKB_CSRF_COOKIE_NAME || "openkb_csrf";
+}
+
+function getCookieValue(name: string): string | null {
+  for (const cookie of document.cookie.split(";")) {
+    const [rawKey, ...rawValue] = cookie.trim().split("=");
+    if (rawKey === name) {
+      return decodeURIComponent(rawValue.join("="));
+    }
+  }
+  return null;
 }
 
 export function getMe() {
@@ -1434,6 +1532,72 @@ export function listMcpOauthGrants(input: { limit?: number; offset?: number } = 
 
 export function revokeMcpOauthGrant(id: string) {
   return apiFetch<McpOauthGrant>(`/api/admin/mcp/oauth-grants/${id}/revoke`, { method: "POST" });
+}
+
+export function getAdminEmailSettings() {
+  return apiFetch<AdminSmtpSettings>("/api/admin/email/settings");
+}
+
+export function updateAdminEmailSettings(input: UpdateAdminSmtpSettingsInput) {
+  return apiFetch<AdminSmtpSettings>("/api/admin/email/settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function probeAdminEmailSettings(input: UpdateAdminSmtpSettingsInput = {}) {
+  return apiFetch<{
+    ok: boolean;
+    source: string;
+    message: string;
+    host: string | null;
+    from_email: string | null;
+  }>("/api/admin/email/probe", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function sendAdminTestEmail(input: { to?: string; subject?: string; text?: string }) {
+  return apiFetch<{ ok: boolean; source: string; message?: string; error?: string }>(
+    "/api/admin/email/test-send",
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function listAdminEmailOutbox(input: { limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (input.limit) params.set("limit", String(input.limit));
+  if (input.offset) params.set("offset", String(input.offset));
+  const query = params.toString();
+  return apiFetch<AdminEmailOutboxListResponse>(
+    `/api/admin/email/outbox${query ? `?${query}` : ""}`
+  );
+}
+
+export function retryAdminEmailOutbox(id: string) {
+  return apiFetch<{ ok: boolean; source: string; message?: string; error?: string }>(
+    `/api/admin/email/outbox/${id}/retry`,
+    { method: "POST" }
+  );
+}
+
+export function getAdminOpsHealth() {
+  return apiFetch<AdminOpsHealth>("/api/admin/ops/health");
+}
+
+export function listAdminSecuritySecrets() {
+  return apiFetch<AdminSecuritySecrets>("/api/admin/security/secrets");
+}
+
+export function rotateAdminSecuritySecret(kind: string) {
+  return apiFetch<{ ok: boolean; kind: string; revoked_count?: number }>(
+    `/api/admin/security/rotate/${kind}`,
+    { method: "POST" }
+  );
 }
 
 export function listAdminUsers(

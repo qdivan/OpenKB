@@ -1,0 +1,41 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openkb.fullname" . }}-backup
+  labels:
+    {{- include "openkb.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: postgres-backup
+              image: postgres:16-alpine
+              envFrom:
+                - secretRef:
+                    name: {{ include "openkb.secretName" . }}
+              command: ["sh", "-c"]
+              args:
+                - pg_dump "$DATABASE_URL" --format=plain --no-owner --no-privileges > /backup/openkb-$(date +%Y%m%d-%H%M%S).sql
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "openkb.fullname" . }}-backup
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "openkb.fullname" . }}-backup
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.backup.storage.size | quote }}
+{{- end }}

@@ -10,19 +10,29 @@ export type McpScope = (typeof MCP_ALLOWED_SCOPES)[number];
 
 export type McpServerConfig = {
   baseUrl: string;
+  issuer: string;
   patPrefix: string;
   defaultScopes: McpScope[];
   maxTopK: number;
   maxDocumentChars: number;
+  accessTokenTtlSeconds: number;
+  refreshTokenTtlDays: number;
+  signingSecret: string;
 };
 
 export function getMcpServerConfig(env: NodeJS.ProcessEnv = process.env): McpServerConfig {
   return {
     baseUrl: trimTrailingSlash(env.MCP_SERVER_BASE_URL || "http://localhost:4100"),
+    issuer: trimTrailingSlash(
+      env.MCP_OAUTH_ISSUER || env.MCP_SERVER_BASE_URL || "http://localhost:4100"
+    ),
     patPrefix: env.MCP_PAT_PREFIX || MCP_PAT_PREFIX,
     defaultScopes: parseScopes(env.MCP_DEFAULT_SCOPES),
     maxTopK: parsePositiveInt(env.MCP_MAX_TOP_K, 20),
-    maxDocumentChars: parsePositiveInt(env.MCP_MAX_DOCUMENT_CHARS, 60_000)
+    maxDocumentChars: parsePositiveInt(env.MCP_MAX_DOCUMENT_CHARS, 60_000),
+    accessTokenTtlSeconds: parsePositiveInt(env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS, 900),
+    refreshTokenTtlDays: parsePositiveInt(env.MCP_OAUTH_REFRESH_TOKEN_TTL_DAYS, 30),
+    signingSecret: resolveSigningSecret(env)
   };
 }
 
@@ -55,4 +65,17 @@ function trimTrailingSlash(value: string): string {
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveSigningSecret(env: NodeJS.ProcessEnv): string {
+  const configured = env.MCP_OAUTH_SIGNING_SECRET || env.OPENKB_CONFIG_ENCRYPTION_KEY;
+  if (configured) {
+    return configured;
+  }
+  if (env.NODE_ENV === "production") {
+    throw new Error(
+      "MCP_OAUTH_SIGNING_SECRET or OPENKB_CONFIG_ENCRYPTION_KEY is required in production."
+    );
+  }
+  return "openkb-dev-mcp-oauth-signing-secret";
 }

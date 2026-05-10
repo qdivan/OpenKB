@@ -38,6 +38,8 @@
     "object-storage:test:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/object-storage-test-up.ps1",
     "permissions:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/permissions-test.ps1",
     "retrieval:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/retrieval-test.ps1",
+    "security:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-test.ps1",
+    "ops:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ops-test.ps1",
     "test": "vitest run",
     "typecheck": "turbo run typecheck"
   },

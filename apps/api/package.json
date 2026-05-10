@@ -21,6 +21,7 @@
     "@openkb/auth": "workspace:*",
     "@openkb/db": "workspace:*",
     "@openkb/editor": "workspace:*",
+    "@openkb/email": "workspace:*",
     "@openkb/import-tools": "workspace:*",
     "@openkb/markdown": "workspace:*",
     "@openkb/model-client": "workspace:*",

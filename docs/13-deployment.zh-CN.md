@@ -327,11 +327,11 @@ rerank 服务停止时搜索降级返回，并在 metadata 标记 rerank_failed
 
 以下不属于 Phase 11：
 
-- 生产 SMTP 发送、重试和模板管理。
-- MCP 完整 OAuth 授权码、同意页、refresh/revoke。
+- Phase 20 已补生产 SMTP 发送、重试入口和基础 outbox 管理；复杂模板管理仍可后续增强。
+- Phase 20 已补 MCP OAuth 授权码、同意页、refresh/revoke；动态客户端注册仍未实现。
 - MCP PAT 和 Dify API key Web 管理页。
 - Office/PDF/OCR/MinerU 全量复杂转换。
 - 实时协同。
 - 生产级完整 Admin UI。
-- 监控、日志聚合、备份恢复、升级/回滚演练。
+- Phase 20 已补 metrics、基础备份恢复脚本和 Helm 入口；日志聚合、升级/回滚演练仍需按部署方环境完善。
 - 当前文档切片侧栏、全局搜索更完整的命中解释和发布后索引引导。
