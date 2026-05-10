@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { AuthService, type AuthenticatedUser } from "@openkb/auth";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
-import { type RequestedImportConverter } from "@openkb/markdown";
+import {
+  detectImportFormat,
+  getImportToolRuntimeConfig,
+  ImportToolError,
+  isExternalImportToolKey,
+  isRequestedImportConverter,
+  toolSupportsFormat,
+  type RequestedImportConverter
+} from "@openkb/import-tools";
 import { PermissionService } from "@openkb/permissions";
 import {
   checksumSha256,
@@ -112,7 +120,6 @@ export class ImportService {
     const sourceAssetId = requireText(input.source_asset_id, "source_asset_id");
     const knowledgeBaseId = requireText(input.knowledge_base_id, "knowledge_base_id");
     const parentId = input.parent_id || null;
-    const converter = normalizeRequestedConverter(input.converter ?? "auto");
     const knowledgeBase = await this.assertCanEditImportTarget(me, knowledgeBaseId, parentId);
 
     const asset = await this.prisma.documentAsset.findUnique({ where: { id: sourceAssetId } });
@@ -129,6 +136,10 @@ export class ImportService {
         400
       );
     }
+    const converter = await this.normalizeRequestedConverter(input.converter ?? "auto", {
+      filename: asset.filename,
+      mimeType: asset.mime_type
+    });
 
     const now = new Date();
     const job = await this.prisma.importJob.create({
@@ -265,6 +276,48 @@ export class ImportService {
     }
     await this.permissions.requireCanRead(me.user.id, "knowledge_base", job.knowledge_base_id);
   }
+
+  private async normalizeRequestedConverter(
+    value: RequestedImportConverter,
+    source: { filename: string; mimeType?: string | null }
+  ): Promise<RequestedImportConverter> {
+    if (!isRequestedImportConverter(value)) {
+      throw new ContentError("CONVERTER_UNAVAILABLE", "Converter is not available.", 400);
+    }
+    if (!isExternalImportToolKey(value)) {
+      return value;
+    }
+
+    const format = detectImportFormat(source.filename, source.mimeType ?? undefined);
+    if (!toolSupportsFormat(value, format)) {
+      throw new ContentError(
+        "CONVERTER_UNAVAILABLE",
+        "Selected import tool does not support this file type.",
+        400
+      );
+    }
+    const [settings, routes] = await Promise.all([
+      this.prisma.importToolSetting.findMany(),
+      this.prisma.importFormatRoute.findMany()
+    ]);
+    const runtime = getImportToolRuntimeConfig(
+      process.env,
+      settings.map((setting) => setting as never),
+      routes.map((route) => route as never)
+    );
+    const tool = runtime.tools[value];
+    if (!tool.enabled || !tool.configured) {
+      throw new ContentError(
+        "CONVERTER_UNAVAILABLE",
+        "Selected import tool is not configured.",
+        400
+      );
+    }
+    if (tool.secretError) {
+      throw new ImportToolError("IMPORT_TOOL_AUTH_FAILED", tool.secretError);
+    }
+    return value;
+  }
 }
 
 function storageError(error: unknown): ContentError {
@@ -289,19 +342,6 @@ function requireText(value: string | undefined | null, field: string): string {
 function normalizeOptionalText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized || null;
-}
-
-function normalizeRequestedConverter(value: RequestedImportConverter): RequestedImportConverter {
-  if (
-    value === "auto" ||
-    value === "markdown" ||
-    value === "text" ||
-    value === "html" ||
-    value === "csv"
-  ) {
-    return value;
-  }
-  throw new ContentError("CONVERTER_UNAVAILABLE", "Converter is not available.", 400);
 }
 
 function isAdmin(me: AuthenticatedUser): boolean {

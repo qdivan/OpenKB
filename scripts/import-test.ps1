@@ -15,9 +15,10 @@ function Invoke-Step {
 
 try {
   Set-OpenKBTestPostgresEnv
+  $objectStoragePort = if ($env:OPENKB_MINIO_TEST_PORT) { $env:OPENKB_MINIO_TEST_PORT } else { "59000" }
   Invoke-Step { pnpm db:test:up } "db:test:up"
   Invoke-Step { pnpm object-storage:test:up } "object-storage:test:up"
-  $env:S3_ENDPOINT = "http://localhost:59000"
+  $env:S3_ENDPOINT = "http://localhost:$objectStoragePort"
   $env:S3_REGION = "us-east-1"
   $env:S3_BUCKET = "openkb-assets"
   $env:S3_ACCESS_KEY_ID = "openkb"

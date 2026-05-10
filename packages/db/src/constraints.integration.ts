@@ -28,6 +28,8 @@ const allTables = [
   "mcp_oauth_clients",
   "index_rebuild_jobs",
   "milvus_index_profiles",
+  "import_format_routes",
+  "import_tool_settings",
   "chunk_rebuild_jobs",
   "document_chunks",
   "knowledge_base_chunk_settings",

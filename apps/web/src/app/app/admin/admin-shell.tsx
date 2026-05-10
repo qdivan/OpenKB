@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   ClipboardList,
   Database,
+  FileCog,
   KeyRound,
   ListChecks,
   PlugZap,
@@ -13,10 +14,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { useI18n } from "@/lib/i18n-provider";
+import { getMe, type AuthMe } from "@/lib/openkb-api";
 
 const adminNavItems = [
   {
@@ -41,7 +43,15 @@ const adminNavItems = [
     href: "/app/admin/models",
     icon: <BrainCircuit className="h-4 w-4" />,
     label: "Models",
-    description: "Embedding, rerank, and LLM"
+    description: "Embedding, rerank, and LLM",
+    systemOnly: true
+  },
+  {
+    href: "/app/admin/import-tools",
+    icon: <FileCog className="h-4 w-4" />,
+    label: "Import Tools",
+    description: "Conversion routes and adapters",
+    systemOnly: true
   },
   {
     href: "/app/admin/indexing",
@@ -79,6 +89,21 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const pathname = usePathname();
   const router = useRouter();
+  const [me, setMe] = useState<AuthMe | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMe()
+      .then((next) => {
+        if (!cancelled) setMe(next);
+      })
+      .catch(() => {
+        if (!cancelled) setMe(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const prefetchAdminRoute = useCallback(
     (href: string) => {
@@ -87,11 +112,16 @@ export function AdminShell({ children }: { children: ReactNode }) {
     [router]
   );
 
+  const visibleNavItems = useMemo(
+    () => adminNavItems.filter((item) => !item.systemOnly || me?.roles.includes("system_admin")),
+    [me]
+  );
+
   useEffect(() => {
-    for (const item of adminNavItems) {
+    for (const item of visibleNavItems) {
       prefetchAdminRoute(item.href);
     }
-  }, [prefetchAdminRoute]);
+  }, [prefetchAdminRoute, visibleNavItems]);
 
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-950">
@@ -113,7 +143,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       <div className="mx-auto grid max-w-7xl gap-4 px-4 py-5 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="rounded-md border border-zinc-200 bg-white p-2">
           <nav className="space-y-1">
-            {adminNavItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
                 <Link

@@ -15,6 +15,7 @@
   "dependencies": {
     "@openkb/auth": "workspace:*",
     "@openkb/db": "workspace:*",
+    "@openkb/import-tools": "workspace:*",
     "@openkb/markdown": "workspace:*",
     "@openkb/storage": "workspace:*",
     "@openkb/shared": "workspace:*"

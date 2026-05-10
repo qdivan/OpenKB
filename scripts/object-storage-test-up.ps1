@@ -4,6 +4,8 @@ $pidDir = Join-Path (Resolve-Path ".") ".turbo"
 $pidFile = Join-Path $pidDir "openkb-wsl-keepalive.pid"
 
 New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
+$minioPort = if ($env:OPENKB_MINIO_TEST_PORT) { $env:OPENKB_MINIO_TEST_PORT } else { "59000" }
+$minioConsolePort = if ($env:OPENKB_MINIO_TEST_CONSOLE_PORT) { $env:OPENKB_MINIO_TEST_CONSOLE_PORT } else { "59001" }
 
 $existingPid = if (Test-Path $pidFile) { Get-Content $pidFile -ErrorAction SilentlyContinue } else { $null }
 $keepalive = if ($existingPid) { Get-Process -Id $existingPid -ErrorAction SilentlyContinue } else { $null }
@@ -17,7 +19,7 @@ if (-not $keepalive) {
   Set-Content -Path $pidFile -Value $process.Id
 }
 
-wsl sh -lc "mkdir -p /tmp/openkb-docker-config && printf '{}' > /tmp/openkb-docker-config/config.json && PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DOCKER_CONFIG=/tmp/openkb-docker-config docker compose -f deploy/docker-compose/minio.test.yml up -d"
+wsl sh -lc "mkdir -p /tmp/openkb-docker-config && printf '{}' > /tmp/openkb-docker-config/config.json && PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DOCKER_CONFIG=/tmp/openkb-docker-config OPENKB_MINIO_TEST_PORT=$minioPort OPENKB_MINIO_TEST_CONSOLE_PORT=$minioConsolePort docker compose -f deploy/docker-compose/minio.test.yml up -d"
 if ($LASTEXITCODE -ne 0) {
   throw "Failed to start openkb-minio-test."
 }

@@ -16,11 +16,12 @@
 - Phase 15.1 稳定化：本地源码开发端口固定为 Web `3100` / API `4101`，并补充文档状态、i18n/Models/工作台回归和浏览器冷/热启动验证。
 - Phase 16 协作与分享 UI：工作台 AccessPanel / SharePanel、Workspace/KB/document 成员与协作者管理、邮箱邀请、待审批邀请、只读分享链接、密码访问、member-only、关闭/重置链接、`/invite/:token` 和 `/share/:token`。
 - Phase 17 Admin 运维管理 UI：Auth Settings、Audit Logs、Indexing、Dify key/mapping、MCP PAT/OAuth client/grant 管理入口和对应 Admin API。
+- Phase 18 文档版本与检索解释：文档版本列表/预览/恢复、当前文档 chunk 侧栏、搜索 parent/child 命中解释和发布后 index rebuild 引导。
+- Phase 19 复杂导入适配器：`@openkb/import-tools`、`/app/admin/import-tools`、实例级 MarkItDown/MinerU/Pandoc/Tesseract OCR 配置、格式路由和 worker fallback 转 Markdown。
 
 后续建议优先级：
 
-- Phase 18：当前文档切片侧栏、文档版本列表/恢复、全局搜索 parent/child 命中解释、发布后 index rebuild 引导。
-- Phase 19：PDF/DOCX/PPTX/XLSX/图片 OCR/MinerU/MarkItDown/Pandoc adapter。
+- Phase 19：已完成最小复杂导入 adapter 闭环；后续可继续增强真实工具 smoke、批量导入管理后台和更细的转换质量报告。
 - Phase 20：生产 SMTP、CSRF 防护、备份/恢复、监控、TLS/Ingress、完整 MCP OAuth 授权码流程和密钥轮换策略。
 
 ## 工作树关键内容

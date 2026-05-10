@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import {
   CreateBucketCommand,
   type CreateBucketCommandInput,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
@@ -47,6 +48,10 @@ export type HeadObjectInput = {
   key: string;
 };
 
+export type DeleteObjectInput = {
+  key: string;
+};
+
 export type PresignedGetUrlInput = {
   key: string;
   expiresInSeconds?: number;
@@ -58,6 +63,7 @@ export type ObjectStorage = {
   putObject(input: PutObjectInput): Promise<{ etag?: string }>;
   getObject(input: GetObjectInput): Promise<Buffer>;
   headObject(input: HeadObjectInput): Promise<HeadObjectCommandOutput>;
+  deleteObject(input: DeleteObjectInput): Promise<void>;
   createPresignedGetUrl(input: PresignedGetUrlInput): Promise<string>;
 };
 
@@ -174,6 +180,10 @@ class S3ObjectStorage implements ObjectStorage {
 
   async headObject(input: HeadObjectInput): Promise<HeadObjectCommandOutput> {
     return this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: input.key }));
+  }
+
+  async deleteObject(input: DeleteObjectInput): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: input.key }));
   }
 
   async createPresignedGetUrl(input: PresignedGetUrlInput): Promise<string> {

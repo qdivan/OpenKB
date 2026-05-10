@@ -483,6 +483,38 @@ model ModelSetting {
   @@map("model_settings")
 }
 
+model ImportToolSetting {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tool_key          String   @unique
+  enabled           Boolean  @default(false)
+  mode              String
+  endpoint          String?
+  command           String?
+  timeout_ms        Int?
+  max_file_mb       Int?
+  encrypted_api_key String?
+  api_key_last4     String?
+  options           Json     @default("{}")
+  updated_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("import_tool_settings")
+}
+
+model ImportFormatRoute {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  format         String   @unique
+  enabled        Boolean  @default(true)
+  primary_tool   String
+  fallback_tools String[] @default([])
+  updated_by     String   @db.Uuid
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("import_format_routes")
+}
+
 model McpOauthClient {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id      String   @db.Uuid

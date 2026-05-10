@@ -57,6 +57,9 @@ importers:
       '@openkb/editor':
         specifier: workspace:*
         version: link:../../packages/editor
+      '@openkb/import-tools':
+        specifier: workspace:*
+        version: link:../../packages/import-tools
       '@openkb/markdown':
         specifier: workspace:*
         version: link:../../packages/markdown
@@ -228,6 +231,15 @@ importers:
 
   packages/editor: {}
 
+  packages/import-tools:
+    dependencies:
+      '@openkb/editor':
+        specifier: workspace:*
+        version: link:../editor
+      '@openkb/markdown':
+        specifier: workspace:*
+        version: link:../markdown
+
   packages/markdown:
     dependencies:
       '@openkb/editor':
@@ -292,6 +304,9 @@ importers:
       '@openkb/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@openkb/import-tools':
+        specifier: workspace:*
+        version: link:../../packages/import-tools
       '@openkb/markdown':
         specifier: workspace:*
         version: link:../../packages/markdown

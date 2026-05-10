@@ -19,6 +19,7 @@
 /app/admin/auth-settings
 /app/admin/retrieval
 /app/admin/models
+/app/admin/import-tools
 /app/admin/indexing
 /app/admin/dify
 /app/admin/mcp
@@ -36,7 +37,7 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 /admin/audit-logs
 ```
 
-当前已实现 `/app/admin`、`/app/admin/users`、`/app/admin/auth-settings`、`/app/admin/retrieval`、`/app/admin/models`、`/app/admin/indexing`、`/app/admin/dify`、`/app/admin/mcp` 和 `/app/admin/audit` 页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Models 页面是实例级 `system_admin` 配置中心，Admin 页面不显示“给某个知识库单独配置模型”的入口。Phase 17 起，Admin 运维页提供 Auth Settings、Audit Logs、Indexing、Dify key/mapping 和 MCP PAT/OAuth client/grant 管理入口。
+当前已实现 `/app/admin`、`/app/admin/users`、`/app/admin/auth-settings`、`/app/admin/retrieval`、`/app/admin/models`、`/app/admin/import-tools`、`/app/admin/indexing`、`/app/admin/dify`、`/app/admin/mcp` 和 `/app/admin/audit` 页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Models 页面是实例级 `system_admin` 配置中心，Import Tools 页面是实例级 `system_admin` 导入工具配置中心；Admin 页面不显示“给某个知识库单独配置模型或导入工具”的入口。Phase 17 起，Admin 运维页提供 Auth Settings、Audit Logs、Indexing、Dify key/mapping 和 MCP PAT/OAuth client/grant 管理入口。
 
 ## 3. 文档页面布局
 

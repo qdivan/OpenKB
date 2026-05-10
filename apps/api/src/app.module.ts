@@ -19,6 +19,8 @@ import { ShareController } from "./content/share.controller";
 import { UploadController } from "./content/upload.controller";
 import { WorkspaceController } from "./content/workspace.controller";
 import { HealthController } from "./health.controller";
+import { ImportToolsAdminController } from "./import-tools/import-tools-admin.controller";
+import { ImportToolsAdminService } from "./import-tools/import-tools-admin.service";
 import { MilvusAdminController } from "./milvus/milvus-admin.controller";
 import { MilvusAdminService } from "./milvus/milvus-admin.service";
 import { ModelSettingsAdminController } from "./models/model-settings-admin.controller";
@@ -41,6 +43,7 @@ import { SearchController } from "./search/search.controller";
     ImportJobController,
     CollaborationController,
     ShareController,
+    ImportToolsAdminController,
     MilvusAdminController,
     ModelSettingsAdminController,
     RetrievalSettingsAdminController,
@@ -56,7 +59,8 @@ import { SearchController } from "./search/search.controller";
     ModelSettingsAdminService,
     RetrievalSettingsAdminService,
     RetrievalService,
-    AdminOpsService
+    AdminOpsService,
+    ImportToolsAdminService
   ]
 })
 export class AppModule {}

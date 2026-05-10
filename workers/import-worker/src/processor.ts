@@ -3,13 +3,25 @@ import { createHash, randomUUID } from "node:crypto";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import {
   chunkMarkdownForIndex,
-  convertImportFile,
   MarkdownConversionError,
   type HierarchicalMarkdownChunk,
-  type ImportConversionWarning,
-  type RequestedImportConverter
+  type ImportConversionWarning
 } from "@openkb/markdown";
-import { createObjectStorage, type ObjectStorage } from "@openkb/storage";
+import {
+  checksumSha256,
+  createAssetObjectKey,
+  createObjectStorage,
+  sanitizeFilename,
+  type ObjectStorage
+} from "@openkb/storage";
+import {
+  convertImportSource,
+  getImportToolRuntimeConfig,
+  ImportToolError,
+  type ImportExtractedAsset,
+  type StoredImportFormatRoute,
+  type StoredImportToolSetting
+} from "@openkb/import-tools";
 
 export type ImportWorkerOptions = {
   prisma?: PrismaClient;
@@ -68,7 +80,7 @@ export async function runImportOnce(options: ImportWorkerOptions = {}): Promise<
     }
 
     try {
-      await processClaimedImportJob(prisma, storage, claimed.id);
+      await processClaimedImportJob(prisma, storage, claimed.id, options.env ?? process.env);
       return { processed: true, job_id: claimed.id, status: "succeeded" };
     } catch (error) {
       const failure = toImportFailure(error);
@@ -144,7 +156,8 @@ async function claimNextChunkRebuildJob(
 async function processClaimedImportJob(
   prisma: PrismaClient,
   storage: ObjectStorage,
-  importJobId: string
+  importJobId: string,
+  env: NodeJS.ProcessEnv
 ) {
   const job = await prisma.importJob.findUnique({ where: { id: importJobId } });
   if (!job || job.status !== "running") {
@@ -156,189 +169,236 @@ async function processClaimedImportJob(
     throw new WorkerImportError("ASSET_NOT_FOUND", "Source asset was not found.");
   }
 
-  const source = await storage.getObject({ key: asset.object_key });
-  const conversion = convertImportFile({
+  const [source, toolSettings, formatRoutes] = await Promise.all([
+    storage.getObject({ key: asset.object_key }),
+    prisma.importToolSetting.findMany(),
+    prisma.importFormatRoute.findMany()
+  ]);
+  const conversion = await convertImportSource({
     filename: asset.filename,
     mimeType: asset.mime_type,
     content: source,
-    converter: job.converter as RequestedImportConverter
+    converter: job.converter,
+    env,
+    runtimeConfig: getImportToolRuntimeConfig(
+      env,
+      toolSettings.map(toStoredImportToolSetting),
+      formatRoutes.map(toStoredImportFormatRoute)
+    )
   });
+  const preparedAssets = await persistExtractedAssets(storage, {
+    tenantId: job.tenant_id,
+    userId: job.created_by,
+    sourceAssetId: asset.id,
+    assets: conversion.assets
+  });
+  const markdown = replaceExtractedAssetPlaceholders(conversion.markdown, preparedAssets);
   const now = new Date();
   const title = normalizeTitle(job.title ?? conversion.title);
 
-  await prisma.$transaction(async (tx) => {
-    const knowledgeBase = await tx.knowledgeBase.findUnique({
-      where: { id: job.knowledge_base_id }
-    });
-    if (!knowledgeBase || knowledgeBase.status !== "active") {
-      throw new WorkerImportError("OBJECT_NOT_FOUND", "Knowledge base was not found.");
-    }
+  try {
+    await prisma.$transaction(async (tx) => {
+      const knowledgeBase = await tx.knowledgeBase.findUnique({
+        where: { id: job.knowledge_base_id }
+      });
+      if (!knowledgeBase || knowledgeBase.status !== "active") {
+        throw new WorkerImportError("OBJECT_NOT_FOUND", "Knowledge base was not found.");
+      }
 
-    if (job.parent_id) {
-      const parent = await tx.document.findUnique({ where: { id: job.parent_id } });
-      if (
-        !parent ||
-        parent.status === "deleted" ||
-        parent.type !== "folder" ||
-        parent.knowledge_base_id !== knowledgeBase.id
-      ) {
-        throw new WorkerImportError("INVALID_PARENT", "Parent folder is invalid.");
+      if (job.parent_id) {
+        const parent = await tx.document.findUnique({ where: { id: job.parent_id } });
+        if (
+          !parent ||
+          parent.status === "deleted" ||
+          parent.type !== "folder" ||
+          parent.knowledge_base_id !== knowledgeBase.id
+        ) {
+          throw new WorkerImportError("INVALID_PARENT", "Parent folder is invalid.");
+        }
       }
-    }
 
-    const siblingCount = await tx.document.count({
-      where: {
-        knowledge_base_id: knowledgeBase.id,
-        parent_id: job.parent_id,
-        status: { not: "deleted" }
-      }
-    });
-    const document = await tx.document.create({
-      data: {
-        tenant_id: job.tenant_id,
-        workspace_id: knowledgeBase.workspace_id,
-        knowledge_base_id: knowledgeBase.id,
-        parent_id: job.parent_id,
-        type: "page",
-        title,
-        slug: slugFromTitle(title),
-        status: "published",
-        permission_mode: "inherit",
-        sort_order: siblingCount * 1000,
-        created_by: job.created_by,
-        updated_by: job.created_by,
-        created_at: now,
-        updated_at: now
-      }
-    });
-    const version = await tx.documentVersion.create({
-      data: {
-        tenant_id: job.tenant_id,
-        document_id: document.id,
-        version_no: 1,
-        markdown: conversion.markdown,
-        markdown_hash: markdownHash(conversion.markdown),
-        source_type: "import",
-        source_file_id: asset.id,
-        created_by: job.created_by,
-        created_at: now
-      }
-    });
-    const settings = await getOrCreateChunkSettings(tx, {
-      tenantId: job.tenant_id,
-      workspaceId: knowledgeBase.workspace_id,
-      knowledgeBaseId: knowledgeBase.id,
-      userId: job.created_by
-    });
-    const chunks = chunkMarkdownForIndex(conversion.markdown, {
-      mode: settings.mode === "general" ? "general" : "parent_child",
-      parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
-      parent_delimiter: settings.parent_delimiter,
-      child_delimiter: settings.child_delimiter,
-      parent_max_characters: settings.parent_max_characters,
-      child_max_characters: settings.child_max_characters,
-      child_overlap_characters: settings.child_overlap_characters,
-      settings_revision: settings.revision
-    });
+      const siblingCount = await tx.document.count({
+        where: {
+          knowledge_base_id: knowledgeBase.id,
+          parent_id: job.parent_id,
+          status: { not: "deleted" }
+        }
+      });
+      const document = await tx.document.create({
+        data: {
+          tenant_id: job.tenant_id,
+          workspace_id: knowledgeBase.workspace_id,
+          knowledge_base_id: knowledgeBase.id,
+          parent_id: job.parent_id,
+          type: "page",
+          title,
+          slug: slugFromTitle(title),
+          status: "published",
+          permission_mode: "inherit",
+          sort_order: siblingCount * 1000,
+          created_by: job.created_by,
+          updated_by: job.created_by,
+          created_at: now,
+          updated_at: now
+        }
+      });
+      const version = await tx.documentVersion.create({
+        data: {
+          tenant_id: job.tenant_id,
+          document_id: document.id,
+          version_no: 1,
+          markdown,
+          markdown_hash: markdownHash(markdown),
+          source_type: "import",
+          source_file_id: asset.id,
+          created_by: job.created_by,
+          created_at: now
+        }
+      });
+      const settings = await getOrCreateChunkSettings(tx, {
+        tenantId: job.tenant_id,
+        workspaceId: knowledgeBase.workspace_id,
+        knowledgeBaseId: knowledgeBase.id,
+        userId: job.created_by
+      });
+      const chunks = chunkMarkdownForIndex(markdown, {
+        mode: settings.mode === "general" ? "general" : "parent_child",
+        parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
+        parent_delimiter: settings.parent_delimiter,
+        child_delimiter: settings.child_delimiter,
+        parent_max_characters: settings.parent_max_characters,
+        child_max_characters: settings.child_max_characters,
+        child_overlap_characters: settings.child_overlap_characters,
+        settings_revision: settings.revision
+      });
 
-    await tx.document.update({
-      where: { id: document.id },
-      data: {
-        current_version_id: version.id,
-        updated_at: now
-      }
-    });
-    await tx.collaborator.upsert({
-      where: {
-        object_type_object_id_subject_type_subject_id: {
+      await tx.document.update({
+        where: { id: document.id },
+        data: {
+          current_version_id: version.id,
+          updated_at: now
+        }
+      });
+      await tx.collaborator.upsert({
+        where: {
+          object_type_object_id_subject_type_subject_id: {
+            object_type: "document",
+            object_id: document.id,
+            subject_type: "user",
+            subject_id: job.created_by
+          }
+        },
+        create: {
+          tenant_id: job.tenant_id,
           object_type: "document",
           object_id: document.id,
           subject_type: "user",
-          subject_id: job.created_by
-        }
-      },
-      create: {
-        tenant_id: job.tenant_id,
-        object_type: "document",
-        object_id: document.id,
-        subject_type: "user",
-        subject_id: job.created_by,
-        role: "owner",
-        source: "system",
-        created_by: job.created_by,
-        created_at: now
-      },
-      update: {
-        role: "owner",
-        source: "system",
-        created_by: job.created_by
-      }
-    });
-    await tx.documentChunk.createMany({
-      data: materializeDocumentChunks(chunks).map((chunk) => ({
-        id: chunk.id,
-        tenant_id: job.tenant_id,
-        workspace_id: knowledgeBase.workspace_id,
-        knowledge_base_id: knowledgeBase.id,
-        document_id: document.id,
-        version_id: version.id,
-        ordinal: chunk.ordinal,
-        chunk_type: chunk.chunk_type,
-        parent_chunk_id: chunk.parent_chunk_id,
-        settings_revision: settings.revision,
-        start_line: chunk.start_line,
-        end_line: chunk.end_line,
-        start_char: chunk.start_char,
-        end_char: chunk.end_char,
-        parent_ordinal: chunk.parent_ordinal,
-        child_ordinal: chunk.child_ordinal,
-        heading_path: chunk.heading_path,
-        content_text: chunk.content_text,
-        content_markdown: chunk.content_markdown,
-        token_count: chunk.token_count,
-        metadata: {
-          ...chunk.metadata,
-          import_job_id: job.id,
-          converter: conversion.converter
-        }
-      }))
-    });
-    await tx.documentAsset.update({
-      where: { id: asset.id },
-      data: {
-        document_id: document.id
-      }
-    });
-    await tx.importJob.update({
-      where: { id: job.id },
-      data: {
-        status: "succeeded",
-        converter: conversion.converter,
-        title,
-        document_id: document.id,
-        output_version_id: version.id,
-        error: null,
-        warnings: conversion.warnings,
-        metadata: {
-          chunk_count: chunks.length,
-          source_asset_id: asset.id
+          subject_id: job.created_by,
+          role: "owner",
+          source: "system",
+          created_by: job.created_by,
+          created_at: now
         },
-        updated_at: now,
-        finished_at: now
+        update: {
+          role: "owner",
+          source: "system",
+          created_by: job.created_by
+        }
+      });
+      await tx.documentChunk.createMany({
+        data: materializeDocumentChunks(chunks).map((chunk) => ({
+          id: chunk.id,
+          tenant_id: job.tenant_id,
+          workspace_id: knowledgeBase.workspace_id,
+          knowledge_base_id: knowledgeBase.id,
+          document_id: document.id,
+          version_id: version.id,
+          ordinal: chunk.ordinal,
+          chunk_type: chunk.chunk_type,
+          parent_chunk_id: chunk.parent_chunk_id,
+          settings_revision: settings.revision,
+          start_line: chunk.start_line,
+          end_line: chunk.end_line,
+          start_char: chunk.start_char,
+          end_char: chunk.end_char,
+          parent_ordinal: chunk.parent_ordinal,
+          child_ordinal: chunk.child_ordinal,
+          heading_path: chunk.heading_path,
+          content_text: chunk.content_text,
+          content_markdown: chunk.content_markdown,
+          token_count: chunk.token_count,
+          metadata: {
+            ...chunk.metadata,
+            import_job_id: job.id,
+            converter: conversion.converter
+          }
+        }))
+      });
+      await tx.documentAsset.update({
+        where: { id: asset.id },
+        data: {
+          document_id: document.id
+        }
+      });
+      if (preparedAssets.length > 0) {
+        await tx.documentAsset.createMany({
+          data: preparedAssets.map((assetRecord) => ({
+            id: assetRecord.id,
+            tenant_id: job.tenant_id,
+            document_id: document.id,
+            object_key: assetRecord.objectKey,
+            filename: assetRecord.filename,
+            mime_type: assetRecord.contentType,
+            size_bytes: BigInt(assetRecord.sizeBytes),
+            checksum_sha256: assetRecord.checksumSha256,
+            storage_bucket: storage.bucket,
+            metadata: {
+              kind: assetRecord.kind,
+              source: "import_extracted_asset",
+              source_asset_id: asset.id,
+              import_job_id: job.id
+            },
+            created_by: job.created_by,
+            created_at: now
+          }))
+        });
       }
+      await tx.importJob.update({
+        where: { id: job.id },
+        data: {
+          status: "succeeded",
+          converter: conversion.converter,
+          title,
+          document_id: document.id,
+          output_version_id: version.id,
+          error: null,
+          warnings: conversion.warnings,
+          metadata: {
+            ...conversion.metadata,
+            chunk_count: chunks.length,
+            source_asset_id: asset.id,
+            asset_count: preparedAssets.length
+          },
+          updated_at: now,
+          finished_at: now
+        }
+      });
+      await writeAuditLog(tx, {
+        tenantId: job.tenant_id,
+        actorUserId: job.created_by,
+        action: "import_job.succeeded",
+        objectType: "import_job",
+        objectId: job.id,
+        metadata: {
+          document_id: document.id,
+          version_id: version.id
+        }
+      });
     });
-    await writeAuditLog(tx, {
-      tenantId: job.tenant_id,
-      actorUserId: job.created_by,
-      action: "import_job.succeeded",
-      objectType: "import_job",
-      objectId: job.id,
-      metadata: {
-        document_id: document.id,
-        version_id: version.id
-      }
-    });
-  });
+  } catch (error) {
+    await cleanupPersistedExtractedAssets(storage, preparedAssets);
+    throw error;
+  }
 }
 
 async function processClaimedChunkRebuildJob(prisma: PrismaClient, jobId: string) {
@@ -484,6 +544,15 @@ function toImportFailure(error: unknown): {
     };
   }
 
+  if (error instanceof ImportToolError) {
+    return {
+      code: error.code,
+      warnings: error.warnings.length
+        ? error.warnings
+        : [{ code: error.code, message: error.message }]
+    };
+  }
+
   if (error instanceof WorkerImportError) {
     return {
       code: error.code,
@@ -546,6 +615,85 @@ function slugFromTitle(title: string): string {
 
 function markdownHash(markdown: string): string {
   return createHash("sha256").update(markdown).digest("hex");
+}
+
+type PersistedExtractedAsset = {
+  placeholderId: string;
+  id: string;
+  filename: string;
+  contentType: string;
+  objectKey: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  kind: ImportExtractedAsset["kind"];
+};
+
+async function persistExtractedAssets(
+  storage: ObjectStorage,
+  input: {
+    tenantId: string;
+    userId: string;
+    sourceAssetId: string;
+    assets: ImportExtractedAsset[];
+  }
+): Promise<PersistedExtractedAsset[]> {
+  const persisted: PersistedExtractedAsset[] = [];
+  for (const asset of input.assets) {
+    const id = randomUUID();
+    const filename = sanitizeFilename(asset.filename);
+    const objectKey = createAssetObjectKey({ tenantId: input.tenantId, assetId: id, filename });
+    const checksum = checksumSha256(asset.body);
+    await storage.putObject({
+      key: objectKey,
+      body: asset.body,
+      contentType: asset.contentType,
+      metadata: {
+        source: "import_extracted_asset",
+        source_asset_id: input.sourceAssetId,
+        created_by: input.userId
+      }
+    });
+    persisted.push({
+      placeholderId: asset.placeholderId,
+      id,
+      filename,
+      contentType: asset.contentType,
+      objectKey,
+      sizeBytes: asset.body.byteLength,
+      checksumSha256: checksum,
+      kind: asset.kind
+    });
+  }
+  return persisted;
+}
+
+async function cleanupPersistedExtractedAssets(
+  storage: ObjectStorage,
+  assets: PersistedExtractedAsset[]
+): Promise<void> {
+  await Promise.allSettled(assets.map((asset) => storage.deleteObject({ key: asset.objectKey })));
+}
+
+function replaceExtractedAssetPlaceholders(
+  markdown: string,
+  assets: PersistedExtractedAsset[]
+): string {
+  return assets.reduce(
+    (current, asset) => current.split(`asset://${asset.placeholderId}`).join(`asset://${asset.id}`),
+    markdown
+  );
+}
+
+function toStoredImportToolSetting(setting: unknown): StoredImportToolSetting {
+  const row = setting as StoredImportToolSetting;
+  return {
+    ...row,
+    options: row.options ?? {}
+  };
+}
+
+function toStoredImportFormatRoute(route: unknown): StoredImportFormatRoute {
+  return route as StoredImportFormatRoute;
 }
 
 type MaterializedChunk = HierarchicalMarkdownChunk & {

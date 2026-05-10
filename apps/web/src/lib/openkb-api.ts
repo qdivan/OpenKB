@@ -471,6 +471,76 @@ export type ModelProvider =
   | "openai_chat_completions"
   | "anthropic_messages";
 
+export type ImportToolKey = "markitdown" | "mineru" | "pandoc" | "tesseract_ocr";
+export type ComplexImportFormat = "pdf" | "docx" | "pptx" | "xlsx" | "image";
+export type ImportToolMode = "local_cli" | "http_api";
+export type RequestedImportConverter =
+  | "auto"
+  | "markdown"
+  | "text"
+  | "html"
+  | "csv"
+  | ImportToolKey;
+
+export type AdminImportToolSetting = {
+  tool_key: ImportToolKey;
+  label: string;
+  formats: ComplexImportFormat[];
+  modes: ImportToolMode[];
+  source: "db" | "env" | "default" | "disabled" | "none";
+  enabled: boolean;
+  configured: boolean;
+  mode: ImportToolMode;
+  endpoint: string | null;
+  command: string | null;
+  timeout_ms: number;
+  max_file_mb: number;
+  has_secret: boolean;
+  api_key_last4: string | null;
+  options: Record<string, unknown>;
+  updated_by: string | null;
+  updated_at: string | null;
+};
+
+export type AdminImportFormatRoute = {
+  format: ComplexImportFormat;
+  enabled: boolean;
+  source: "db" | "default";
+  primary_tool: ImportToolKey;
+  fallback_tools: ImportToolKey[];
+  updated_by: string | null;
+  updated_at: string | null;
+};
+
+export type AdminImportToolsResponse = {
+  tools: AdminImportToolSetting[];
+  routes: AdminImportFormatRoute[];
+};
+
+export type UpdateAdminImportToolInput = {
+  enabled?: boolean;
+  mode?: ImportToolMode;
+  endpoint?: string | null;
+  command?: string | null;
+  timeout_ms?: number | null;
+  max_file_mb?: number | null;
+  options?: Record<string, unknown>;
+  api_key?: string | null;
+};
+
+export type UpdateAdminImportFormatRouteInput = {
+  enabled?: boolean;
+  primary_tool?: ImportToolKey;
+  fallback_tools?: ImportToolKey[];
+};
+
+export type AdminImportToolProbeResult = {
+  configured: boolean;
+  ok: boolean;
+  latency_ms?: number;
+  error?: string;
+};
+
 export type AdminModelSetting = {
   kind: ModelKind;
   provider: ModelProvider;
@@ -885,7 +955,7 @@ export function createImportJob(input: {
   knowledge_base_id: string;
   parent_id?: string | null;
   title?: string;
-  converter?: "auto" | "markdown" | "text" | "html" | "csv";
+  converter?: RequestedImportConverter;
 }) {
   return apiFetch<ImportJob>("/api/import-jobs", {
     method: "POST",
@@ -1115,6 +1185,39 @@ export function probeAdminModel(kind: ModelKind, input?: UpdateAdminModelSetting
 export function clearAdminModelSecret(kind: ModelKind) {
   return apiFetch<AdminModelSetting>(`/api/admin/models/${kind}/secret`, {
     method: "DELETE"
+  });
+}
+
+export function listAdminImportTools() {
+  return apiFetch<AdminImportToolsResponse>("/api/admin/import-tools");
+}
+
+export function updateAdminImportTool(toolKey: ImportToolKey, input: UpdateAdminImportToolInput) {
+  return apiFetch<AdminImportToolSetting>(`/api/admin/import-tools/${toolKey}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function probeAdminImportTool(toolKey: ImportToolKey) {
+  return apiFetch<AdminImportToolProbeResult>(`/api/admin/import-tools/${toolKey}/probe`, {
+    method: "POST"
+  });
+}
+
+export function clearAdminImportToolSecret(toolKey: ImportToolKey) {
+  return apiFetch<AdminImportToolSetting>(`/api/admin/import-tools/${toolKey}/secret`, {
+    method: "DELETE"
+  });
+}
+
+export function updateAdminImportFormatRoute(
+  format: ComplexImportFormat,
+  input: UpdateAdminImportFormatRouteInput
+) {
+  return apiFetch<AdminImportFormatRoute>(`/api/admin/import-tools/routes/${format}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
   });
 }
 

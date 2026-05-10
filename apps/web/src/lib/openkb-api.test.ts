@@ -6,18 +6,23 @@ import {
   createInvitation,
   createShareLink,
   clearAdminModelSecret,
+  clearAdminImportToolSecret,
   createAdminUser,
   getShare,
   getDocumentVersion,
   isUnauthorized,
+  listAdminImportTools,
   listAdminUsers,
   listDocumentVersions,
   listShareLinks,
+  probeAdminImportTool,
   probeAdminModel,
   resetShareLink,
   restoreDocumentVersion,
   searchKnowledge,
   setAdminUserTenantRole,
+  updateAdminImportFormatRoute,
+  updateAdminImportTool,
   updateAdminModelSetting,
   verifySharePassword
 } from "./openkb-api";
@@ -237,6 +242,73 @@ describe("OpenKB API client", () => {
       expect.objectContaining({
         credentials: "include",
         method: "DELETE"
+      })
+    );
+  });
+
+  it("builds admin import tool requests", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ tools: [], routes: [] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listAdminImportTools();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/import-tools",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ tool_key: "mineru" })));
+    await updateAdminImportTool("mineru", {
+      enabled: true,
+      mode: "http_api",
+      endpoint: "https://mineru.example/convert",
+      timeout_ms: 120000,
+      max_file_mb: 100,
+      api_key: "temporary"
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/import-tools/mineru",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: true,
+          mode: "http_api",
+          endpoint: "https://mineru.example/convert",
+          timeout_ms: 120000,
+          max_file_mb: 100,
+          api_key: "temporary"
+        })
+      })
+    );
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ configured: true, ok: true })));
+    await probeAdminImportTool("mineru");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/import-tools/mineru/probe",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ tool_key: "mineru" })));
+    await clearAdminImportToolSecret("mineru");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/import-tools/mineru/secret",
+      expect.objectContaining({ method: "DELETE" })
+    );
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ format: "pdf" })));
+    await updateAdminImportFormatRoute("pdf", {
+      enabled: true,
+      primary_tool: "markitdown",
+      fallback_tools: ["mineru"]
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/import-tools/routes/pdf",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: true,
+          primary_tool: "markitdown",
+          fallback_tools: ["mineru"]
+        })
       })
     );
   });

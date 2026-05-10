@@ -1,4 +1,5 @@
 import { AuthError } from "@openkb/auth";
+import { ImportToolError } from "@openkb/import-tools";
 import { MilvusError } from "@openkb/milvus";
 import { ModelClientError } from "@openkb/model-client";
 import { PermissionError } from "@openkb/permissions";
@@ -18,6 +19,7 @@ export function setCookie(reply: JsonReply, cookie: string) {
 export function sendJsonError(error: unknown, reply: JsonReply) {
   if (
     error instanceof AuthError ||
+    error instanceof ImportToolError ||
     error instanceof MilvusError ||
     error instanceof ModelClientError ||
     error instanceof PermissionError ||

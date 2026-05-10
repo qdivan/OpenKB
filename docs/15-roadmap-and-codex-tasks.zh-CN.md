@@ -252,10 +252,18 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 
 ## Phase 19 - 复杂导入适配器
 
-输出：
-- PDF / DOCX / PPTX / XLSX / image 导入适配器。
-- MarkItDown / Pandoc / MinerU / OCR adapter 边界。
-- 工具不可用时返回明确 warnings，不静默失败。
+输出（Phase 19 已实现最小闭环）：
+- PDF / DOCX / PPTX / XLSX / image 导入适配器路由。
+- `@openkb/import-tools`：MarkItDown、MinerU、Pandoc、Tesseract OCR 统一 adapter interface、capability matrix、fallback resolver 和稳定错误码。
+- `import_tool_settings` / `import_format_routes`：实例级工具配置和格式路由；仅 `system_admin` 可写。
+- `/app/admin/import-tools`：工具配置、secret last4、检测按钮、格式路由矩阵和 capability/warnings 说明。
+- Worker 在 `auto` 导入时按格式路由尝试主工具和 fallback；工具不可用、未配置、超时或鉴权失败会进入 `import_jobs.warnings`，不会静默失败。
+- 转换结果继续通过 Milkdown/Feature Registry Markdown 校验，并生成 document/version/chunks；提取 media 时写入 S3-compatible storage 和 `document_assets`。
+
+边界：
+- 不做租户级、工作区级或知识库级导入工具配置。
+- 不保存明文导入工具 API key；DB secret 依赖 `OPENKB_CONFIG_ENCRYPTION_KEY` 加密。
+- 真实转换质量取决于已安装的本地工具或已配置的 MinerU endpoint；工具不可用时应明确失败或 fallback。
 
 ## Phase 20 - 生产增强
 
