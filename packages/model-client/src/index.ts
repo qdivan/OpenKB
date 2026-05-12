@@ -28,6 +28,17 @@ export const LANGUAGE_MODEL_PROVIDERS = [
 
 export type ModelKind = (typeof MODEL_KINDS)[number];
 export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
+export type ModelInputModality = "text" | "image" | "audio" | "video";
+
+export type ModelCapabilities = {
+  input_modalities: ModelInputModality[];
+  dimensions: number | null;
+  max_tokens: number | null;
+  languages: string[];
+  provider_model_type: string | null;
+  supports_batch: boolean | null;
+  raw_provider: Record<string, unknown>;
+};
 
 export type ModelClientErrorCode =
   | "MODEL_NOT_CONFIGURED"
@@ -60,6 +71,8 @@ export type StoredModelSetting = {
   llm_max_output_tokens: number | null;
   encrypted_api_key: string | null;
   api_key_last4?: string | null;
+  capabilities?: unknown;
+  capabilities_detected_at?: Date | string | null;
 };
 
 export type EmbeddingConfig = {
@@ -71,6 +84,7 @@ export type EmbeddingConfig = {
   dim: number;
   batchSize: number;
   timeoutMs: number;
+  capabilities?: ModelCapabilities;
 };
 
 export type RerankConfig = {
@@ -80,6 +94,7 @@ export type RerankConfig = {
   apiKey?: string;
   source: "env" | "db" | "none";
   timeoutMs: number;
+  capabilities?: ModelCapabilities;
 };
 
 export type LanguageConfig = {
@@ -109,6 +124,9 @@ export type ModelProbeResult = {
   ok: boolean;
   model?: string;
   dim?: number;
+  capabilities?: ModelCapabilities;
+  capabilities_detected?: boolean;
+  capability_warnings?: string[];
   latency_ms?: number;
   error?: string;
 };
@@ -123,9 +141,9 @@ type FetchResponseLike = {
 type FetchLike = (
   url: string,
   init: {
-    method: "POST";
+    method: "GET" | "POST";
     headers: Record<string, string>;
-    body: string;
+    body?: string;
     signal?: AbortSignal;
   }
 ) => Promise<FetchResponseLike>;
@@ -205,6 +223,7 @@ export class OpenKBModelClient {
     }
 
     const startedAt = Date.now();
+    const detected = await this.detectModelCapabilities("embedding");
     try {
       const embedding = await this.embedText(sampleText);
       return {
@@ -212,6 +231,17 @@ export class OpenKBModelClient {
         ok: true,
         model: this.config.embedding.model,
         dim: embedding.length,
+        capabilities: mergeDetectedCapabilities(
+          this.config.embedding.capabilities,
+          detected.value,
+          {
+            dimensions: embedding.length,
+            supports_batch: true,
+            input_modalities: ["text"]
+          }
+        ),
+        capabilities_detected: detected.detected,
+        capability_warnings: detected.warnings,
         latency_ms: Date.now() - startedAt
       };
     } catch (error) {
@@ -219,6 +249,16 @@ export class OpenKBModelClient {
         configured: true,
         ok: false,
         model: this.config.embedding.model,
+        capabilities: mergeDetectedCapabilities(
+          this.config.embedding.capabilities,
+          detected.value,
+          {
+            supports_batch: true,
+            input_modalities: ["text"]
+          }
+        ),
+        capabilities_detected: detected.detected,
+        capability_warnings: detected.warnings,
         latency_ms: Date.now() - startedAt,
         error: error instanceof Error ? error.message : "Embedding probe failed."
       };
@@ -231,6 +271,7 @@ export class OpenKBModelClient {
     }
 
     const startedAt = Date.now();
+    const detected = await this.detectModelCapabilities("rerank");
     try {
       await this.rerankDocuments({
         query: "OpenKB retrieval probe",
@@ -240,6 +281,11 @@ export class OpenKBModelClient {
         configured: true,
         ok: true,
         model: this.config.rerank.model,
+        capabilities: mergeDetectedCapabilities(this.config.rerank.capabilities, detected.value, {
+          input_modalities: ["text"]
+        }),
+        capabilities_detected: detected.detected,
+        capability_warnings: detected.warnings,
         latency_ms: Date.now() - startedAt
       };
     } catch (error) {
@@ -247,6 +293,11 @@ export class OpenKBModelClient {
         configured: true,
         ok: false,
         model: this.config.rerank.model,
+        capabilities: mergeDetectedCapabilities(this.config.rerank.capabilities, detected.value, {
+          input_modalities: ["text"]
+        }),
+        capabilities_detected: detected.detected,
+        capability_warnings: detected.warnings,
         latency_ms: Date.now() - startedAt,
         error: error instanceof Error ? error.message : "Rerank probe failed."
       };
@@ -291,6 +342,42 @@ export class OpenKBModelClient {
       this.config.embedding.apiKey
     );
     return parseEmbeddingResponse(body, texts.length, this.config.embedding.dim);
+  }
+
+  private async detectModelCapabilities(
+    kind: "embedding" | "rerank"
+  ): Promise<{ value: ModelCapabilities | null; detected: boolean; warnings: string[] }> {
+    const config = kind === "embedding" ? this.config.embedding : this.config.rerank;
+    const endpoint = getModelListEndpoint(config.endpoint);
+    if (!endpoint || !config.model) {
+      return { value: null, detected: false, warnings: [] };
+    }
+    try {
+      const body = await getJson(
+        this.fetchFn,
+        endpoint,
+        Math.min(config.timeoutMs, 3000),
+        config.apiKey
+      );
+      const detected = parseOpenAICompatibleModelCapabilityDetection(body, config.model, kind);
+      return {
+        value: detected.capabilities,
+        detected: detected.detected,
+        warnings: detected.detected
+          ? []
+          : [`Model capability detection skipped: ${config.model} was not returned by /v1/models.`]
+      };
+    } catch (error) {
+      return {
+        value: null,
+        detected: false,
+        warnings: [
+          error instanceof Error
+            ? `Model capability detection skipped: ${error.message}`
+            : "Model capability detection skipped."
+        ]
+      };
+    }
   }
 
   private async requestLanguageProbe(sampleText: string): Promise<unknown> {
@@ -521,6 +608,68 @@ export function parseRerankResults(body: unknown, documentCount: number): Rerank
   });
 }
 
+export function parseOpenAICompatibleModelCapabilities(
+  body: unknown,
+  model: string,
+  kind: "embedding" | "rerank"
+): ModelCapabilities {
+  return parseOpenAICompatibleModelCapabilityDetection(body, model, kind).capabilities;
+}
+
+export function parseOpenAICompatibleModelCapabilityDetection(
+  body: unknown,
+  model: string,
+  kind: "embedding" | "rerank"
+): { capabilities: ModelCapabilities; detected: boolean } {
+  const payload = assertRecord(body, "Model list response");
+  const models = Array.isArray(payload.data) ? payload.data : [];
+  const match = models
+    .map((item) =>
+      typeof item === "object" && item !== null ? (item as Record<string, unknown>) : null
+    )
+    .find((item) => {
+      if (!item) {
+        return false;
+      }
+      return [item.id, item.model_name, item.model].some((value) => value === model);
+    });
+
+  if (!match) {
+    return { capabilities: emptyCapabilities(kind), detected: false };
+  }
+
+  return {
+    capabilities: normalizeModelCapabilities({
+      input_modalities: inferInputModalities(match, kind),
+      dimensions: firstPositiveNumber(match.dimensions, match.dimension, match.embedding_dim),
+      max_tokens: firstPositiveNumber(
+        match.max_tokens,
+        match.context_length,
+        match.max_input_tokens
+      ),
+      languages: normalizeStringArray(match.language ?? match.languages),
+      provider_model_type: firstString(match.model_type, match.type, kind),
+      supports_batch: kind === "embedding" ? true : null,
+      raw_provider: compactRecord({
+        id: firstString(match.id),
+        owned_by: firstString(match.owned_by),
+        model_name: firstString(match.model_name),
+        model_family: firstString(match.model_family),
+        model_type: firstString(match.model_type),
+        type: firstString(match.type),
+        dimensions: firstPositiveNumber(match.dimensions, match.dimension, match.embedding_dim),
+        max_tokens: firstPositiveNumber(
+          match.max_tokens,
+          match.context_length,
+          match.max_input_tokens
+        ),
+        language: normalizeStringArray(match.language ?? match.languages)
+      })
+    }),
+    detected: true
+  };
+}
+
 function resolveEmbeddingConfig(
   env: NodeJS.ProcessEnv,
   setting: StoredModelSetting | undefined
@@ -534,7 +683,12 @@ function resolveEmbeddingConfig(
       source: "db",
       dim: positiveNumber(setting.embedding_dim, DEFAULT_EMBEDDING_DIM),
       batchSize: positiveNumber(setting.embedding_batch_size, DEFAULT_EMBEDDING_BATCH_SIZE),
-      timeoutMs: positiveNumber(setting.timeout_ms, DEFAULT_EMBEDDING_TIMEOUT_MS)
+      timeoutMs: positiveNumber(setting.timeout_ms, DEFAULT_EMBEDDING_TIMEOUT_MS),
+      capabilities: normalizeModelCapabilities(setting.capabilities, {
+        dimensions: positiveNumber(setting.embedding_dim, DEFAULT_EMBEDDING_DIM),
+        input_modalities: ["text"],
+        supports_batch: true
+      })
     };
   }
 
@@ -546,7 +700,12 @@ function resolveEmbeddingConfig(
     source: "env",
     dim: parsePositiveInt(env.OPENKB_EMBEDDING_DIM, DEFAULT_EMBEDDING_DIM),
     batchSize: parsePositiveInt(env.OPENKB_EMBEDDING_BATCH_SIZE, DEFAULT_EMBEDDING_BATCH_SIZE),
-    timeoutMs: parsePositiveInt(env.OPENKB_EMBEDDING_TIMEOUT_MS, DEFAULT_EMBEDDING_TIMEOUT_MS)
+    timeoutMs: parsePositiveInt(env.OPENKB_EMBEDDING_TIMEOUT_MS, DEFAULT_EMBEDDING_TIMEOUT_MS),
+    capabilities: normalizeModelCapabilities(null, {
+      dimensions: parsePositiveInt(env.OPENKB_EMBEDDING_DIM, DEFAULT_EMBEDDING_DIM),
+      input_modalities: ["text"],
+      supports_batch: true
+    })
   };
   return isEmbeddingConfigConfigured(envConfig) ? envConfig : { ...envConfig, source: "none" };
 }
@@ -562,7 +721,10 @@ function resolveRerankConfig(
       model: emptyToUndefined(setting.model ?? undefined),
       apiKey: decryptSettingApiKey(setting, env),
       source: "db",
-      timeoutMs: positiveNumber(setting.timeout_ms, DEFAULT_RERANK_TIMEOUT_MS)
+      timeoutMs: positiveNumber(setting.timeout_ms, DEFAULT_RERANK_TIMEOUT_MS),
+      capabilities: normalizeModelCapabilities(setting.capabilities, {
+        input_modalities: ["text"]
+      })
     };
   }
 
@@ -572,7 +734,10 @@ function resolveRerankConfig(
     model: emptyToUndefined(env.OPENKB_RERANK_MODEL),
     apiKey: emptyToUndefined(env.OPENKB_RERANK_API_KEY),
     source: "env",
-    timeoutMs: parsePositiveInt(env.OPENKB_RERANK_TIMEOUT_MS, DEFAULT_RERANK_TIMEOUT_MS)
+    timeoutMs: parsePositiveInt(env.OPENKB_RERANK_TIMEOUT_MS, DEFAULT_RERANK_TIMEOUT_MS),
+    capabilities: normalizeModelCapabilities(null, {
+      input_modalities: ["text"]
+    })
   };
   return isRerankConfigConfigured(envConfig) ? envConfig : { ...envConfig, source: "none" };
 }
@@ -700,12 +865,79 @@ async function postJson(
   }
 }
 
+async function getJson(
+  fetchFn: FetchLike,
+  endpoint: string,
+  timeoutMs: number,
+  apiKey?: string
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers.authorization = `Bearer ${apiKey}`;
+    }
+    const response = await fetchFn(endpoint, {
+      method: "GET",
+      headers,
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new ModelClientError(
+        "MODEL_REQUEST_FAILED",
+        `Model endpoint returned HTTP ${response.status}.`,
+        502,
+        {
+          status: response.status,
+          body: await response.text().catch(() => "")
+        }
+      );
+    }
+    return await response.json();
+  } catch (error) {
+    if (error instanceof ModelClientError) {
+      throw error;
+    }
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? `Model request timed out after ${timeoutMs}ms.`
+        : error instanceof Error
+          ? error.message
+          : "Model request failed.";
+    throw new ModelClientError("MODEL_REQUEST_FAILED", message, 502);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function getModelListEndpoint(endpoint: string | undefined): string | null {
+  if (!endpoint) {
+    return null;
+  }
+  try {
+    const url = new URL(endpoint);
+    const nextPathname = url.pathname
+      .replace(/\/v1\/embeddings\/?$/i, "/v1/models")
+      .replace(/\/v1\/rerank\/?$/i, "/v1/models")
+      .replace(/\/v1\/responses\/?$/i, "/v1/models")
+      .replace(/\/v1\/chat\/completions\/?$/i, "/v1/models");
+    if (nextPathname === url.pathname) {
+      return null;
+    }
+    url.pathname = nextPathname;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 async function defaultFetch(
   url: string,
   init: {
-    method: "POST";
+    method: "GET" | "POST";
     headers: Record<string, string>;
-    body: string;
+    body?: string;
     signal?: AbortSignal;
   }
 ): Promise<FetchResponseLike> {
@@ -777,6 +1009,143 @@ function positiveNumber(value: number | null | undefined, fallback: number): num
 
 function finiteNumber(value: number | null | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+export function normalizeModelCapabilities(
+  value: unknown,
+  fallback: Partial<ModelCapabilities> = {}
+): ModelCapabilities {
+  const record =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    input_modalities: normalizeInputModalities(
+      record.input_modalities ?? record.modalities,
+      fallback.input_modalities ?? []
+    ),
+    dimensions:
+      firstPositiveNumber(record.dimensions, record.dimension) ?? fallback.dimensions ?? null,
+    max_tokens:
+      firstPositiveNumber(record.max_tokens, record.max_input_tokens) ??
+      fallback.max_tokens ??
+      null,
+    languages: normalizeStringArray(record.languages ?? record.language, fallback.languages ?? []),
+    provider_model_type:
+      firstString(record.provider_model_type, record.model_type) ??
+      fallback.provider_model_type ??
+      null,
+    supports_batch:
+      typeof record.supports_batch === "boolean"
+        ? record.supports_batch
+        : (fallback.supports_batch ?? null),
+    raw_provider:
+      typeof record.raw_provider === "object" &&
+      record.raw_provider !== null &&
+      !Array.isArray(record.raw_provider)
+        ? compactRecord(record.raw_provider as Record<string, unknown>)
+        : (fallback.raw_provider ?? {})
+  };
+}
+
+function emptyCapabilities(kind: "embedding" | "rerank"): ModelCapabilities {
+  return normalizeModelCapabilities(null, {
+    input_modalities: ["text"],
+    supports_batch: kind === "embedding" ? true : null,
+    provider_model_type: kind
+  });
+}
+
+function mergeDetectedCapabilities(
+  base: ModelCapabilities | undefined,
+  detected: ModelCapabilities | null,
+  fallback: Partial<ModelCapabilities> = {}
+): ModelCapabilities {
+  if (!detected) {
+    return normalizeModelCapabilities(base, fallback);
+  }
+  return normalizeModelCapabilities(
+    {
+      ...(base ?? {}),
+      ...detected,
+      raw_provider: {
+        ...(base?.raw_provider ?? {}),
+        ...detected.raw_provider
+      }
+    },
+    fallback
+  );
+}
+
+function inferInputModalities(
+  model: Record<string, unknown>,
+  kind: "embedding" | "rerank"
+): ModelInputModality[] {
+  const explicit = normalizeInputModalities(model.input_modalities ?? model.modalities, []);
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  const haystack = [model.id, model.model_name, model.model_family, model.model_type, model.type]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  if (/\b(vl|vision|visual|image|multimodal|multi-modal)\b/.test(haystack)) {
+    return ["text", "image"];
+  }
+  if (kind === "embedding" || kind === "rerank") {
+    return ["text"];
+  }
+  return [];
+}
+
+function normalizeInputModalities(
+  value: unknown,
+  fallback: ModelInputModality[]
+): ModelInputModality[] {
+  const values = normalizeStringArray(value, fallback);
+  const allowed = new Set<ModelInputModality>(["text", "image", "audio", "video"]);
+  return unique(
+    values
+      .map((item) => item.toLowerCase())
+      .filter((item): item is ModelInputModality => allowed.has(item as ModelInputModality))
+  );
+}
+
+function normalizeStringArray(value: unknown, fallback: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    return unique(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    );
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return fallback;
+}
+
+function firstPositiveNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
 function emptyToUndefined(value: string | undefined): string | undefined {

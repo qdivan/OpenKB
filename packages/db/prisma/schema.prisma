@@ -497,6 +497,8 @@ model ModelSetting {
   llm_max_output_tokens Int?
   encrypted_api_key     String?
   api_key_last4         String?
+  capabilities          Json      @default("{}")
+  capabilities_detected_at DateTime? @db.Timestamptz(6)
   updated_by            String   @db.Uuid
   created_at            DateTime @default(now()) @db.Timestamptz(6)
   updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz(6)

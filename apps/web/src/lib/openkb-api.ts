@@ -631,6 +631,9 @@ export type AdminModelSetting = {
   has_secret: boolean;
   secret_source: "db" | "env" | "none";
   api_key_last4: string | null;
+  capabilities: ModelCapabilities;
+  capabilities_detected_at: string | null;
+  capability_warnings: string[];
   db_configured: boolean;
   env_configured: boolean;
   updated_by: string | null;
@@ -657,6 +660,16 @@ export type UpdateAdminModelSettingInput = {
 
 export type AdminModelProbeResult = ModelProbeResult;
 
+export type ModelCapabilities = {
+  input_modalities: Array<"text" | "image" | "audio" | "video">;
+  dimensions: number | null;
+  max_tokens: number | null;
+  languages: string[];
+  provider_model_type: string | null;
+  supports_batch: boolean | null;
+  raw_provider: Record<string, unknown>;
+};
+
 export type RetrievalSettingsStatus = {
   mode: RetrievalMode;
   effective_mode: RetrievalMode;
@@ -667,11 +680,13 @@ export type RetrievalSettingsStatus = {
     model: string | null;
     dim: number;
     source?: "db" | "env" | "none";
+    capabilities?: ModelCapabilities | null;
   };
   rerank: {
     configured: boolean;
     model: string | null;
     source?: "db" | "env" | "none";
+    capabilities?: ModelCapabilities | null;
   };
   active_alias: string;
   next_rebuild_collection: string;
@@ -694,6 +709,7 @@ export type RetrievalSettingsStatus = {
   latest_rebuild_job: IndexRebuildJob | null;
   dense_index_ready: boolean;
   needs_rebuild: boolean;
+  rebuild_required_reason: string | null;
 };
 
 export type ModelProbeResult = {
@@ -701,6 +717,9 @@ export type ModelProbeResult = {
   ok: boolean;
   model?: string;
   dim?: number;
+  capabilities?: ModelCapabilities;
+  capabilities_detected?: boolean;
+  capability_warnings?: string[];
   latency_ms?: number;
   error?: string;
 };
@@ -744,6 +763,23 @@ export type MilvusStatusResponse = {
   active_alias: string;
   active_profile: MilvusIndexProfile | null;
   alias: unknown;
+  model?: {
+    embedding: {
+      configured: boolean;
+      model: string | null;
+      dim: number;
+      source: "db" | "env" | "none";
+      capabilities: ModelCapabilities;
+    };
+    rerank: {
+      configured: boolean;
+      model: string | null;
+      source: "db" | "env" | "none";
+      capabilities: ModelCapabilities;
+    };
+    dense_profile_compatible: boolean;
+    rebuild_required_reason: string | null;
+  };
 };
 
 export type IndexRebuildJobListResponse = {
@@ -871,15 +907,23 @@ async function apiFetchRequest<T>(path: string, init: RequestInit = {}): Promise
   const isFormData =
     typeof FormData !== "undefined" && init.body !== undefined && init.body instanceof FormData;
   const method = (init.method ?? "GET").toUpperCase();
-  const response = await fetch(authApiUrl(path), {
-    ...init,
-    headers: {
-      ...(init.body && !isFormData ? { "content-type": "application/json" } : {}),
-      ...csrfHeader(method),
-      ...init.headers
-    },
-    credentials: "include"
-  });
+  let response: Response;
+  try {
+    response = await fetch(authApiUrl(path), {
+      ...init,
+      headers: {
+        ...(init.body && !isFormData ? { "content-type": "application/json" } : {}),
+        ...csrfHeader(method),
+        ...init.headers
+      },
+      credentials: "include"
+    });
+  } catch {
+    throw new ApiRequestError(0, {
+      error: "NETWORK_ERROR",
+      message: "API service is unreachable. Please confirm the API server is running."
+    });
+  }
 
   const body = await readJson(response);
   if (!response.ok) {

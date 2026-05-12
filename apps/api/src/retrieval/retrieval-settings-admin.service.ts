@@ -8,7 +8,7 @@ import {
   type StoredModelSetting
 } from "@openkb/model-client";
 import {
-  activeProfileSupportsDenseVector,
+  getDenseProfileCompatibility,
   normalizeRetrievalMode,
   RETRIEVAL_MODES,
   resolveEffectiveRetrievalMode,
@@ -93,10 +93,12 @@ export class RetrievalSettingsAdminService {
         orderBy: { started_at: "desc" }
       })
     ]);
-    const denseReady = activeProfileSupportsDenseVector(activeProfile, {
+    const denseCompatibility = getDenseProfileCompatibility(activeProfile, {
       dim: modelClient.config.embedding.dim,
-      model: modelClient.config.embedding.model
+      model: modelClient.config.embedding.model,
+      capabilities: modelClient.config.embedding.capabilities
     });
+    const denseReady = denseCompatibility.compatible;
     const resolution = resolveEffectiveRetrievalMode({
       storedMode: setting?.mode,
       envDefaultMode: process.env.OPENKB_RETRIEVAL_DEFAULT_MODE,
@@ -120,12 +122,14 @@ export class RetrievalSettingsAdminService {
         configured: modelClient.embeddingConfigured,
         model: modelClient.embeddingConfigured ? modelClient.config.embedding.model : null,
         dim: modelClient.config.embedding.dim,
-        source: modelClient.config.embedding.source
+        source: modelClient.config.embedding.source,
+        capabilities: modelClient.config.embedding.capabilities ?? null
       },
       rerank: {
         configured: modelClient.rerankConfigured,
         model: modelClient.rerankConfigured ? modelClient.config.rerank.model : null,
-        source: modelClient.config.rerank.source
+        source: modelClient.config.rerank.source,
+        capabilities: modelClient.config.rerank.capabilities ?? null
       },
       active_alias: milvusConfig.activeAlias,
       next_rebuild_collection: createCollectionName({
@@ -135,7 +139,8 @@ export class RetrievalSettingsAdminService {
       active_profile: activeProfile ? toMilvusIndexProfileDto(activeProfile) : null,
       latest_rebuild_job: latestRebuildJob ? toIndexRebuildJobDto(latestRebuildJob) : null,
       dense_index_ready: denseReady,
-      needs_rebuild: needsRebuild
+      needs_rebuild: needsRebuild,
+      rebuild_required_reason: needsRebuild ? denseCompatibility.reason : null
     };
   }
 
@@ -170,6 +175,8 @@ function toStoredModelSetting(setting: {
   llm_max_output_tokens: number | null;
   encrypted_api_key: string | null;
   api_key_last4: string | null;
+  capabilities?: Prisma.JsonValue;
+  capabilities_detected_at?: Date | null;
 }): StoredModelSetting {
   return {
     kind: setting.kind as StoredModelSetting["kind"],
@@ -183,7 +190,9 @@ function toStoredModelSetting(setting: {
     llm_temperature: setting.llm_temperature,
     llm_max_output_tokens: setting.llm_max_output_tokens,
     encrypted_api_key: setting.encrypted_api_key,
-    api_key_last4: setting.api_key_last4
+    api_key_last4: setting.api_key_last4,
+    capabilities: setting.capabilities,
+    capabilities_detected_at: setting.capabilities_detected_at
   };
 }
 

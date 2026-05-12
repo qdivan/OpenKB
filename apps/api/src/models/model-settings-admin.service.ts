@@ -2,7 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { AuthError, AuthService, type AuthenticatedUser } from "@openkb/auth";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import { getMilvusConfig } from "@openkb/milvus";
-import { activeProfileSupportsDenseVector, type RetrievalMode } from "@openkb/retrieval";
+import { getDenseProfileCompatibility } from "@openkb/retrieval";
 import {
   createOpenKBModelClient,
   DEFAULT_EMBEDDING_BATCH_SIZE,
@@ -21,9 +21,11 @@ import {
   isModelProviderAllowedForKind,
   isRerankConfigured,
   normalizeModelProvider,
+  normalizeModelCapabilities,
   MODEL_KINDS,
   MODEL_PROVIDERS,
   type ModelKind,
+  type ModelCapabilities,
   type ModelProvider,
   type OpenKBModelClient,
   type OpenKBModelClientConfig,
@@ -59,6 +61,9 @@ export type AdminModelSettingDto = {
   has_secret: boolean;
   secret_source: "db" | "env" | "none";
   api_key_last4: string | null;
+  capabilities: ModelCapabilities;
+  capabilities_detected_at: string | null;
+  capability_warnings: string[];
   db_configured: boolean;
   env_configured: boolean;
   updated_by: string | null;
@@ -81,6 +86,8 @@ type ModelSettingRow = {
   llm_max_output_tokens: number | null;
   encrypted_api_key: string | null;
   api_key_last4: string | null;
+  capabilities: Prisma.JsonValue;
+  capabilities_detected_at: Date | null;
   updated_by: string;
   updated_at: Date;
 };
@@ -113,6 +120,12 @@ export class ModelSettingsAdminService {
     const existing = await this.prisma.modelSetting.findUnique({ where: { kind } });
     const normalized = normalizeUpdateInput(kind, input);
     const secretData = normalizeSecretUpdate(input);
+    const resetCapabilities = shouldResetModelCapabilitiesForUpdate(
+      kind,
+      existing,
+      normalized,
+      Boolean(secretData)
+    );
 
     const setting = await this.prisma.modelSetting.upsert({
       where: { kind },
@@ -143,6 +156,7 @@ export class ModelSettingsAdminService {
         llm_temperature: normalized.llm_temperature,
         llm_max_output_tokens: normalized.llm_max_output_tokens,
         ...(secretData ?? {}),
+        ...(resetCapabilities ? { capabilities: {}, capabilities_detected_at: null } : {}),
         updated_by: me.user.id,
         updated_at: new Date()
       }
@@ -210,6 +224,7 @@ export class ModelSettingsAdminService {
     const settings = await this.prisma.modelSetting.findMany({
       where: { kind: { in: [...MODEL_KINDS] } }
     });
+    const hasTransientInput = Boolean(input && Object.keys(input).length > 0);
     let client: OpenKBModelClient;
     try {
       const config = createProbeConfig(kind, input, settings.map(toModelSettingRow));
@@ -222,13 +237,24 @@ export class ModelSettingsAdminService {
       };
     }
 
-    if (kind === "embedding") {
-      return client.probeEmbedding();
+    const result =
+      kind === "embedding"
+        ? await client.probeEmbedding()
+        : kind === "rerank"
+          ? await client.probeRerank()
+          : await client.probeLanguageModel();
+
+    if (shouldPersistModelCapabilities(kind, hasTransientInput, result)) {
+      await this.prisma.modelSetting.updateMany({
+        where: { kind },
+        data: {
+          capabilities: result.capabilities as Prisma.InputJsonValue,
+          capabilities_detected_at: new Date()
+        }
+      });
     }
-    if (kind === "rerank") {
-      return client.probeRerank();
-    }
-    return client.probeLanguageModel();
+
+    return result;
   }
 
   private async readSettings(): Promise<ModelSettingRow[]> {
@@ -282,6 +308,36 @@ export class ModelSettingsAdminService {
       const timeoutMs =
         source === "db" ? (setting?.timeout_ms ?? defaultTimeout(kind)) : envState.timeout_ms;
       const configured = Boolean(endpoint && model);
+      const capabilities =
+        kind === "embedding"
+          ? source === "db"
+            ? normalizeModelCapabilities(setting?.capabilities, {
+                dimensions: embeddingDim ?? DEFAULT_EMBEDDING_DIM,
+                input_modalities: ["text"],
+                supports_batch: true
+              })
+            : normalizeModelCapabilities(envConfig.embedding.capabilities, {
+                dimensions: envConfig.embedding.dim,
+                input_modalities: ["text"],
+                supports_batch: true
+              })
+          : kind === "rerank"
+            ? source === "db"
+              ? normalizeModelCapabilities(setting?.capabilities, {
+                  input_modalities: ["text"]
+                })
+              : normalizeModelCapabilities(envConfig.rerank.capabilities, {
+                  input_modalities: ["text"]
+                })
+            : normalizeModelCapabilities(null);
+      const denseCompatibility =
+        kind === "embedding"
+          ? getDenseProfileCompatibility(activeProfile, {
+              dim: embeddingDim ?? DEFAULT_EMBEDDING_DIM,
+              model: model ?? undefined,
+              capabilities
+            })
+          : null;
 
       return {
         kind,
@@ -310,6 +366,12 @@ export class ModelSettingsAdminService {
         secret_source:
           source === "db" && dbSecret ? "db" : source === "env" && envSecret ? "env" : "none",
         api_key_last4: source === "db" ? (setting?.api_key_last4 ?? null) : getEnvSecretLast4(kind),
+        capabilities,
+        capabilities_detected_at:
+          source === "db" && setting?.capabilities_detected_at
+            ? setting.capabilities_detected_at.toISOString()
+            : null,
+        capability_warnings: [],
         db_configured: Boolean(setting),
         env_configured: envState.configured,
         updated_by: setting?.updated_by ?? null,
@@ -317,11 +379,7 @@ export class ModelSettingsAdminService {
         ...(kind === "embedding"
           ? {
               index_rebuild_required:
-                configured &&
-                !activeProfileSupportsDenseVector(activeProfile, {
-                  dim: embeddingDim ?? DEFAULT_EMBEDDING_DIM,
-                  model: model ?? undefined
-                })
+                configured && denseCompatibility ? !denseCompatibility.compatible : false
             }
           : {})
       };
@@ -421,6 +479,46 @@ function normalizeUpdateInput(kind: ModelKind, input: UpdateModelSettingInput) {
   };
 }
 
+export function shouldResetModelCapabilitiesForUpdate(
+  kind: ModelKind,
+  existing: {
+    provider: string;
+    endpoint: string | null;
+    model: string | null;
+    enabled: boolean;
+    embedding_dim: number | null;
+  } | null,
+  normalized: ReturnType<typeof normalizeUpdateInput>,
+  secretUpdated: boolean
+): boolean {
+  if (kind === "language" || !existing) {
+    return false;
+  }
+  return (
+    parseProvider(existing.provider) !== normalized.provider ||
+    normalizeNullableString(existing.endpoint) !== normalized.endpoint ||
+    normalizeNullableString(existing.model) !== normalized.model ||
+    existing.enabled !== normalized.enabled ||
+    (kind === "embedding" &&
+      (existing.embedding_dim ?? DEFAULT_EMBEDDING_DIM) !== normalized.embedding_dim) ||
+    secretUpdated
+  );
+}
+
+export function shouldPersistModelCapabilities(
+  kind: ModelKind,
+  hasTransientInput: boolean,
+  result: { ok?: boolean; capabilities?: unknown; capabilities_detected?: boolean }
+): boolean {
+  return (
+    (kind === "embedding" || kind === "rerank") &&
+    !hasTransientInput &&
+    result.ok === true &&
+    result.capabilities_detected === true &&
+    result.capabilities !== undefined
+  );
+}
+
 function normalizeSecretUpdate(input: UpdateModelSettingInput) {
   const secret = typeof input.api_key === "string" ? input.api_key.trim() : "";
   if (!secret) {
@@ -466,6 +564,8 @@ function createProbeConfig(
       llm_max_output_tokens: normalized.llm_max_output_tokens,
       encrypted_api_key: existing?.encrypted_api_key ?? null,
       api_key_last4: existing?.api_key_last4 ?? null,
+      capabilities: existing?.capabilities ?? {},
+      capabilities_detected_at: existing?.capabilities_detected_at ?? null,
       updated_by: existing?.updated_by ?? "transient",
       updated_at: existing?.updated_at ?? new Date()
     });
@@ -593,6 +693,8 @@ function toStoredModelSetting(setting: unknown): StoredModelSetting {
     llm_temperature: row.llm_temperature,
     llm_max_output_tokens: row.llm_max_output_tokens,
     encrypted_api_key: row.encrypted_api_key,
-    api_key_last4: row.api_key_last4
+    api_key_last4: row.api_key_last4,
+    capabilities: normalizeModelCapabilities(row.capabilities),
+    capabilities_detected_at: row.capabilities_detected_at
   };
 }

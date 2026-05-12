@@ -4,6 +4,7 @@ import {
   getOpenKBModelClientConfig,
   isEmbeddingConfigured,
   isRerankConfigured,
+  normalizeModelCapabilities,
   type OpenKBModelClient,
   type StoredModelSetting
 } from "@openkb/model-client";
@@ -171,9 +172,11 @@ async function processRebuildJob(
         embedding_endpoint_configured: embeddingConfigured,
         embedding_model: modelConfig.embedding.model ?? null,
         embedding_dim: modelConfig.embedding.dim,
+        embedding_capabilities: modelConfig.embedding.capabilities ?? null,
         rerank_endpoint_configured: rerankConfigured,
-        rerank_model: modelConfig.rerank.model ?? null
-      },
+        rerank_model: modelConfig.rerank.model ?? null,
+        rerank_capabilities: modelConfig.rerank.capabilities ?? null
+      } as Prisma.InputJsonObject,
       created_by: job.started_by,
       created_at: now
     }
@@ -419,6 +422,8 @@ function toStoredModelSetting(setting: {
   llm_max_output_tokens: number | null;
   encrypted_api_key: string | null;
   api_key_last4: string | null;
+  capabilities?: Prisma.JsonValue;
+  capabilities_detected_at?: Date | null;
 }): StoredModelSetting {
   return {
     kind: setting.kind as StoredModelSetting["kind"],
@@ -432,7 +437,9 @@ function toStoredModelSetting(setting: {
     llm_temperature: setting.llm_temperature,
     llm_max_output_tokens: setting.llm_max_output_tokens,
     encrypted_api_key: setting.encrypted_api_key,
-    api_key_last4: setting.api_key_last4
+    api_key_last4: setting.api_key_last4,
+    capabilities: normalizeModelCapabilities(setting.capabilities),
+    capabilities_detected_at: setting.capabilities_detected_at
   };
 }
 

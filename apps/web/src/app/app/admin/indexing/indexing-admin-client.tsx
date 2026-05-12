@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
+import { CheckCircle2, Database, Info, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState, type ReactNode } from "react";
 
@@ -106,7 +106,9 @@ export function IndexingAdminClient() {
           <p className="text-xs font-medium uppercase text-zinc-500">{t("Admin")}</p>
           <h1 className="mt-1 text-2xl font-semibold">{t("Indexing")}</h1>
           <p className="mt-1 text-sm text-zinc-600">
-            {t("Inspect Milvus health, active aliases, profiles, and rebuild jobs.")}
+            {t(
+              "Inspect Milvus health, active aliases, embedding profiles, and blue-green rebuild jobs."
+            )}
           </p>
         </div>
         <button
@@ -134,8 +136,63 @@ export function IndexingAdminClient() {
         </div>
       </section>
 
+      <section className="rounded-md border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+        <div className="flex items-start gap-2">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="space-y-1">
+            <h2 className="font-semibold">{t("When to rebuild the Milvus index")}</h2>
+            <p>
+              {t(
+                "Index rebuild creates a new Milvus collection from PostgreSQL chunks, writes BM25 and embedding fields, runs health checks, then switches the active alias. It is needed when the embedding model, vector dimension, schema, function configuration, or input modality changes. Publishing a document only makes its current chunks eligible for retrieval; it does not mutate the active collection inline."
+              )}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {status?.model ? (
+        <section className="grid gap-3 rounded-md border border-zinc-200 bg-white p-4 md:grid-cols-3">
+          <ModelMetric
+            label={t("Embedding profile")}
+            value={status.model.embedding.model ?? "-"}
+            meta={[
+              `dim ${status.model.embedding.dim}`,
+              formatModalities(status.model.embedding.capabilities),
+              status.model.embedding.source.toUpperCase()
+            ].join(" · ")}
+          />
+          <ModelMetric
+            label={t("Rerank profile")}
+            value={status.model.rerank.model ?? "-"}
+            meta={[
+              formatModalities(status.model.rerank.capabilities),
+              status.model.rerank.source.toUpperCase()
+            ].join(" · ")}
+          />
+          <ModelMetric
+            icon={
+              status.model.dense_profile_compatible ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+              ) : (
+                <RotateCcw className="h-4 w-4 text-amber-700" />
+              )
+            }
+            label={t("Profile compatibility")}
+            value={status.model.dense_profile_compatible ? t("Ready") : t("Rebuild required")}
+            meta={
+              status.model.rebuild_required_reason
+                ? t(formatRebuildReason(status.model.rebuild_required_reason))
+                : t("Active profile matches the current embedding configuration.")
+            }
+          />
+        </section>
+      ) : null}
+
       <form className="rounded-md border border-zinc-200 bg-white p-4" onSubmit={createJob}>
-        <h2 className="text-sm font-semibold">{t("Create rebuild job")}</h2>
+        <h2 className="text-sm font-semibold">{t("Create index rebuild job")}</h2>
+        <p className="mt-1 text-sm text-zinc-600">
+          {t("Use this for embedding profile changes, not as a normal document refresh.")}
+        </p>
         <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
           <input
             className={inputClass}
@@ -159,7 +216,7 @@ export function IndexingAdminClient() {
             ) : (
               <RotateCcw className="h-4 w-4" />
             )}
-            {t("Rebuild")}
+            {t("Create index rebuild job")}
           </button>
         </div>
       </form>
@@ -176,6 +233,9 @@ export function IndexingAdminClient() {
               </div>
               <p className="mt-1 text-xs text-zinc-500">
                 {profile.alias} · dim {profile.vector_dim} · {profile.schema_version}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {formatProfileMetadata(profile.function_metadata)}
               </p>
               <button
                 className="mt-2 inline-flex h-8 items-center rounded-md border border-zinc-200 px-2 text-xs hover:bg-zinc-50"
@@ -220,6 +280,29 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ModelMetric({
+  icon,
+  label,
+  value,
+  meta
+}: {
+  icon?: ReactNode;
+  label: string;
+  value: string;
+  meta: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-zinc-200 px-3 py-2">
+      <div className="flex items-center gap-2 text-xs text-zinc-500">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <div className="truncate text-sm font-semibold">{value}</div>
+      <div className="truncate text-xs text-zinc-500">{meta}</div>
+    </div>
+  );
+}
+
 function ListPanel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-2 rounded-md border border-zinc-200 bg-white p-4">
@@ -231,4 +314,40 @@ function ListPanel({ title, children }: { title: string; children: ReactNode }) 
 
 function Empty({ children }: { children: ReactNode }) {
   return <div className="rounded-md bg-zinc-50 p-3 text-sm text-zinc-500">{children}</div>;
+}
+
+function formatModalities(capabilities: { input_modalities?: string[] } | null | undefined) {
+  const modalities = capabilities?.input_modalities?.length
+    ? capabilities.input_modalities
+    : ["text"];
+  return modalities.join("+");
+}
+
+function formatProfileMetadata(value: unknown): string {
+  const metadata = toRecord(value);
+  const embeddingModel =
+    typeof metadata.embedding_model === "string" ? metadata.embedding_model : "-";
+  const rerankModel = typeof metadata.rerank_model === "string" ? metadata.rerank_model : "-";
+  const embeddingCapabilities = toRecord(metadata.embedding_capabilities);
+  const maxTokens =
+    typeof embeddingCapabilities.max_tokens === "number"
+      ? ` · max ${embeddingCapabilities.max_tokens} tokens`
+      : "";
+  return `Embedding ${embeddingModel} · ${formatModalities(embeddingCapabilities)}${maxTokens} · Rerank ${rerankModel}`;
+}
+
+function formatRebuildReason(reason: string): string {
+  if (reason === "embedding_dim_mismatch") return "Embedding dimension changed.";
+  if (reason === "embedding_model_mismatch") return "Embedding model changed.";
+  if (reason === "embedding_modality_mismatch") return "Embedding input modality changed.";
+  if (reason === "dense_vector_missing") return "Active profile has no dense vector field.";
+  if (reason === "embedding_function_mismatch") return "Embedding function configuration changed.";
+  if (reason === "no_active_profile") return "No active dense index profile.";
+  return "Index profile no longer matches current embedding configuration.";
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

@@ -37,7 +37,7 @@ export default function RegisterPage() {
         return;
       }
     } catch {
-      setMessage(t("API service is unreachable. Please confirm localhost:4000 is running."));
+      setMessage(t("API service is unreachable. Please confirm the API server is running."));
       return;
     } finally {
       setIsSubmitting(false);

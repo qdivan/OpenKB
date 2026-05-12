@@ -3,12 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   decryptModelSecret,
   encryptModelSecret,
+  getModelListEndpoint,
   getOpenKBModelClientConfig,
   getModelSecretLast4,
   isModelProviderAllowedForKind,
   normalizeModelProvider,
   OpenKBModelClient,
   parseEmbeddingResponse,
+  parseOpenAICompatibleModelCapabilityDetection,
+  parseOpenAICompatibleModelCapabilities,
   parseRerankResults
 } from "./index";
 
@@ -50,6 +53,182 @@ describe("@openkb/model-client", () => {
       { index: 1, relevance_score: 0.8 },
       { index: 0, relevance_score: 0.2 }
     ]);
+  });
+
+  it("parses Xinference/OpenAI-compatible model capability metadata", () => {
+    expect(getModelListEndpoint("http://model/v1/embeddings")).toBe("http://model/v1/models");
+    expect(
+      parseOpenAICompatibleModelCapabilities(
+        {
+          data: [
+            {
+              id: "local-m3e-base",
+              model_type: "embedding",
+              dimensions: 768,
+              max_tokens: 512,
+              language: ["en", "zh"],
+              address: "0.0.0.0:36267"
+            }
+          ]
+        },
+        "local-m3e-base",
+        "embedding"
+      )
+    ).toMatchObject({
+      input_modalities: ["text"],
+      dimensions: 768,
+      max_tokens: 512,
+      languages: ["en", "zh"],
+      provider_model_type: "embedding",
+      supports_batch: true,
+      raw_provider: {
+        id: "local-m3e-base",
+        model_type: "embedding"
+      }
+    });
+
+    expect(
+      parseOpenAICompatibleModelCapabilityDetection(
+        {
+          data: [{ id: "other-model", model_type: "embedding", dimensions: 1024 }]
+        },
+        "local-m3e-base",
+        "embedding"
+      )
+    ).toMatchObject({
+      detected: false,
+      capabilities: {
+        input_modalities: ["text"],
+        dimensions: null
+      }
+    });
+  });
+
+  it("includes model capabilities in embedding probe results", async () => {
+    const client = new OpenKBModelClient(
+      {
+        embedding: {
+          provider: "openai_compatible",
+          endpoint: "http://xinference.test/v1/embeddings",
+          model: "local-m3e-base",
+          source: "env",
+          dim: 768,
+          batchSize: 1,
+          timeoutMs: 1000
+        },
+        rerank: {
+          provider: "openai_compatible",
+          source: "none",
+          timeoutMs: 1000
+        },
+        language: {
+          provider: "openai_responses",
+          source: "none",
+          timeoutMs: 1000,
+          maxOutputTokens: 20,
+          temperature: 0
+        }
+      },
+      async (url, init) => {
+        if (init.method === "GET" && url === "http://xinference.test/v1/models") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [
+                {
+                  id: "local-m3e-base",
+                  model_type: "embedding",
+                  dimensions: 768,
+                  max_tokens: 512,
+                  language: ["en", "zh"]
+                }
+              ]
+            }),
+            text: async () => ""
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [{ index: 0, embedding: Array.from({ length: 768 }, () => 0.1) }]
+          }),
+          text: async () => ""
+        };
+      }
+    );
+
+    await expect(client.probeEmbedding()).resolves.toMatchObject({
+      configured: true,
+      ok: true,
+      dim: 768,
+      capabilities_detected: true,
+      capabilities: {
+        dimensions: 768,
+        max_tokens: 512,
+        input_modalities: ["text"],
+        languages: ["en", "zh"]
+      }
+    });
+  });
+
+  it("keeps fallback capabilities but does not mark them detected when model list is unavailable", async () => {
+    const client = new OpenKBModelClient(
+      {
+        embedding: {
+          provider: "openai_compatible",
+          endpoint: "http://xinference.test/v1/embeddings",
+          model: "local-m3e-base",
+          source: "env",
+          dim: 768,
+          batchSize: 1,
+          timeoutMs: 1000
+        },
+        rerank: {
+          provider: "openai_compatible",
+          source: "none",
+          timeoutMs: 1000
+        },
+        language: {
+          provider: "openai_responses",
+          source: "none",
+          timeoutMs: 1000,
+          maxOutputTokens: 20,
+          temperature: 0
+        }
+      },
+      async (url, init) => {
+        if (init.method === "GET" && url === "http://xinference.test/v1/models") {
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({}),
+            text: async () => "not found"
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [{ index: 0, embedding: Array.from({ length: 768 }, () => 0.1) }]
+          }),
+          text: async () => ""
+        };
+      }
+    );
+
+    await expect(client.probeEmbedding()).resolves.toMatchObject({
+      configured: true,
+      ok: true,
+      dim: 768,
+      capabilities_detected: false,
+      capabilities: {
+        dimensions: 768,
+        input_modalities: ["text"]
+      },
+      capability_warnings: [expect.stringContaining("Model capability detection skipped")]
+    });
   });
 
   it("reads endpoint/model settings from environment without secrets", () => {
@@ -160,7 +339,7 @@ describe("@openkb/model-client", () => {
   it("calls embedding, rerank, and language endpoints with compatible payloads", async () => {
     const calls: Array<{
       url: string;
-      body: Record<string, unknown>;
+      body: Record<string, unknown> | null;
       headers: Record<string, string>;
     }> = [];
     const client = new OpenKBModelClient(
@@ -196,9 +375,17 @@ describe("@openkb/model-client", () => {
       async (url, init) => {
         calls.push({
           url,
-          body: JSON.parse(init.body) as Record<string, unknown>,
+          body: init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null,
           headers: init.headers
         });
+        if (init.method === "GET") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ data: [] }),
+            text: async () => ""
+          };
+        }
         const isEmbedding = url.includes("embeddings");
         const isLanguage = url.includes("responses");
         return {
@@ -238,7 +425,7 @@ describe("@openkb/model-client", () => {
       ok: true,
       model: "language-model"
     });
-    expect(calls.map((call) => call.body.model)).toEqual([
+    expect(calls.filter((call) => call.body).map((call) => call.body?.model)).toEqual([
       "embedding-model",
       "rerank-model",
       "language-model"
@@ -300,7 +487,7 @@ describe("@openkb/model-client", () => {
         async (url, init) => {
           calls.push({
             url,
-            body: JSON.parse(init.body) as Record<string, unknown>,
+            body: JSON.parse(init.body ?? "{}") as Record<string, unknown>,
             headers: init.headers
           });
           return {

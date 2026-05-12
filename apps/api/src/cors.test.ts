@@ -7,6 +7,7 @@ describe("createCorsOptions", () => {
     const options = createCorsOptions();
     const origin = options.origin;
     expect(options.credentials).toBe(true);
+    expect(options.allowedHeaders).toContain("x-openkb-csrf");
 
     if (typeof origin !== "function") {
       throw new Error("Expected dynamic CORS origin callback.");

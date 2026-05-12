@@ -141,10 +141,18 @@ describe("@openkb/retrieval input helpers", () => {
           embedding_function_name: "openkb_direct_embedding",
           function_metadata: {
             dense_vector: true,
-            embedding_model: "qwen3-vl-embedding-2b"
+            embedding_model: "qwen3-vl-embedding-2b",
+            embedding_capabilities: {
+              input_modalities: ["text", "image"],
+              dimensions: 2048
+            }
           }
         },
-        { dim: 2048, model: "qwen3-vl-embedding-2b" }
+        {
+          dim: 2048,
+          model: "qwen3-vl-embedding-2b",
+          capabilities: { input_modalities: ["text", "image"] }
+        }
       )
     ).toBe(true);
 
@@ -159,6 +167,25 @@ describe("@openkb/retrieval input helpers", () => {
           }
         },
         { dim: 2048, model: "qwen3-vl-embedding-2b" }
+      )
+    ).toBe(false);
+
+    expect(
+      activeProfileSupportsDenseVector(
+        {
+          vector_dim: 2048,
+          embedding_function_name: "openkb_direct_embedding",
+          function_metadata: {
+            dense_vector: true,
+            embedding_model: "qwen3-vl-embedding-2b",
+            embedding_capabilities: { input_modalities: ["text"] }
+          }
+        },
+        {
+          dim: 2048,
+          model: "qwen3-vl-embedding-2b",
+          capabilities: { input_modalities: ["text", "image"] }
+        }
       )
     ).toBe(false);
   });

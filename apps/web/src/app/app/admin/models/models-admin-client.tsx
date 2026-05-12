@@ -590,6 +590,27 @@ function ProbeResult({ result }: { result: AdminModelProbeResult }) {
             })
           : (result.error ?? t("Model probe failed."))}
       </p>
+      {result.capabilities ? (
+        <p className="mt-2 text-xs">
+          {[
+            result.capabilities.dimensions ? `dim ${result.capabilities.dimensions}` : null,
+            result.capabilities.max_tokens ? `max ${result.capabilities.max_tokens} tokens` : null,
+            result.capabilities.input_modalities.length
+              ? result.capabilities.input_modalities.join("+")
+              : null,
+            result.capabilities.languages.length ? result.capabilities.languages.join("/") : null
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      ) : null}
+      {result.capability_warnings?.length ? (
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
+          {result.capability_warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

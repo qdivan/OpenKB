@@ -37,7 +37,7 @@ export default function PasswordResetClient() {
     } catch (error) {
       setMessage(
         error instanceof TypeError
-          ? t("API service is unreachable. Please confirm localhost:4000 is running.")
+          ? t("API service is unreachable. Please confirm the API server is running.")
           : error instanceof Error
             ? error.message
             : t("Password reset failed.")

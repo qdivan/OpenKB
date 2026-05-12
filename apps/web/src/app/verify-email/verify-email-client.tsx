@@ -34,7 +34,7 @@ export default function VerifyEmailClient() {
       .catch((error: Error) =>
         setMessage(
           error instanceof TypeError
-            ? t("API service is unreachable. Please confirm localhost:4000 is running.")
+            ? t("API service is unreachable. Please confirm the API server is running.")
             : error.message
         )
       );

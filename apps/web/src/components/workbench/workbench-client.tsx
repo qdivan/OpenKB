@@ -30,6 +30,7 @@ import {
   FolderPlus,
   GripVertical,
   ImageIcon,
+  Info,
   Link2,
   LogOut,
   Pencil,
@@ -1322,7 +1323,9 @@ export function WorkbenchClient({
       setDocumentSideRefreshKey((value) => value + 1);
       setMessage(
         updated.status === "published"
-          ? t("Document published. Rebuild the search index to refresh retrieval.")
+          ? t(
+              "Document published. PostgreSQL chunks are ready; rebuild the Milvus index when retrieval needs to reflect this change."
+            )
           : t("Document unpublished. Rebuild the search index to remove stale retrieval results.")
       );
     } catch (error) {
@@ -1339,6 +1342,8 @@ export function WorkbenchClient({
 
     try {
       await logout();
+    } catch {
+      // Local sign-out should still clear the current UI even if the API is offline.
     } finally {
       router.replace("/login");
     }
@@ -1739,18 +1744,23 @@ export function WorkbenchClient({
                       <div className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
                         <span className={saveStateClass(saveState)}>{statusText}</span>
                         {currentDocument.type === "page" ? (
-                          <button
-                            className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
-                              currentDocument.status === "published"
-                                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-                            }`}
-                            disabled={!canEditCurrentDocument || isBusy || saveState === "saving"}
-                            onClick={() => void handleTogglePublishDocument()}
-                            type="button"
-                          >
-                            {currentDocument.status === "published" ? t("Published") : t("Publish")}
-                          </button>
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
+                                currentDocument.status === "published"
+                                  ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                  : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                              }`}
+                              disabled={!canEditCurrentDocument || isBusy || saveState === "saving"}
+                              onClick={() => void handleTogglePublishDocument()}
+                              type="button"
+                            >
+                              {currentDocument.status === "published"
+                                ? t("Published")
+                                : t("Publish")}
+                            </button>
+                            <HelpTip text={t("Publish indexing help")} />
+                          </span>
                         ) : null}
                         <button
                           className="icon-button"
@@ -2968,6 +2978,27 @@ function importStatusClass(status: ImportJob["status"]): string {
     return `${base} bg-sky-50 text-sky-700`;
   }
   return `${base} bg-zinc-100 text-zinc-600`;
+}
+
+function HelpTip({ text }: { text: string }) {
+  return (
+    <span className="group/help relative inline-flex">
+      <button
+        aria-label={text}
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-500 hover:border-zinc-400 hover:text-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        type="button"
+      >
+        <Info className="h-3 w-3" />
+      </button>
+      <span className="pointer-events-none absolute right-0 top-5 z-30 w-72 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left text-xs font-normal leading-5 text-zinc-700 opacity-0 shadow-lg transition group-hover/help:opacity-100 group-focus-within/help:opacity-100">
+        {text}
+      </span>
+    </span>
+  );
 }
 
 function extractImportWarnings(job: ImportJob): Array<{ code?: string; message?: string }> {

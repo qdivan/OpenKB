@@ -1,4 +1,4 @@
-export const SUPPORTED_LOCALES = ["en", "zh-CN"] as const;
+﻿export const SUPPORTED_LOCALES = ["en", "zh-CN"] as const;
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 export type TranslationValues = Record<string, string | number | boolean | null | undefined>;
@@ -80,8 +80,8 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "A missing button": "A missing button",
   Actions: "操作",
   Activate: "激活",
-  "API service is unreachable. Please confirm localhost:4000 is running.":
-    "API 服务不可达。请确认 localhost:4000 已启动。",
+  "API service is unreachable. Please confirm the API server is running.":
+    "API 服务不可达。请确认 API 服务已启动。",
   "Add {title}": "添加 {title}",
   "Add headings to this page.": "给页面添加标题后会显示大纲。",
   "Admin roles manage configuration and accounts; private content still requires explicit content permission.":
@@ -675,7 +675,32 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Soft-delete {email}? Historical creator names stay unchanged, but this account's memberships, collaborators, tenant role, and sessions are removed.":
     "软删除 {email}？历史创建人名称会保留，但该账号的工作区成员身份、协作者权限、租户角色和会话会被移除。",
   "Revoke active sessions for {email}? This only signs the user out and does not change account status or permissions.":
-    "吊销 {email} 的当前会话？这只会让用户重新登录，不会改变账号状态或权限。"
+    "吊销 {email} 的当前会话？这只会让用户重新登录，不会改变账号状态或权限。",
+  "Document published. PostgreSQL chunks are ready; rebuild the Milvus index when retrieval needs to reflect this change.":
+    "文档已发布，PostgreSQL 分块已确认就绪；如需检索立即反映此次变化，请重建 Milvus 索引。",
+  "Publish indexing help":
+    "发布会让当前文档版本进入可检索候选，并确保 PostgreSQL 分块存在；它不会在请求中同步写入 Milvus embedding。Milvus 索引通过后台 blue-green 重建任务刷新。",
+  "Inspect Milvus health, active aliases, embedding profiles, and blue-green rebuild jobs.":
+    "查看 Milvus 健康状态、当前别名、Embedding profile 和 blue-green 重建任务。",
+  "When to rebuild the Milvus index": "什么时候需要重建 Milvus 索引",
+  "Index rebuild creates a new Milvus collection from PostgreSQL chunks, writes BM25 and embedding fields, runs health checks, then switches the active alias. It is needed when the embedding model, vector dimension, schema, function configuration, or input modality changes. Publishing a document only makes its current chunks eligible for retrieval; it does not mutate the active collection inline.":
+    "索引重建会从 PostgreSQL 分块创建新的 Milvus collection，写入 BM25 和 Embedding 字段，完成健康检查后再切换当前别名。更换 Embedding 模型、向量维度、schema、Function 配置或输入模态时需要重建。发布文档只让当前分块具备检索资格，不会在请求内直接修改当前 collection。",
+  "Embedding profile": "Embedding profile",
+  "Rerank profile": "Rerank profile",
+  "Profile compatibility": "Profile 兼容性",
+  "Active profile matches the current embedding configuration.":
+    "当前 profile 与 Embedding 配置匹配。",
+  "Create index rebuild job": "创建索引重建任务",
+  "Use this for embedding profile changes, not as a normal document refresh.":
+    "这个操作用于 Embedding profile 变化，不是普通文档刷新。",
+  "Embedding dimension changed.": "Embedding 向量维度已变化。",
+  "Embedding model changed.": "Embedding 模型已变化。",
+  "Embedding input modality changed.": "Embedding 输入模态已变化。",
+  "Active profile has no dense vector field.": "当前 profile 没有 dense vector 字段。",
+  "Embedding function configuration changed.": "Embedding Function 配置已变化。",
+  "No active dense index profile.": "没有当前 dense 索引 profile。",
+  "Index profile no longer matches current embedding configuration.":
+    "索引 profile 已不匹配当前 Embedding 配置。"
 });
 
 Object.assign(ZH_CN_TRANSLATIONS, {

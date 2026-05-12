@@ -18,7 +18,7 @@ export function createCorsOptions(env: NodeJS.ProcessEnv = process.env): Fastify
   return {
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["content-type", "authorization"],
+    allowedHeaders: ["content-type", "authorization", "x-openkb-csrf"],
     origin(origin, callback) {
       if (!origin || allowedOrigins.has(origin)) {
         callback(null, true);

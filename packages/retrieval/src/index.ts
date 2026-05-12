@@ -2,6 +2,7 @@ import { createDatabaseClient, type PrismaClient } from "@openkb/db";
 import {
   createOpenKBModelClient,
   getOpenKBModelClientConfig,
+  normalizeModelCapabilities,
   type OpenKBModelClient,
   type RerankDocumentScore,
   type StoredModelSetting
@@ -962,19 +963,47 @@ export function activeProfileSupportsDenseVector(
     embedding_function_name: string;
     function_metadata: unknown;
   } | null,
-  expected: { dim: number; model?: string }
+  expected: { dim: number; model?: string; capabilities?: unknown }
 ): boolean {
-  if (!profile || profile.vector_dim !== expected.dim) {
-    return false;
+  return getDenseProfileCompatibility(profile, expected).compatible;
+}
+
+export function getDenseProfileCompatibility(
+  profile: {
+    vector_dim: number;
+    embedding_function_name: string;
+    function_metadata: unknown;
+  } | null,
+  expected: { dim: number; model?: string; capabilities?: unknown }
+): { compatible: boolean; reason: string | null } {
+  if (!profile) {
+    return { compatible: false, reason: "no_active_profile" };
+  }
+  if (profile.vector_dim !== expected.dim) {
+    return { compatible: false, reason: "embedding_dim_mismatch" };
   }
   const metadata = toRecord(profile.function_metadata);
   const model = typeof metadata.embedding_model === "string" ? metadata.embedding_model : null;
-  return (
-    metadata.dense_vector === true &&
-    profile.embedding_function_name === "openkb_direct_embedding" &&
-    Boolean(expected.model) &&
-    model === expected.model
-  );
+  if (metadata.dense_vector !== true) {
+    return { compatible: false, reason: "dense_vector_missing" };
+  }
+  if (profile.embedding_function_name !== "openkb_direct_embedding") {
+    return { compatible: false, reason: "embedding_function_mismatch" };
+  }
+  if (!expected.model || model !== expected.model) {
+    return { compatible: false, reason: "embedding_model_mismatch" };
+  }
+
+  const expectedModalities = getInputModalities(expected.capabilities);
+  const profileModalities = getInputModalities(metadata.embedding_capabilities);
+  if (
+    expectedModalities.some((modality) => modality !== "text") &&
+    !expectedModalities.every((modality) => profileModalities.includes(modality))
+  ) {
+    return { compatible: false, reason: "embedding_modality_mismatch" };
+  }
+
+  return { compatible: true, reason: null };
 }
 
 function annotateRetrievalMetadata(
@@ -1076,6 +1105,8 @@ function toStoredModelSetting(setting: {
   llm_max_output_tokens: number | null;
   encrypted_api_key: string | null;
   api_key_last4: string | null;
+  capabilities?: unknown;
+  capabilities_detected_at?: Date | null;
 }): StoredModelSetting {
   return {
     kind: setting.kind as StoredModelSetting["kind"],
@@ -1089,7 +1120,9 @@ function toStoredModelSetting(setting: {
     llm_temperature: setting.llm_temperature,
     llm_max_output_tokens: setting.llm_max_output_tokens,
     encrypted_api_key: setting.encrypted_api_key,
-    api_key_last4: setting.api_key_last4
+    api_key_last4: setting.api_key_last4,
+    capabilities: normalizeModelCapabilities(setting.capabilities),
+    capabilities_detected_at: setting.capabilities_detected_at
   };
 }
 
@@ -1184,6 +1217,17 @@ function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function getInputModalities(value: unknown): string[] {
+  const record = toRecord(value);
+  const modalities = record.input_modalities;
+  if (!Array.isArray(modalities)) {
+    return [];
+  }
+  return modalities
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.toLowerCase());
 }
 
 function toIsoString(epochMs: number): string {

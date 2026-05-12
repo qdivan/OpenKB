@@ -2,12 +2,20 @@ import { Inject, Injectable } from "@nestjs/common";
 import { AuthError, AuthService, type AuthenticatedUser } from "@openkb/auth";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import {
+  getOpenKBModelClientConfig,
+  isEmbeddingConfigured,
+  isRerankConfigured,
+  normalizeModelCapabilities,
+  type StoredModelSetting
+} from "@openkb/model-client";
+import {
   assertMilvusName,
   createCollectionName,
   createOpenKBMilvus,
   getMilvusConfig,
   type OpenKBMilvus
 } from "@openkb/milvus";
+import { getDenseProfileCompatibility } from "@openkb/retrieval";
 
 export type CreateRebuildJobInput = {
   target_collection?: string;
@@ -42,7 +50,7 @@ export class MilvusAdminService {
     await this.requireAdmin(sessionToken);
     const milvus = this.getMilvus();
     const config = getMilvusConfig();
-    const [health, activeProfile, alias] = await Promise.all([
+    const [health, activeProfile, alias, modelSettings] = await Promise.all([
       milvus.health(),
       this.prisma.milvusIndexProfile.findFirst({
         where: {
@@ -51,14 +59,43 @@ export class MilvusAdminService {
         },
         orderBy: { activated_at: "desc" }
       }),
-      milvus.describeAlias(config.activeAlias).catch(() => null)
+      milvus.describeAlias(config.activeAlias).catch(() => null),
+      this.prisma.modelSetting.findMany({
+        where: { kind: { in: ["embedding", "rerank"] } }
+      })
     ]);
+    const modelConfig = getOpenKBModelClientConfig(
+      process.env,
+      modelSettings.map(toStoredModelSetting)
+    );
+    const denseCompatibility = getDenseProfileCompatibility(activeProfile, {
+      dim: modelConfig.embedding.dim,
+      model: modelConfig.embedding.model,
+      capabilities: modelConfig.embedding.capabilities
+    });
 
     return {
       health,
       active_alias: config.activeAlias,
       active_profile: activeProfile ? toMilvusIndexProfileDto(activeProfile) : null,
-      alias
+      alias,
+      model: {
+        embedding: {
+          configured: isEmbeddingConfigured(modelConfig),
+          model: modelConfig.embedding.model ?? null,
+          dim: modelConfig.embedding.dim,
+          source: modelConfig.embedding.source,
+          capabilities: modelConfig.embedding.capabilities ?? normalizeModelCapabilities(null)
+        },
+        rerank: {
+          configured: isRerankConfigured(modelConfig),
+          model: modelConfig.rerank.model ?? null,
+          source: modelConfig.rerank.source,
+          capabilities: modelConfig.rerank.capabilities ?? normalizeModelCapabilities(null)
+        },
+        dense_profile_compatible: denseCompatibility.compatible,
+        rebuild_required_reason: denseCompatibility.compatible ? null : denseCompatibility.reason
+      }
     };
   }
 
@@ -306,5 +343,39 @@ function toIndexRebuildJobDto(job: {
     started_at: job.started_at.toISOString(),
     finished_at: job.finished_at ? job.finished_at.toISOString() : null,
     error: job.error
+  };
+}
+
+function toStoredModelSetting(setting: {
+  kind: string;
+  provider: string;
+  endpoint: string | null;
+  model: string | null;
+  enabled: boolean;
+  timeout_ms: number | null;
+  embedding_dim: number | null;
+  embedding_batch_size: number | null;
+  llm_temperature: number | null;
+  llm_max_output_tokens: number | null;
+  encrypted_api_key: string | null;
+  api_key_last4: string | null;
+  capabilities: Prisma.JsonValue;
+  capabilities_detected_at: Date | null;
+}): StoredModelSetting {
+  return {
+    kind: setting.kind as StoredModelSetting["kind"],
+    provider: setting.provider as StoredModelSetting["provider"],
+    endpoint: setting.endpoint,
+    model: setting.model,
+    enabled: setting.enabled,
+    timeout_ms: setting.timeout_ms,
+    embedding_dim: setting.embedding_dim,
+    embedding_batch_size: setting.embedding_batch_size,
+    llm_temperature: setting.llm_temperature,
+    llm_max_output_tokens: setting.llm_max_output_tokens,
+    encrypted_api_key: setting.encrypted_api_key,
+    api_key_last4: setting.api_key_last4,
+    capabilities: normalizeModelCapabilities(setting.capabilities),
+    capabilities_detected_at: setting.capabilities_detected_at
   };
 }

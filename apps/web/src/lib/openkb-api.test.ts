@@ -80,6 +80,20 @@ describe("OpenKB API client", () => {
     });
   });
 
+  it("normalizes network failures into API request errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      })
+    );
+
+    await expect(apiFetch("/api/workspaces")).rejects.toMatchObject({
+      status: 0,
+      body: { error: "NETWORK_ERROR" }
+    });
+  });
+
   it("recognizes unauthorized errors", () => {
     expect(isUnauthorized(new ApiRequestError(401, { error: "UNAUTHORIZED" }))).toBe(true);
     expect(isUnauthorized(new ApiRequestError(403, { error: "FORBIDDEN" }))).toBe(false);
