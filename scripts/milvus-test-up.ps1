@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $pidDir = Join-Path (Resolve-Path ".") ".turbo"
 $pidFile = Join-Path $pidDir "openkb-wsl-keepalive.pid"
+$milvusPort = if ($env:OPENKB_MILVUS_TEST_PORT) { $env:OPENKB_MILVUS_TEST_PORT } else { "59530" }
+$healthPort = if ($env:OPENKB_MILVUS_TEST_HEALTH_PORT) { $env:OPENKB_MILVUS_TEST_HEALTH_PORT } else { "59091" }
 
 New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
 
@@ -17,7 +19,7 @@ if (-not $keepalive) {
   Set-Content -Path $pidFile -Value $process.Id
 }
 
-wsl sh -lc "mkdir -p /tmp/openkb-docker-config && printf '{}' > /tmp/openkb-docker-config/config.json && PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DOCKER_CONFIG=/tmp/openkb-docker-config docker compose -f deploy/docker-compose/milvus.test.yml up -d"
+wsl sh -lc "mkdir -p /tmp/openkb-docker-config && printf '{}' > /tmp/openkb-docker-config/config.json && PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DOCKER_CONFIG=/tmp/openkb-docker-config OPENKB_MILVUS_TEST_PORT=$milvusPort OPENKB_MILVUS_TEST_HEALTH_PORT=$healthPort docker compose -f deploy/docker-compose/milvus.test.yml up -d"
 if ($LASTEXITCODE -ne 0) {
   throw "Failed to start openkb-milvus-test."
 }
@@ -26,7 +28,7 @@ for ($i = 0; $i -lt 180; $i++) {
   wsl sh -lc "python3 - <<'PY'
 import urllib.request
 try:
-    with urllib.request.urlopen('http://127.0.0.1:59091/healthz', timeout=1) as response:
+    with urllib.request.urlopen('http://127.0.0.1:$healthPort/healthz', timeout=1) as response:
         raise SystemExit(0 if response.status < 500 else 1)
 except Exception:
     raise SystemExit(1)

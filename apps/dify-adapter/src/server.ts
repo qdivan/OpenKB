@@ -94,7 +94,7 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
   }
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw.trim()) {
-    throw new DifyAdapterError("INVALID_REQUEST", "Request body is required.", 400);
+    return {};
   }
 
   try {

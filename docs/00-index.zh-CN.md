@@ -1,5 +1,7 @@
 # 00 — OpenKB 文档索引
 
+> 新增：`docs/26-dify-external-knowledge-setup.zh-CN.md` 记录 OpenKB 作为 Dify External Knowledge 的配置、metadata 映射和本地 Docker/WSL 验证指南。
+
 Codex 开始任何代码工作前，必须按下面顺序阅读。
 
 ## 最高优先级

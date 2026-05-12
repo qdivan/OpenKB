@@ -29,7 +29,7 @@ describe("Dify retrieval request helpers", () => {
 
   it("rejects invalid request bodies and clamps scores", () => {
     expect(() => normalizeDifyRetrievalRequest({}, { maxTopK: 20, keyTopKLimit: 20 })).toThrow(
-      "knowledge_id"
+      "OpenKB Dify adapter was reached"
     );
     expect(() =>
       normalizeDifyRetrievalRequest(

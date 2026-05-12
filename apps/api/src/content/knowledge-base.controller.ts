@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Inject, Param, Post, Put, Query, Req, Res } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Put,
+  Query,
+  Req,
+  Res
+} from "@nestjs/common";
 import { AuthService } from "@openkb/auth";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
@@ -79,6 +91,78 @@ export class KnowledgeBaseController {
   ) {
     try {
       return await this.content.getChunkSettings(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get(":id/metadata-fields")
+  async metadataFields(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.listKnowledgeBaseMetadataFields(
+        getSessionToken(request, this.auth),
+        id
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post(":id/metadata-fields")
+  async createMetadataField(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.createKnowledgeBaseMetadataField(
+        getSessionToken(request, this.auth),
+        id,
+        body as never
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Put(":id/metadata-fields/:fieldId")
+  async updateMetadataField(
+    @Param("id") id: string,
+    @Param("fieldId") fieldId: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.updateKnowledgeBaseMetadataField(
+        getSessionToken(request, this.auth),
+        id,
+        fieldId,
+        body as never
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Delete(":id/metadata-fields/:fieldId")
+  async deleteMetadataField(
+    @Param("id") id: string,
+    @Param("fieldId") fieldId: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.deleteKnowledgeBaseMetadataField(
+        getSessionToken(request, this.auth),
+        id,
+        fieldId
+      );
     } catch (error) {
       return sendJsonError(error, reply);
     }

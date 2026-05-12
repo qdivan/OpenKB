@@ -11,27 +11,35 @@ import {
   RefreshCw,
   Save,
   Search,
-  Settings2
+  Settings2,
+  Tags,
+  Trash2
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useI18n } from "@/lib/i18n-provider";
 import {
   createChunkRebuildJob,
+  createKnowledgeBaseMetadataField,
+  deleteKnowledgeBaseMetadataField,
   getChunkSettings,
   getKnowledgeBaseOverview,
+  listKnowledgeBaseMetadataFields,
   listKnowledgeBaseChunks,
   searchKnowledge,
   updateChunkSettings,
   type ChunkSettings,
   type DocumentChunk,
   type DocumentSummary,
+  type KnowledgeBaseMetadataField,
+  type KnowledgeBaseMetadataFieldType,
+  type KnowledgeBaseMetadataFieldsResponse,
   type KnowledgeBaseOverview,
   type RetrievalContextMode,
   type SearchResponse
 } from "@/lib/openkb-api";
 
-type DashboardTab = "overview" | "chunks" | "lab" | "settings";
+type DashboardTab = "overview" | "chunks" | "lab" | "metadata" | "settings";
 const formControlClass =
   "h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-500";
 
@@ -54,6 +62,13 @@ export function KnowledgeBaseDashboard({
   const [chunks, setChunks] = useState<DocumentChunk[]>([]);
   const [selectedChunkDocumentId, setSelectedChunkDocumentId] = useState<string | null>(null);
   const [settings, setSettings] = useState<ChunkSettings | null>(null);
+  const [metadataFields, setMetadataFields] = useState<KnowledgeBaseMetadataFieldsResponse | null>(
+    null
+  );
+  const [metadataForm, setMetadataForm] = useState<{
+    name: string;
+    type: KnowledgeBaseMetadataFieldType;
+  }>({ name: "", type: "string" });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isRebuilding, setIsRebuilding] = useState(false);
@@ -123,10 +138,48 @@ export function KnowledgeBaseDashboard({
       setSettings(nextSettings);
       setChunks(nextChunks);
       setLabContextMode(nextSettings.parent_mode === "full_doc" ? "full_text" : "parent_child");
+      void loadMetadataFields();
     } catch (error) {
       onError(error);
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function loadMetadataFields() {
+    try {
+      setMetadataFields(await listKnowledgeBaseMetadataFields(knowledgeBaseId));
+    } catch (error) {
+      onError(error);
+    }
+  }
+
+  async function createMetadataField(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!metadataForm.name.trim()) {
+      return;
+    }
+    try {
+      await createKnowledgeBaseMetadataField(knowledgeBaseId, {
+        name: metadataForm.name.trim(),
+        type: metadataForm.type
+      });
+      setMetadataForm({ name: "", type: "string" });
+      await loadMetadataFields();
+    } catch (error) {
+      onError(error);
+    }
+  }
+
+  async function archiveMetadataField(field: KnowledgeBaseMetadataField) {
+    if (!field.id) {
+      return;
+    }
+    try {
+      await deleteKnowledgeBaseMetadataField(knowledgeBaseId, field.id);
+      await loadMetadataFields();
+    } catch (error) {
+      onError(error);
     }
   }
 
@@ -252,6 +305,16 @@ export function KnowledgeBaseDashboard({
         </TabButton>
         <TabButton active={tab === "lab"} icon={<Search />} onClick={() => setTab("lab")}>
           {t("Retrieval Lab")}
+        </TabButton>
+        <TabButton
+          active={tab === "metadata"}
+          icon={<Tags />}
+          onClick={() => {
+            setTab("metadata");
+            if (!metadataFields) void loadMetadataFields();
+          }}
+        >
+          {t("Metadata")}
         </TabButton>
         <TabButton
           active={tab === "settings"}
@@ -470,6 +533,90 @@ export function KnowledgeBaseDashboard({
         </section>
       ) : null}
 
+      {tab === "metadata" ? (
+        <section className="mt-5">
+          <Panel title={t("Dify metadata schema")}>
+            <p className="text-sm text-zinc-600">
+              {t(
+                "These fields become document metadata and can be used by Dify metadata_condition."
+              )}
+            </p>
+            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="space-y-3">
+                <div className="rounded-md border border-zinc-200 bg-white p-3">
+                  <h3 className="text-sm font-semibold">{t("Built-in fields")}</h3>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    {(metadataFields?.built_in ?? []).map((field) => (
+                      <MetadataFieldCard field={field} key={field.name} />
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-md border border-zinc-200 bg-white p-3">
+                  <h3 className="text-sm font-semibold">{t("Custom fields")}</h3>
+                  <div className="mt-2 space-y-2">
+                    {(metadataFields?.custom ?? []).map((field) => (
+                      <div
+                        className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 px-3 py-2"
+                        key={field.id ?? field.name}
+                      >
+                        <MetadataFieldCard field={field} compact />
+                        <button
+                          className="icon-button text-red-600"
+                          onClick={() => void archiveMetadataField(field)}
+                          title={t("Archive field")}
+                          type="button"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {metadataFields && metadataFields.custom.length === 0 ? (
+                      <EmptyLine>{t("No custom metadata fields")}</EmptyLine>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <form
+                className="rounded-md border border-zinc-200 bg-white p-3"
+                onSubmit={createMetadataField}
+              >
+                <h3 className="text-sm font-semibold">{t("Add metadata field")}</h3>
+                <div className="mt-3 space-y-3">
+                  <TextField
+                    label={t("Field name")}
+                    onChange={(value) => setMetadataForm({ ...metadataForm, name: value })}
+                    value={metadataForm.name}
+                  />
+                  <Field label={t("Field type")}>
+                    <select
+                      className={formControlClass}
+                      onChange={(event) =>
+                        setMetadataForm({
+                          ...metadataForm,
+                          type: event.target.value as KnowledgeBaseMetadataFieldType
+                        })
+                      }
+                      value={metadataForm.type}
+                    >
+                      <option value="string">{t("String")}</option>
+                      <option value="number">{t("Number")}</option>
+                      <option value="time">{t("Time")}</option>
+                    </select>
+                  </Field>
+                  <button
+                    className="inline-flex h-9 items-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"
+                    type="submit"
+                  >
+                    {t("Add field")}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </Panel>
+        </section>
+      ) : null}
+
       {tab === "settings" && settings ? (
         <section className="mt-5">
           <Panel title={t("Chunk settings")}>
@@ -619,6 +766,26 @@ function Row({ meta, title }: { title: string; meta: string }) {
     <div className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
       <span className="truncate text-zinc-700">{title}</span>
       <span className="shrink-0 text-xs text-zinc-500">{meta}</span>
+    </div>
+  );
+}
+
+function MetadataFieldCard({
+  compact = false,
+  field
+}: {
+  compact?: boolean;
+  field: KnowledgeBaseMetadataField;
+}) {
+  return (
+    <div className={compact ? "min-w-0 flex-1" : "rounded-md border border-zinc-200 p-2"}>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="truncate text-sm font-medium text-zinc-800">{field.name}</span>
+        <Badge tone={field.source === "built_in" ? "sky" : "zinc"}>{field.type}</Badge>
+      </div>
+      {field.description ? (
+        <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{field.description}</p>
+      ) : null}
     </div>
   );
 }

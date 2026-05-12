@@ -7,6 +7,8 @@ import { FormEvent, useEffect, useState, type ReactNode } from "react";
 import {
   ApiRequestError,
   createDifyApiKey,
+  getDifyFilterableMetadata,
+  getDifySetupSummary,
   isUnauthorized,
   listDifyApiKeys,
   listDifyMappings,
@@ -15,7 +17,9 @@ import {
   rotateDifyApiKey,
   upsertDifyMapping,
   type DifyApiKey,
-  type DifyKnowledgeMapping
+  type DifyFilterableMetadataField,
+  type DifyKnowledgeMapping,
+  type DifySetupSummary
 } from "@/lib/openkb-api";
 import { useI18n } from "@/lib/i18n-provider";
 
@@ -27,6 +31,8 @@ export function DifyAdminClient() {
   const { t } = useI18n();
   const [keys, setKeys] = useState<DifyApiKey[]>([]);
   const [mappings, setMappings] = useState<DifyKnowledgeMapping[]>([]);
+  const [setup, setSetup] = useState<DifySetupSummary | null>(null);
+  const [filterableFields, setFilterableFields] = useState<DifyFilterableMetadataField[]>([]);
   const [form, setForm] = useState({
     name: "",
     knowledge_id: "",
@@ -58,8 +64,14 @@ export function DifyAdminClient() {
         listDifyApiKeys({ limit: 100 }),
         listDifyMappings({ limit: 100 })
       ]);
+      const [nextSetup, nextFilterable] = await Promise.all([
+        getDifySetupSummary(),
+        getDifyFilterableMetadata()
+      ]);
       setKeys(nextKeys.items);
       setMappings(nextMappings.items);
+      setSetup(nextSetup);
+      setFilterableFields(nextFilterable.fields);
     } catch (error) {
       handleError(error);
     } finally {
@@ -135,6 +147,21 @@ export function DifyAdminClient() {
     setMessage(t("Secret copied."));
   }
 
+  async function copyText(value: string) {
+    await navigator.clipboard.writeText(value);
+    setMessage(t("Copied."));
+  }
+
+  function buildCurl(knowledgeId: string) {
+    const endpoint = setup?.endpoint_base_url ?? "http://localhost:4200";
+    return [
+      `curl -X POST ${endpoint}/retrieval`,
+      `  -H "Authorization: Bearer <DIFY_API_KEY>"`,
+      `  -H "Content-Type: application/json"`,
+      `  -d '{"knowledge_id":"${knowledgeId}","query":"赤壁之战","retrieval_setting":{"top_k":5,"score_threshold":0},"metadata_condition":null}'`
+    ].join(" \\\n");
+  }
+
   function handleError(error: unknown) {
     if (isUnauthorized(error)) {
       router.replace("/login");
@@ -185,6 +212,81 @@ export function DifyAdminClient() {
           </div>
         </section>
       ) : null}
+
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <Panel title={t("Dify configuration guide")}>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-md bg-zinc-50 p-3">
+              <div className="text-xs font-medium uppercase text-zinc-500">
+                {t("API endpoint for Dify")}
+              </div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                <code className="max-w-full overflow-auto rounded bg-white px-2 py-1 text-xs">
+                  {setup?.endpoint_for_dify_ui ?? "http://localhost:4200"}
+                </code>
+                <button
+                  className="icon-button"
+                  onClick={() =>
+                    void copyText(setup?.endpoint_for_dify_ui ?? "http://localhost:4200")
+                  }
+                  title={t("Copy")}
+                  type="button"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-zinc-500">
+                {t("Dify stores the base URL and appends /retrieval automatically.")}
+              </p>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {(setup?.mappings ?? []).slice(0, 4).map((mapping) => (
+                <div className="rounded-md border border-zinc-200 p-3" key={mapping.id}>
+                  <div className="text-xs text-zinc-500">{t("External Knowledge ID")}</div>
+                  <div className="mt-1 font-mono text-xs">{mapping.dify_knowledge_id}</div>
+                  <div className="mt-2 text-xs text-zinc-500">
+                    {mapping.knowledge_base_title ?? mapping.knowledge_base_id}
+                  </div>
+                  <button
+                    className="mt-2 inline-flex h-8 items-center gap-1 rounded-md border border-zinc-200 px-2 text-xs hover:bg-zinc-50"
+                    onClick={() => void copyText(buildCurl(mapping.dify_knowledge_id))}
+                    type="button"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    {t("Copy test curl")}
+                  </button>
+                </div>
+              ))}
+              {setup && setup.mappings.length === 0 ? (
+                <Empty>{t("Create a mapping first to get an External Knowledge ID.")}</Empty>
+              ) : null}
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title={t("Filterable metadata")}>
+          <p className="text-xs text-zinc-500">
+            {t(
+              "These fields can be used in Dify metadata_condition. Document metadata is preferred; openkb_* fields are diagnostics."
+            )}
+          </p>
+          <div className="mt-3 max-h-72 space-y-2 overflow-auto pr-1">
+            {filterableFields.map((field) => (
+              <div
+                className="rounded-md border border-zinc-200 p-2 text-xs"
+                key={`${field.source}:${field.name}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <strong>{field.name}</strong>
+                  <span className="rounded-full bg-zinc-100 px-2 py-0.5">{field.type}</span>
+                </div>
+                <div className="mt-1 text-zinc-500">{field.source}</div>
+                <div className="mt-1 text-zinc-500">{field.description}</div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <form className="rounded-md border border-zinc-200 bg-white p-4" onSubmit={createKey}>

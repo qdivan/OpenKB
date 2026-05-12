@@ -40,8 +40,8 @@ services:
       MINIO_SECRET_ACCESS_KEY: openkb-secret
       COMMON_STORAGETYPE: remote
     ports:
-      - "59530:19530"
-      - "59091:9091"
+      - "${OPENKB_MILVUS_TEST_PORT:-59530}:19530"
+      - "${OPENKB_MILVUS_TEST_HEALTH_PORT:-59091}:9091"
     volumes:
       - openkb-milvus-test-data:/var/lib/milvus
 

@@ -7,9 +7,15 @@ import {
   createShareLink,
   clearAdminModelSecret,
   clearAdminImportToolSecret,
+  createKnowledgeBaseMetadataField,
   createAdminUser,
   getShare,
   getDocumentVersion,
+  getDifyFilterableMetadata,
+  getDifySetupSummary,
+  getDocumentMetadata,
+  listKnowledgeBaseMetadataFields,
+  deleteKnowledgeBaseMetadataField,
   isUnauthorized,
   listAdminImportTools,
   listAdminUsers,
@@ -21,6 +27,7 @@ import {
   restoreDocumentVersion,
   searchKnowledge,
   setAdminUserTenantRole,
+  updateDocumentMetadata,
   updateAdminImportFormatRoute,
   updateAdminImportTool,
   updateAdminModelSetting,
@@ -340,6 +347,73 @@ describe("OpenKB API client", () => {
           primary_tool: "markitdown",
           fallback_tools: ["mineru"]
         })
+      })
+    );
+  });
+
+  it("builds Dify setup and metadata schema requests", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            endpoint_for_dify_ui: "http://localhost:4200",
+            fields: [],
+            built_in: [],
+            custom: []
+          })
+        )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getDifySetupSummary();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/dify/setup",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    await getDifyFilterableMetadata({ knowledge_base_id: "kb_1" });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/dify/filterable-metadata?knowledge_base_id=kb_1",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    await listKnowledgeBaseMetadataFields("kb_1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/knowledge-bases/kb_1/metadata-fields",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    await createKnowledgeBaseMetadataField("kb_1", {
+      name: "dynasty",
+      type: "string",
+      sort_order: 1
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/knowledge-bases/kb_1/metadata-fields",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "dynasty", type: "string", sort_order: 1 })
+      })
+    );
+
+    await deleteKnowledgeBaseMetadataField("kb_1", "field_1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/knowledge-bases/kb_1/metadata-fields/field_1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+
+    await getDocumentMetadata("doc_1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/documents/doc_1/metadata",
+      expect.objectContaining({ credentials: "include" })
+    );
+
+    await updateDocumentMetadata("doc_1", { values: { dynasty: "shu" } });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/documents/doc_1/metadata",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ values: { dynasty: "shu" } })
       })
     );
   });

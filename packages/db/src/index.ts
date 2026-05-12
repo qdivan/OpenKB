@@ -46,6 +46,13 @@ export type KnowledgeBaseChunkMode = (typeof KNOWLEDGE_BASE_CHUNK_MODES)[number]
 export const KNOWLEDGE_BASE_CHUNK_PARENT_MODES = ["paragraph", "full_doc"] as const;
 export type KnowledgeBaseChunkParentMode = (typeof KNOWLEDGE_BASE_CHUNK_PARENT_MODES)[number];
 
+export const KNOWLEDGE_BASE_METADATA_FIELD_TYPES = ["string", "number", "time"] as const;
+export type KnowledgeBaseMetadataFieldType = (typeof KNOWLEDGE_BASE_METADATA_FIELD_TYPES)[number];
+
+export const KNOWLEDGE_BASE_METADATA_FIELD_STATUSES = ["active", "archived"] as const;
+export type KnowledgeBaseMetadataFieldStatus =
+  (typeof KNOWLEDGE_BASE_METADATA_FIELD_STATUSES)[number];
+
 export const CHUNK_REBUILD_JOB_STATUSES = [
   "pending",
   "running",

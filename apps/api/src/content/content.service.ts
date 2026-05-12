@@ -6,10 +6,12 @@ import {
   CONTENT_INVITATION_ROLES,
   CONTENT_ROLES,
   createDatabaseClient,
+  KNOWLEDGE_BASE_METADATA_FIELD_TYPES,
   WORKSPACE_ROLES,
   WORKSPACE_INVITATION_ROLES,
   type ContentInvitationRole,
   type ContentRole,
+  type KnowledgeBaseMetadataFieldType,
   type Prisma,
   type PrismaClient,
   type WorkspaceRole,
@@ -55,6 +57,19 @@ type UpdateKnowledgeBaseInput = {
   status?: string;
 };
 
+type CreateKnowledgeBaseMetadataFieldInput = {
+  name?: string;
+  type?: string;
+  sort_order?: number;
+};
+
+type UpdateKnowledgeBaseMetadataFieldInput = {
+  name?: string;
+  type?: string;
+  status?: string;
+  sort_order?: number;
+};
+
 type UpdateChunkSettingsInput = {
   mode?: string;
   parent_mode?: string;
@@ -91,6 +106,41 @@ type UpdateDocumentInput = {
   permission_mode?: string;
   visibility?: string | null;
   sort_order?: number;
+};
+
+type UpdateDocumentMetadataInput = {
+  values?: Record<string, unknown>;
+};
+
+type MetadataFieldRow = {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  sort_order: number;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type DocumentMetadataContext = {
+  document: {
+    id: string;
+    tenant_id: string;
+    workspace_id: string;
+    knowledge_base_id: string;
+    title: string;
+    created_by: string;
+    created_at: Date;
+    updated_at: Date;
+  };
+  knowledgeBase: {
+    id: string;
+    title: string;
+  };
+  fields: MetadataFieldRow[];
+  values: Array<{ field_id: string; value: Prisma.JsonValue }>;
+  creator: { display_name: string; email: string } | null;
+  currentVersion: { source_type: string } | null;
 };
 
 type CreateCollaboratorInput = {
@@ -361,6 +411,123 @@ export class ContentService {
       knowledgeBase.id
     );
     return toKnowledgeBaseDto(knowledgeBase);
+  }
+
+  async listKnowledgeBaseMetadataFields(sessionToken: string | null, knowledgeBaseId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "knowledge_base", knowledgeBaseId);
+    const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
+    const fields = await this.prisma.knowledgeBaseMetadataField.findMany({
+      where: { knowledge_base_id: knowledgeBase.id, status: "active" },
+      orderBy: [{ sort_order: "asc" }, { created_at: "asc" }]
+    });
+    return {
+      built_in: BUILT_IN_DIFY_METADATA_FIELDS,
+      custom: fields.map(toKnowledgeBaseMetadataFieldDto)
+    };
+  }
+
+  async createKnowledgeBaseMetadataField(
+    sessionToken: string | null,
+    knowledgeBaseId: string,
+    input: CreateKnowledgeBaseMetadataFieldInput
+  ) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanManage(me.user.id, "knowledge_base", knowledgeBaseId);
+    const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
+    const name = normalizeMetadataFieldName(input.name);
+    const type = normalizeMetadataFieldType(input.type);
+    const sortOrder = Number.isInteger(input.sort_order) ? Number(input.sort_order) : 0;
+    const field = await this.prisma.knowledgeBaseMetadataField.create({
+      data: {
+        tenant_id: knowledgeBase.tenant_id,
+        workspace_id: knowledgeBase.workspace_id,
+        knowledge_base_id: knowledgeBase.id,
+        name,
+        type,
+        status: "active",
+        sort_order: sortOrder,
+        created_by: me.user.id,
+        updated_by: me.user.id
+      }
+    });
+    await this.writeAuditLog(
+      this.prisma,
+      me,
+      "knowledge_base.metadata_field.create",
+      "knowledge_base",
+      knowledgeBase.id,
+      { field_id: field.id, name: field.name, type: field.type }
+    );
+    return toKnowledgeBaseMetadataFieldDto(field);
+  }
+
+  async updateKnowledgeBaseMetadataField(
+    sessionToken: string | null,
+    knowledgeBaseId: string,
+    fieldId: string,
+    input: UpdateKnowledgeBaseMetadataFieldInput
+  ) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanManage(me.user.id, "knowledge_base", knowledgeBaseId);
+    const current = await this.prisma.knowledgeBaseMetadataField.findFirst({
+      where: { id: fieldId, knowledge_base_id: knowledgeBaseId }
+    });
+    if (!current) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Metadata field was not found.", 404);
+    }
+    const field = await this.prisma.knowledgeBaseMetadataField.update({
+      where: { id: fieldId },
+      data: {
+        ...(input.name !== undefined ? { name: normalizeMetadataFieldName(input.name) } : {}),
+        ...(input.type !== undefined ? { type: normalizeMetadataFieldType(input.type) } : {}),
+        ...(input.status !== undefined
+          ? { status: normalizeMetadataFieldStatus(input.status) }
+          : {}),
+        ...(input.sort_order !== undefined && Number.isInteger(input.sort_order)
+          ? { sort_order: Number(input.sort_order) }
+          : {}),
+        updated_by: me.user.id,
+        updated_at: new Date()
+      }
+    });
+    await this.writeAuditLog(
+      this.prisma,
+      me,
+      "knowledge_base.metadata_field.update",
+      "knowledge_base",
+      knowledgeBaseId,
+      { field_id: field.id, name: field.name, type: field.type, status: field.status }
+    );
+    return toKnowledgeBaseMetadataFieldDto(field);
+  }
+
+  async deleteKnowledgeBaseMetadataField(
+    sessionToken: string | null,
+    knowledgeBaseId: string,
+    fieldId: string
+  ) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanManage(me.user.id, "knowledge_base", knowledgeBaseId);
+    const current = await this.prisma.knowledgeBaseMetadataField.findFirst({
+      where: { id: fieldId, knowledge_base_id: knowledgeBaseId }
+    });
+    if (!current) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Metadata field was not found.", 404);
+    }
+    const field = await this.prisma.knowledgeBaseMetadataField.update({
+      where: { id: fieldId },
+      data: { status: "archived", updated_by: me.user.id, updated_at: new Date() }
+    });
+    await this.writeAuditLog(
+      this.prisma,
+      me,
+      "knowledge_base.metadata_field.archive",
+      "knowledge_base",
+      knowledgeBaseId,
+      { field_id: field.id, name: field.name }
+    );
+    return toKnowledgeBaseMetadataFieldDto(field);
   }
 
   async getKnowledgeBaseTree(sessionToken: string | null, knowledgeBaseId: string) {
@@ -746,6 +913,88 @@ export class ContentService {
       currentVersion: version ? toDocumentVersionDto(version, true) : null,
       role: await this.permissions.resolveObjectRole(me.user.id, "document", document.id)
     };
+  }
+
+  async getDocumentMetadata(sessionToken: string | null, documentId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanRead(me.user.id, "document", documentId);
+    const context = await this.loadDocumentMetadataContext(documentId);
+    if (!context) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    return toDocumentMetadataDto(context);
+  }
+
+  async updateDocumentMetadata(
+    sessionToken: string | null,
+    documentId: string,
+    input: UpdateDocumentMetadataInput
+  ) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanEdit(me.user.id, "document", documentId);
+    const context = await this.loadDocumentMetadataContext(documentId);
+    if (!context) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    const rawValues =
+      typeof input.values === "object" && input.values !== null && !Array.isArray(input.values)
+        ? input.values
+        : {};
+    const customFields = context.fields.filter((field) => field.status === "active");
+    await this.prisma.$transaction(async (tx) => {
+      for (const field of customFields) {
+        if (!Object.prototype.hasOwnProperty.call(rawValues, field.name)) {
+          continue;
+        }
+        const rawValue = rawValues[field.name];
+        if (rawValue === null || rawValue === undefined || rawValue === "") {
+          await tx.documentMetadataValue.deleteMany({
+            where: { document_id: context.document.id, field_id: field.id }
+          });
+          continue;
+        }
+        const value = normalizeMetadataValue(rawValue, field.type, field.name);
+        await tx.documentMetadataValue.upsert({
+          where: {
+            document_id_field_id: {
+              document_id: context.document.id,
+              field_id: field.id
+            }
+          },
+          create: {
+            tenant_id: context.document.tenant_id,
+            workspace_id: context.document.workspace_id,
+            knowledge_base_id: context.document.knowledge_base_id,
+            document_id: context.document.id,
+            field_id: field.id,
+            value: value as Prisma.InputJsonValue,
+            updated_by: me.user.id
+          },
+          update: {
+            value: value as Prisma.InputJsonValue,
+            updated_by: me.user.id,
+            updated_at: new Date()
+          }
+        });
+      }
+      await this.writeAuditLog(
+        tx,
+        me,
+        "document.metadata.update",
+        "document",
+        context.document.id,
+        {
+          field_names: Object.keys(rawValues).filter((name) =>
+            customFields.some((field) => field.name === name)
+          )
+        }
+      );
+    });
+    const updated = await this.loadDocumentMetadataContext(documentId);
+    if (!updated) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    return toDocumentMetadataDto(updated);
   }
 
   async listDocumentVersions(sessionToken: string | null, documentId: string) {
@@ -2070,6 +2319,31 @@ export class ContentService {
     };
   }
 
+  private async loadDocumentMetadataContext(
+    documentId: string
+  ): Promise<DocumentMetadataContext | null> {
+    const document = await this.prisma.document.findUnique({ where: { id: documentId } });
+    if (!document || document.status === "deleted") {
+      return null;
+    }
+    const [knowledgeBase, fields, values, creator, currentVersion] = await Promise.all([
+      this.prisma.knowledgeBase.findUnique({ where: { id: document.knowledge_base_id } }),
+      this.prisma.knowledgeBaseMetadataField.findMany({
+        where: { knowledge_base_id: document.knowledge_base_id, status: "active" },
+        orderBy: [{ sort_order: "asc" }, { created_at: "asc" }]
+      }),
+      this.prisma.documentMetadataValue.findMany({ where: { document_id: document.id } }),
+      this.prisma.user.findUnique({ where: { id: document.created_by } }),
+      document.current_version_id
+        ? this.prisma.documentVersion.findUnique({ where: { id: document.current_version_id } })
+        : Promise.resolve(null)
+    ]);
+    if (!knowledgeBase) {
+      return null;
+    }
+    return { document, knowledgeBase, fields, values, creator, currentVersion };
+  }
+
   private async writeAuditLog(
     tx: Prisma.TransactionClient | PrismaClient,
     me: AuthenticatedUser,
@@ -2091,6 +2365,142 @@ export class ContentService {
       }
     });
   }
+}
+
+const BUILT_IN_DIFY_METADATA_FIELDS = [
+  {
+    name: "document_name",
+    type: "string",
+    source: "built_in",
+    read_only: true,
+    description: "Document title shown by Dify-compatible retrieval."
+  },
+  {
+    name: "uploader",
+    type: "string",
+    source: "built_in",
+    read_only: true,
+    description: "Display name or email of the document creator."
+  },
+  {
+    name: "upload_date",
+    type: "time",
+    source: "built_in",
+    read_only: true,
+    description: "Document creation time."
+  },
+  {
+    name: "last_update_date",
+    type: "time",
+    source: "built_in",
+    read_only: true,
+    description: "Document last update time."
+  },
+  {
+    name: "source",
+    type: "string",
+    source: "built_in",
+    read_only: true,
+    description: "OpenKB source category such as online_document or file_upload."
+  }
+] as const;
+
+function toKnowledgeBaseMetadataFieldDto(field: MetadataFieldRow) {
+  return {
+    id: field.id,
+    name: field.name,
+    type: field.type,
+    source: "custom",
+    read_only: false,
+    status: field.status,
+    sort_order: field.sort_order,
+    created_at: field.created_at.toISOString(),
+    updated_at: field.updated_at.toISOString()
+  };
+}
+
+function toDocumentMetadataDto(context: DocumentMetadataContext) {
+  const customValues = new Map(context.values.map((value) => [value.field_id, value.value]));
+  const builtInValues = buildBuiltInDifyMetadata(context);
+  const values: Record<string, unknown> = { ...builtInValues };
+  for (const field of context.fields) {
+    if (customValues.has(field.id)) {
+      values[field.name] = customValues.get(field.id);
+    }
+  }
+  return {
+    knowledge_base_id: context.document.knowledge_base_id,
+    document_id: context.document.id,
+    fields: {
+      built_in: BUILT_IN_DIFY_METADATA_FIELDS,
+      custom: context.fields.map(toKnowledgeBaseMetadataFieldDto)
+    },
+    values
+  };
+}
+
+function buildBuiltInDifyMetadata(context: DocumentMetadataContext): Record<string, unknown> {
+  return {
+    document_name: context.document.title,
+    uploader: context.creator?.display_name || context.creator?.email || null,
+    upload_date: context.document.created_at.toISOString(),
+    last_update_date: context.document.updated_at.toISOString(),
+    source: context.currentVersion?.source_type === "import" ? "file_upload" : "online_document"
+  };
+}
+
+function normalizeMetadataFieldName(value: string | undefined): string {
+  const name = requireText(value, "name");
+  if (name.length > 80) {
+    throw new ContentError("INVALID_INPUT", "metadata field name is too long.", 400);
+  }
+  const lower = name.toLowerCase();
+  if (
+    name.includes(".") ||
+    lower.startsWith("openkb_") ||
+    BUILT_IN_DIFY_METADATA_FIELDS.some((field) => field.name === name)
+  ) {
+    throw new ContentError("INVALID_INPUT", "metadata field name is reserved.", 400);
+  }
+  return name;
+}
+
+function normalizeMetadataFieldType(value: string | undefined): KnowledgeBaseMetadataFieldType {
+  if (KNOWLEDGE_BASE_METADATA_FIELD_TYPES.includes(value as KnowledgeBaseMetadataFieldType)) {
+    return value as KnowledgeBaseMetadataFieldType;
+  }
+  throw new ContentError("INVALID_INPUT", "metadata field type is invalid.", 400);
+}
+
+function normalizeMetadataFieldStatus(value: string): "active" | "archived" {
+  if (value === "active" || value === "archived") {
+    return value;
+  }
+  throw new ContentError("INVALID_INPUT", "metadata field status is invalid.", 400);
+}
+
+function normalizeMetadataValue(value: unknown, type: string, fieldName: string): string | number {
+  if (type === "string") {
+    if (typeof value !== "string") {
+      throw new ContentError("INVALID_INPUT", `${fieldName} must be a string.`, 400);
+    }
+    return value;
+  }
+  if (type === "number") {
+    const number = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(number)) {
+      throw new ContentError("INVALID_INPUT", `${fieldName} must be a number.`, 400);
+    }
+    return number;
+  }
+  if (type === "time") {
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) {
+      throw new ContentError("INVALID_INPUT", `${fieldName} must be a valid time.`, 400);
+    }
+    return date.toISOString();
+  }
+  throw new ContentError("INVALID_INPUT", `${fieldName} has invalid metadata type.`, 400);
 }
 
 function requireText(value: string | undefined | null, field: string): string {

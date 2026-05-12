@@ -31,6 +31,8 @@ const allTables = [
   "milvus_index_profiles",
   "import_format_routes",
   "import_tool_settings",
+  "document_metadata_values",
+  "knowledge_base_metadata_fields",
   "document_chunks",
   "import_jobs",
   "share_links",
@@ -354,6 +356,106 @@ describe("ContentService integration", () => {
         restored_from_version_id: firstVersionId,
         new_version_id: restored.currentVersion?.id
       });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("manages Dify-style knowledge base and document metadata", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+
+      const fields = await content.listKnowledgeBaseMetadataFields(
+        login.sessionToken,
+        seed.knowledgeBaseId
+      );
+      expect(fields.built_in.map((field) => field.name)).toEqual([
+        "document_name",
+        "uploader",
+        "upload_date",
+        "last_update_date",
+        "source"
+      ]);
+
+      await expect(
+        content.createKnowledgeBaseMetadataField(login.sessionToken, seed.knowledgeBaseId, {
+          name: "document_name",
+          type: "string"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+      const dynastyField = await content.createKnowledgeBaseMetadataField(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        {
+          name: "dynasty",
+          type: "string",
+          sort_order: 1
+        }
+      );
+      const chapterField = await content.createKnowledgeBaseMetadataField(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        {
+          name: "chapter_no",
+          type: "number",
+          sort_order: 2
+        }
+      );
+
+      const saved = await content.updateDocumentMetadata(login.sessionToken, seed.documentId, {
+        values: {
+          dynasty: "shu",
+          chapter_no: "1"
+        }
+      });
+      expect(saved.values).toMatchObject({
+        document_name: "Welcome to OpenKB",
+        uploader: "OpenKB Dev Admin",
+        source: "online_document",
+        dynasty: "shu",
+        chapter_no: 1
+      });
+      expect(saved.fields.custom.map((field) => field.name)).toEqual(["dynasty", "chapter_no"]);
+
+      await expect(
+        content.updateDocumentMetadata(login.sessionToken, seed.documentId, {
+          values: { chapter_no: "not-a-number" }
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+      await expect(
+        content.updateDocumentMetadata(login.sessionToken, seed.documentId, {
+          values: { dynasty: { value: "shu" } }
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+      await content.deleteKnowledgeBaseMetadataField(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        dynastyField.id
+      );
+      const afterArchive = await content.getDocumentMetadata(login.sessionToken, seed.documentId);
+      expect(afterArchive.fields.custom.map((field) => field.name)).toEqual(["chapter_no"]);
+      expect(afterArchive.values).not.toHaveProperty("dynasty");
+      expect(afterArchive.values).toMatchObject({ chapter_no: 1 });
+
+      await content.deleteKnowledgeBaseMetadataField(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        chapterField.id
+      );
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { action: "knowledge_base.metadata_field.archive", object_id: seed.knowledgeBaseId },
+        orderBy: { created_at: "desc" }
+      });
+      expect(audit.metadata).toMatchObject({ field_id: chapterField.id });
     } finally {
       await content.disconnect();
     }

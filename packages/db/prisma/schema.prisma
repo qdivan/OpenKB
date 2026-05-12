@@ -224,6 +224,27 @@ model KnowledgeBaseChunkSetting {
   @@map("knowledge_base_chunk_settings")
 }
 
+model KnowledgeBaseMetadataField {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  name              String
+  type              String
+  status            String   @default("active")
+  sort_order        Int      @default(0)
+  created_by        String   @db.Uuid
+  updated_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([knowledge_base_id, name])
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@map("knowledge_base_metadata_fields")
+}
+
 model Document {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id         String   @db.Uuid
@@ -248,6 +269,26 @@ model Document {
   @@index([knowledge_base_id])
   @@index([parent_id])
   @@map("documents")
+}
+
+model DocumentMetadataValue {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  document_id       String   @db.Uuid
+  field_id          String   @db.Uuid
+  value             Json
+  updated_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([document_id, field_id])
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([field_id])
+  @@map("document_metadata_values")
 }
 
 model DocumentAsset {

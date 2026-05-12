@@ -280,3 +280,17 @@ Phase 20 实现落点：
 - API double-submit CSRF：cookie-auth mutation 需要 `openkb_csrf` + `x-openkb-csrf`；Bearer 集成与登录/注册/分享密码验证使用独立鉴权。
 - MCP OAuth：`/.well-known/oauth-authorization-server`、`/oauth/authorize`、`/oauth/token`、`/oauth/revoke`，支持 Authorization Code + PKCE 和 refresh token。
 - 运维：`/app/admin/security`、`/api/admin/ops/health`、`/metrics`、`deploy/backup`、Helm Ingress/NetworkPolicy/ServiceMonitor/backup CronJob。
+
+## Phase 21 - Dify 原生体验对齐
+
+输出：
+- Phase 21.1：OpenKB Admin -> Dify 配置向导，展示 base endpoint、External Knowledge ID、mapping、allowed KB、Top K 和脱敏测试 curl；不展示 raw key。
+- Phase 21.1：`/retrieval` metadata 增补 Dify 友好字段，例如 `document_name`、`dataset_name`、`segment_id`、`knowledge_base_title`、`document_title`、`path_parts`、`absolute_url`、`retrieval_mode`、`score_source`。
+- Phase 21.1：带合法 key 但空 body 时返回 Dify-compatible `400 / 4001`，说明 OpenKB adapter 已到达但缺少 `knowledge_id/query/retrieval_setting`。
+- Phase 21.2：KB 级 Dify-native metadata schema，支持 `string/number/time` 和内置字段 `document_name/uploader/upload_date/last_update_date/source`。
+- Phase 21.2：文档右侧 Metadata 面板可编辑文档级 metadata values；Dify `metadata_condition` 优先作用于文档 metadata。
+
+边界：
+- Dify key 仍是 app-key-bound，只能访问 allowed KB。
+- OpenKB 不写 Dify 数据库；所有对齐通过 External Knowledge API contract 和 OpenKB Admin 配置完成。
+- `openkb_*`、chunk、retrieval explain 字段是技术诊断 metadata，不应替代 Dify 风格业务 metadata schema。

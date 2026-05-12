@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
-import { createDatabaseClient, type PrismaClient } from "@openkb/db";
+import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import { DEV_ADMIN_EMAIL, seedDev } from "@openkb/db/seed-dev";
 import { createOpenKBMilvus, type MilvusChunkRecord, type OpenKBMilvus } from "@openkb/milvus";
 import { PermissionService } from "@openkb/permissions";
@@ -28,6 +28,8 @@ const allTables = [
   "milvus_index_profiles",
   "import_format_routes",
   "import_tool_settings",
+  "document_metadata_values",
+  "knowledge_base_metadata_fields",
   "document_chunks",
   "import_jobs",
   "share_links",
@@ -128,7 +130,16 @@ describe("Dify External Knowledge adapter", () => {
           metadata: expect.objectContaining({
             document_id: seed.documentId,
             chunk_id: expect.any(String),
+            segment_id: expect.any(String),
             knowledge_base_id: seed.knowledgeBaseId,
+            knowledge_base_title: "OpenKB Demo",
+            document_title: "Welcome to OpenKB",
+            document_name: "Welcome to OpenKB",
+            dataset_name: "OpenKB Demo",
+            path_parts: ["OpenKB Demo", "Getting Started", "Welcome to OpenKB"],
+            retrieval_mode: expect.any(String),
+            score_source: expect.any(String),
+            score: expect.any(Number),
             path: "/OpenKB Demo/Getting Started/Welcome to OpenKB",
             url: expect.stringContaining(`/app/kb/${seed.knowledgeBaseId}/docs/${seed.documentId}`)
           })
@@ -170,6 +181,7 @@ describe("Dify External Knowledge adapter", () => {
     await createChunkForSeedDocument(prisma, seed, "Dify metadata filtering keeps matching rows.", [
       "dify"
     ]);
+    await createDocumentMetadata(seed, "dynasty", "string", "shu");
     await indexCurrentChunks(seed, milvus, permissions);
     const key = await createDifyKey(seed, { knowledgeId: "dify-filter" });
 
@@ -186,9 +198,32 @@ describe("Dify External Knowledge adapter", () => {
         conditions: [{ name: "tags", comparison_operator: "contains", value: "missing" }]
       }
     });
+    const matchingDocumentMetadata = await postRetrieval(key.apiKey, {
+      knowledge_id: "dify-filter",
+      query: "Dify metadata filtering",
+      retrieval_setting: { top_k: 5, score_threshold: 0 },
+      metadata_condition: {
+        conditions: [{ name: "dynasty", comparison_operator: "is", value: "shu" }]
+      }
+    });
 
     expect(await threshold.json()).toEqual({ records: [] });
     expect(await nonMatchingMetadata.json()).toEqual({ records: [] });
+    expect((await matchingDocumentMetadata.json()).records).toHaveLength(1);
+  });
+
+  it("returns a Dify-friendly empty-body validation error after authenticating", async () => {
+    const seed = await seedDev({ prisma });
+    const key = await createDifyKey(seed, { knowledgeId: "dify-empty" });
+
+    const response = await postRetrieval(key.apiKey, {});
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error_code: 4001,
+      error_msg: expect.stringContaining("OpenKB Dify adapter was reached")
+    });
   });
 
   it("allows explicitly scoped private KBs and blocks stale PostgreSQL state", async () => {
@@ -303,8 +338,14 @@ async function createChunkForSeedDocument(
     throw new Error("Seed document is missing current_version_id.");
   }
 
-  await prismaClient.documentChunk.create({
-    data: {
+  await prismaClient.documentChunk.upsert({
+    where: {
+      version_id_ordinal: {
+        version_id: versionId,
+        ordinal: 0
+      }
+    },
+    create: {
       tenant_id: seed.tenantId,
       workspace_id: seed.workspaceId,
       knowledge_base_id: seed.knowledgeBaseId,
@@ -319,6 +360,53 @@ async function createChunkForSeedDocument(
         source: "dify-test",
         tags
       }
+    },
+    update: {
+      heading_path: ["Welcome to OpenKB"],
+      content_text: contentText,
+      content_markdown: `# Welcome to OpenKB\n\n${contentText}`,
+      token_count: 16,
+      metadata: {
+        source: "dify-test",
+        tags
+      }
+    }
+  });
+}
+
+async function createDocumentMetadata(
+  seed: {
+    tenantId: string;
+    workspaceId: string;
+    knowledgeBaseId: string;
+    documentId: string;
+  },
+  name: string,
+  type: "string" | "number" | "time",
+  value: unknown
+) {
+  const admin = await prisma.user.findUniqueOrThrow({ where: { email: DEV_ADMIN_EMAIL } });
+  const field = await prisma.knowledgeBaseMetadataField.create({
+    data: {
+      tenant_id: seed.tenantId,
+      workspace_id: seed.workspaceId,
+      knowledge_base_id: seed.knowledgeBaseId,
+      name,
+      type,
+      status: "active",
+      created_by: admin.id,
+      updated_by: admin.id
+    }
+  });
+  await prisma.documentMetadataValue.create({
+    data: {
+      tenant_id: seed.tenantId,
+      workspace_id: seed.workspaceId,
+      knowledge_base_id: seed.knowledgeBaseId,
+      document_id: seed.documentId,
+      field_id: field.id,
+      value: value as Prisma.InputJsonValue,
+      updated_by: admin.id
     }
   });
 }

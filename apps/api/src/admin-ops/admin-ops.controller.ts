@@ -26,6 +26,33 @@ export class AdminOpsController {
     @Inject(AdminOpsService) private readonly adminOps: AdminOpsService
   ) {}
 
+  @Get("dify/setup")
+  async getDifySetup(
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.adminOps.getDifySetupSummary(getSessionToken(request, this.auth));
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("dify/filterable-metadata")
+  async getDifyFilterableMetadata(
+    @Query("knowledge_base_id") knowledgeBaseId: string | undefined,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.adminOps.getDifyFilterableMetadata(getSessionToken(request, this.auth), {
+        knowledge_base_id: knowledgeBaseId
+      });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Get("dify/api-keys")
   async listDifyApiKeys(
     @Query() query: ListQuery = {},

@@ -69,6 +69,84 @@ const MCP_ALLOWED_SCOPES = [
   "toc:write"
 ] as const;
 
+const DIFY_BUILT_IN_FILTERABLE_FIELDS = [
+  {
+    name: "document_name",
+    type: "string",
+    source: "dify_built_in",
+    description: "Document title. OpenKB maps this to documents.title."
+  },
+  {
+    name: "uploader",
+    type: "string",
+    source: "dify_built_in",
+    description: "OpenKB document creator display name or email."
+  },
+  {
+    name: "upload_date",
+    type: "time",
+    source: "dify_built_in",
+    description: "OpenKB document created_at."
+  },
+  {
+    name: "last_update_date",
+    type: "time",
+    source: "dify_built_in",
+    description: "OpenKB document updated_at."
+  },
+  {
+    name: "source",
+    type: "string",
+    source: "dify_built_in",
+    description: "online_document or file_upload derived from the current version source."
+  }
+] as const;
+
+const DIFY_OPENKB_FILTERABLE_FIELDS = [
+  {
+    name: "knowledge_base_title",
+    type: "string",
+    source: "openkb",
+    description: "OpenKB knowledge base title."
+  },
+  {
+    name: "document_title",
+    type: "string",
+    source: "openkb",
+    description: "OpenKB document title."
+  },
+  {
+    name: "document_slug",
+    type: "string",
+    source: "openkb",
+    description: "OpenKB document slug."
+  },
+  {
+    name: "tags",
+    type: "string[]",
+    source: "chunk_metadata",
+    description: "Optional tags stored in document_chunks.metadata.tags."
+  },
+  {
+    name: "openkb_retrieval.context_mode",
+    type: "string",
+    source: "openkb_technical",
+    description: "Retrieval context mode such as parent_child."
+  },
+  {
+    name: "chunk_type",
+    type: "string",
+    source: "openkb_technical",
+    description: "OpenKB chunk type: general, parent, or child."
+  },
+  {
+    name: "token_count",
+    type: "number",
+    source: "openkb_technical",
+    description: "Chunk token estimate."
+  }
+] as const;
+
 @Injectable()
 export class AdminOpsService {
   private readonly prisma: PrismaClient;
@@ -79,6 +157,131 @@ export class AdminOpsService {
 
   async disconnect(): Promise<void> {
     await this.prisma.$disconnect();
+  }
+
+  async getDifySetupSummary(sessionToken: string | null) {
+    const me = await this.requireAdmin(sessionToken);
+    const where = this.tenantWhere(me);
+    const [keys, mappings] = await Promise.all([
+      this.prisma.difyApiKey.findMany({ where, orderBy: { created_at: "desc" }, take: 20 }),
+      this.prisma.difyKnowledgeMapping.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        take: 50
+      })
+    ]);
+    const knowledgeBaseIds = unique([
+      ...mappings.map((mapping) => mapping.knowledge_base_id),
+      ...keys.flatMap((key) => key.allowed_knowledge_base_ids)
+    ]);
+    const knowledgeBases = knowledgeBaseIds.length
+      ? await this.prisma.knowledgeBase.findMany({
+          where: { id: { in: knowledgeBaseIds } },
+          select: { id: true, title: true, slug: true, tenant_id: true, workspace_id: true }
+        })
+      : [];
+    const byId = new Map(knowledgeBases.map((knowledgeBase) => [knowledgeBase.id, knowledgeBase]));
+    const endpointBaseUrl = normalizeEndpointBaseUrl(
+      process.env.DIFY_ADAPTER_PUBLIC_URL ||
+        process.env.DIFY_ADAPTER_BASE_URL ||
+        process.env.OPENKB_DIFY_ADAPTER_BASE_URL ||
+        "http://localhost:4200"
+    );
+    return {
+      endpoint_base_url: endpointBaseUrl,
+      retrieval_path: "/retrieval",
+      endpoint_for_dify_ui: endpointBaseUrl,
+      endpoint_note:
+        "Dify External Knowledge UI stores the base URL and appends /retrieval automatically.",
+      mappings: mappings.map((mapping) => ({
+        ...toDifyMappingDto(mapping),
+        knowledge_base_title: byId.get(mapping.knowledge_base_id)?.title ?? null,
+        knowledge_base_slug: byId.get(mapping.knowledge_base_id)?.slug ?? null
+      })),
+      keys: keys.map((key) => ({
+        id: key.id,
+        name: key.name,
+        status: key.status,
+        api_key_last4: key.api_key_last4,
+        retrieval_top_k_limit: key.retrieval_top_k_limit,
+        allowed_knowledge_bases: key.allowed_knowledge_base_ids.map((id) => ({
+          id,
+          title: byId.get(id)?.title ?? null,
+          slug: byId.get(id)?.slug ?? null
+        }))
+      })),
+      test_request: {
+        method: "POST",
+        path: "/retrieval",
+        body: {
+          knowledge_id: mappings[0]?.dify_knowledge_id ?? "<external_knowledge_id>",
+          query: "赤壁之战",
+          retrieval_setting: { top_k: 5, score_threshold: 0 },
+          metadata_condition: null
+        }
+      }
+    };
+  }
+
+  async getDifyFilterableMetadata(
+    sessionToken: string | null,
+    input: { knowledge_base_id?: string } = {}
+  ) {
+    const me = await this.requireAdmin(sessionToken);
+    let customFields: Array<{ name: string; type: string; source: string; description: string }> =
+      [];
+    if (input.knowledge_base_id) {
+      await this.resolveKnowledgeBaseScope(me, [input.knowledge_base_id]);
+      customFields = await this.loadDifyDocumentMetadataFields({
+        knowledgeBaseIds: [input.knowledge_base_id]
+      });
+    } else {
+      const mappingKnowledgeBaseIds = await this.prisma.difyKnowledgeMapping
+        .findMany({
+          where: { status: "active", ...this.tenantWhere(me) },
+          select: { knowledge_base_id: true }
+        })
+        .then((mappings) => mappings.map((mapping) => mapping.knowledge_base_id));
+      const keyKnowledgeBaseIds = await this.prisma.difyApiKey
+        .findMany({
+          where: { status: "active", ...this.tenantWhere(me) },
+          select: { allowed_knowledge_base_ids: true }
+        })
+        .then((keys) => keys.flatMap((key) => key.allowed_knowledge_base_ids));
+      const knowledgeBaseIds = unique([...mappingKnowledgeBaseIds, ...keyKnowledgeBaseIds]);
+      customFields = knowledgeBaseIds.length
+        ? await this.loadDifyDocumentMetadataFields({ knowledgeBaseIds })
+        : [];
+    }
+
+    return {
+      fields: [
+        ...DIFY_BUILT_IN_FILTERABLE_FIELDS,
+        ...customFields,
+        ...DIFY_OPENKB_FILTERABLE_FIELDS
+      ],
+      note: "Dify metadata_condition is evaluated by OpenKB against returned metadata. Document metadata is the Dify-native layer; openkb_* fields are technical diagnostics."
+    };
+  }
+
+  private async loadDifyDocumentMetadataFields(input: { knowledgeBaseIds: string[] }) {
+    const knowledgeBases = await this.prisma.knowledgeBase.findMany({
+      where: { id: { in: input.knowledgeBaseIds } },
+      select: { id: true, title: true }
+    });
+    const knowledgeBaseTitles = new Map(
+      knowledgeBases.map((knowledgeBase) => [knowledgeBase.id, knowledgeBase.title])
+    );
+    const fields = await this.prisma.knowledgeBaseMetadataField.findMany({
+      where: { knowledge_base_id: { in: input.knowledgeBaseIds }, status: "active" },
+      orderBy: [{ knowledge_base_id: "asc" }, { sort_order: "asc" }, { created_at: "asc" }]
+    });
+    return fields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      source: "document_metadata",
+      description: `OpenKB document metadata value from ${knowledgeBaseTitles.get(field.knowledge_base_id) ?? "a mapped knowledge base"}; preferred for Dify metadata_condition.`
+    }));
   }
 
   async listDifyApiKeys(sessionToken: string | null, input: ListInput = {}) {
@@ -742,6 +945,14 @@ export class AdminOpsService {
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function normalizeEndpointBaseUrl(value: string): string {
+  return value.replace(/\/+$/, "");
 }
 
 function requireText(value: string | null | undefined, field: string): string {

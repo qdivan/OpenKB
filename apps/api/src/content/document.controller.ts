@@ -52,6 +52,37 @@ export class DocumentController {
     }
   }
 
+  @Get(":id/metadata")
+  async metadata(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.getDocumentMetadata(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Put(":id/metadata")
+  async updateMetadata(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.updateDocumentMetadata(
+        getSessionToken(request, this.auth),
+        id,
+        body as never
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Get(":id/versions/:versionId")
   async version(
     @Param("id") id: string,

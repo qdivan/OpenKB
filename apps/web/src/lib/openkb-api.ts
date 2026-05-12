@@ -222,6 +222,44 @@ export type DifyMappingListResponse = {
   total: number;
 };
 
+export type DifySetupSummary = {
+  endpoint_base_url: string;
+  retrieval_path: string;
+  endpoint_for_dify_ui: string;
+  endpoint_note: string;
+  mappings: Array<
+    DifyKnowledgeMapping & {
+      knowledge_base_title: string | null;
+      knowledge_base_slug: string | null;
+    }
+  >;
+  keys: Array<{
+    id: string;
+    name: string;
+    status: string;
+    api_key_last4: string | null;
+    retrieval_top_k_limit: number;
+    allowed_knowledge_bases: Array<{ id: string; title: string | null; slug: string | null }>;
+  }>;
+  test_request: {
+    method: string;
+    path: string;
+    body: unknown;
+  };
+};
+
+export type DifyFilterableMetadataField = {
+  name: string;
+  type: string;
+  source: string;
+  description: string;
+};
+
+export type DifyFilterableMetadataResponse = {
+  fields: DifyFilterableMetadataField[];
+  note: string;
+};
+
 export type SecretCreateResponse<T> = {
   item: T;
   api_key?: string;
@@ -394,6 +432,26 @@ export type KnowledgeBase = {
   updated_at: string;
 };
 
+export type KnowledgeBaseMetadataFieldType = "string" | "number" | "time";
+
+export type KnowledgeBaseMetadataField = {
+  id?: string;
+  name: string;
+  type: KnowledgeBaseMetadataFieldType;
+  source: "built_in" | "custom";
+  read_only: boolean;
+  status?: string;
+  sort_order?: number;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type KnowledgeBaseMetadataFieldsResponse = {
+  built_in: KnowledgeBaseMetadataField[];
+  custom: KnowledgeBaseMetadataField[];
+};
+
 export type DocumentSummary = {
   id: string;
   tenant_id: string;
@@ -436,6 +494,13 @@ export type DocumentVersionDiff = {
 export type DocumentDetail = DocumentSummary & {
   currentVersion: DocumentVersion | null;
   role?: string | null;
+};
+
+export type DocumentMetadataResponse = {
+  knowledge_base_id: string;
+  document_id: string;
+  fields: KnowledgeBaseMetadataFieldsResponse;
+  values: Record<string, unknown>;
 };
 
 export type SharedWorkspace = Workspace & {
@@ -1031,6 +1096,29 @@ export function getKnowledgeBaseTree(id: string) {
   return apiFetch<DocumentSummary[]>(`/api/knowledge-bases/${id}/tree`);
 }
 
+export function listKnowledgeBaseMetadataFields(id: string) {
+  return apiFetch<KnowledgeBaseMetadataFieldsResponse>(
+    `/api/knowledge-bases/${id}/metadata-fields`
+  );
+}
+
+export function createKnowledgeBaseMetadataField(
+  id: string,
+  input: { name: string; type: KnowledgeBaseMetadataFieldType; sort_order?: number }
+) {
+  return apiFetch<KnowledgeBaseMetadataField>(`/api/knowledge-bases/${id}/metadata-fields`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteKnowledgeBaseMetadataField(id: string, fieldId: string) {
+  return apiFetch<KnowledgeBaseMetadataField>(
+    `/api/knowledge-bases/${id}/metadata-fields/${fieldId}`,
+    { method: "DELETE" }
+  );
+}
+
 export function createDocument(input: {
   knowledge_base_id: string;
   parent_id?: string | null;
@@ -1047,6 +1135,17 @@ export function createDocument(input: {
 
 export function getDocument(id: string) {
   return apiFetch<DocumentDetail>(`/api/documents/${id}`);
+}
+
+export function getDocumentMetadata(id: string) {
+  return apiFetch<DocumentMetadataResponse>(`/api/documents/${id}/metadata`);
+}
+
+export function updateDocumentMetadata(id: string, input: { values: Record<string, unknown> }) {
+  return apiFetch<DocumentMetadataResponse>(`/api/documents/${id}/metadata`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
 }
 
 export function updateDocument(id: string, input: UpdateDocumentInput) {
@@ -1429,6 +1528,19 @@ export function listDifyApiKeys(input: { limit?: number; offset?: number } = {})
   if (input.offset) params.set("offset", String(input.offset));
   const query = params.toString();
   return apiFetch<DifyApiKeyListResponse>(`/api/admin/dify/api-keys${query ? `?${query}` : ""}`);
+}
+
+export function getDifySetupSummary() {
+  return apiFetch<DifySetupSummary>("/api/admin/dify/setup");
+}
+
+export function getDifyFilterableMetadata(input: { knowledge_base_id?: string } = {}) {
+  const params = new URLSearchParams();
+  if (input.knowledge_base_id) params.set("knowledge_base_id", input.knowledge_base_id);
+  const query = params.toString();
+  return apiFetch<DifyFilterableMetadataResponse>(
+    `/api/admin/dify/filterable-metadata${query ? `?${query}` : ""}`
+  );
 }
 
 export function createDifyApiKey(input: {

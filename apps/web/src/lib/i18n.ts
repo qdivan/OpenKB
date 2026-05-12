@@ -737,7 +737,44 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Revoke refresh tokens": "撤销刷新令牌",
   "Revoked {count} tokens.": "已撤销 {count} 个令牌。",
   "Check succeeded.": "检测成功。",
-  "Secret set": "已设置密钥"
+  "Secret set": "已设置密钥",
+  "Dify configuration guide": "Dify 配置向导",
+  "API endpoint for Dify": "Dify API Endpoint",
+  "Dify stores the base URL and appends /retrieval automatically.":
+    "Dify 只需要填写 base URL，它会自动拼接 /retrieval。",
+  "External Knowledge ID": "External Knowledge ID",
+  "Copy test curl": "复制测试 curl",
+  "Create a mapping first to get an External Knowledge ID.":
+    "先创建 knowledge mapping，才能获得 External Knowledge ID。",
+  "Filterable metadata": "可过滤 metadata 字段",
+  "These fields can be used in Dify metadata_condition. Document metadata is preferred; openkb_* fields are diagnostics.":
+    "这些字段可用于 Dify metadata_condition。优先使用文档 metadata；openkb_* 字段主要用于诊断。",
+  Copied: "已复制。",
+  Metadata: "Metadata",
+  "Dify metadata schema": "Dify metadata schema",
+  "These fields become document metadata and can be used by Dify metadata_condition.":
+    "这些字段会成为文档 metadata，可被 Dify metadata_condition 过滤。",
+  "Built-in fields": "内置字段",
+  "Custom fields": "自定义字段",
+  "No custom metadata fields": "没有自定义 metadata 字段",
+  "Add metadata field": "添加 metadata 字段",
+  "Field name": "字段名",
+  "Field type": "字段类型",
+  String: "字符串",
+  Number: "数字",
+  Time: "时间",
+  "Add field": "添加字段",
+  "Archive field": "归档字段",
+  "Dify-native document metadata for filtering.": "用于过滤的 Dify 风格文档 metadata。",
+  "Loading metadata": "正在加载 metadata",
+  "Reading document metadata.": "正在读取文档 metadata。",
+  "Built-in": "内置",
+  "No metadata": "没有 metadata",
+  "Select a page document first.": "请先选择一篇页面文档。",
+  "Save metadata": "保存 metadata",
+  "Saving...": "保存中...",
+  "Metadata saved.": "Metadata 已保存。",
+  "Add fields in the knowledge base Metadata tab.": "请在知识库 Metadata 标签中添加字段。"
 });
 
 const TRANSLATIONS: Record<Locale, Record<string, string>> = {

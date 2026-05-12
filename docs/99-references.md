@@ -53,3 +53,5 @@ The Yuque MCP references above are public server/API references used for capabil
 - Dify Chunking and Cleaning Text: https://docs.dify.ai/en/use-dify/knowledge/create-knowledge/chunking-and-cleaning-text
 - Dify Indexing Methods: https://docs.dify.ai/en/use-dify/knowledge/create-knowledge/setting-indexing-methods
 - Dify Retrieval Test: https://docs.dify.ai/en/use-dify/knowledge/test-retrieval
+
+See also `docs/26-dify-external-knowledge-setup.zh-CN.md` for the OpenKB -> Dify External Knowledge setup and metadata compatibility checklist.

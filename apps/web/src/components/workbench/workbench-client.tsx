@@ -81,6 +81,7 @@ import {
   createWorkspace,
   deleteDocument,
   getDocument,
+  getDocumentMetadata,
   getImportJob,
   getKnowledgeBase,
   getKnowledgeBaseTree,
@@ -96,6 +97,7 @@ import {
   publishDocument,
   restoreDocumentVersion,
   updateDocument,
+  updateDocumentMetadata,
   updateWorkspace,
   unpublishDocument,
   uploadFile,
@@ -104,6 +106,7 @@ import {
   type DocumentDetail,
   type DocumentChunk,
   type DocumentSummary,
+  type DocumentMetadataResponse,
   type DocumentVersion,
   type DocumentVersionSummary,
   type ImportJob,
@@ -119,7 +122,7 @@ export type WorkbenchClientProps = {
 
 type EditorMode = "read" | "edit" | "source";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
-type DocumentSideTab = "outline" | "chunks" | "versions";
+type DocumentSideTab = "outline" | "chunks" | "versions" | "metadata";
 type TreeNode = DocumentSummary & { children: TreeNode[] };
 type TreeDropPosition = "before" | "inside" | "after";
 type DocumentMoveUpdate = {
@@ -201,6 +204,10 @@ export function WorkbenchClient({
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
   const [selectedVersionLoading, setSelectedVersionLoading] = useState(false);
+  const [documentMetadata, setDocumentMetadata] = useState<DocumentMetadataResponse | null>(null);
+  const [documentMetadataDraft, setDocumentMetadataDraft] = useState<Record<string, string>>({});
+  const [documentMetadataLoading, setDocumentMetadataLoading] = useState(false);
+  const [documentMetadataSaving, setDocumentMetadataSaving] = useState(false);
   const [documentSideRefreshKey, setDocumentSideRefreshKey] = useState(0);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
@@ -270,6 +277,8 @@ export function WorkbenchClient({
     setDocumentVersions([]);
     setSelectedVersion(null);
     setSelectedVersionId(null);
+    setDocumentMetadata(null);
+    setDocumentMetadataDraft({});
   }, [currentDocument?.id]);
 
   useEffect(() => {
@@ -369,6 +378,37 @@ export function WorkbenchClient({
       cancelled = true;
     };
   }, [currentDocument, documentSideTab, selectedVersionId]);
+
+  useEffect(() => {
+    if (documentSideTab !== "metadata" || !currentDocument) {
+      return;
+    }
+
+    let cancelled = false;
+    setDocumentMetadataLoading(true);
+    getDocumentMetadata(currentDocument.id)
+      .then((metadata) => {
+        if (cancelled) {
+          return;
+        }
+        setDocumentMetadata(metadata);
+        setDocumentMetadataDraft(toEditableMetadataValues(metadata));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          handleApiError(error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDocumentMetadataLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDocument, documentSideRefreshKey, documentSideTab]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -1417,6 +1457,26 @@ export function WorkbenchClient({
     }
   }
 
+  async function handleSaveDocumentMetadata() {
+    if (!currentDocument) {
+      return;
+    }
+    setDocumentMetadataSaving(true);
+    setMessage("");
+    try {
+      const updated = await updateDocumentMetadata(currentDocument.id, {
+        values: documentMetadataDraft
+      });
+      setDocumentMetadata(updated);
+      setDocumentMetadataDraft(toEditableMetadataValues(updated));
+      setMessage(t("Metadata saved."));
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setDocumentMetadataSaving(false);
+    }
+  }
+
   function jumpToOutlineItem(item: MarkdownOutlineItem) {
     const headings = Array.from(
       editorPaneRef.current?.querySelectorAll<HTMLElement>("[data-outline-id]") ?? []
@@ -1931,12 +1991,20 @@ export function WorkbenchClient({
                 chunksLoading={documentChunksLoading}
                 currentDocument={currentDocument}
                 currentMarkdown={savedMarkdown}
+                metadata={documentMetadata}
+                metadataDraft={documentMetadataDraft}
+                metadataLoading={documentMetadataLoading}
+                metadataSaving={documentMetadataSaving}
                 onOpenDashboard={() => {
                   if (selectedKnowledgeBaseId) {
                     void selectKnowledgeBase(selectedKnowledgeBaseId);
                   }
                 }}
+                onMetadataDraftChange={(name, value) =>
+                  setDocumentMetadataDraft((current) => ({ ...current, [name]: value }))
+                }
                 onRestoreVersion={(versionId) => void handleRestoreVersion(versionId)}
+                onSaveMetadata={() => void handleSaveDocumentMetadata()}
                 onSelectOutline={jumpToOutlineItem}
                 onSelectTab={setDocumentSideTab}
                 onSelectVersion={setSelectedVersionId}
@@ -2161,9 +2229,15 @@ function DocumentSidePanel({
   chunksLoading,
   currentDocument,
   currentMarkdown,
+  metadata,
+  metadataDraft,
+  metadataLoading,
+  metadataSaving,
+  onMetadataDraftChange,
   onOpenDashboard,
   onOpenDocument,
   onRestoreVersion,
+  onSaveMetadata,
   onSelectOutline,
   onSelectTab,
   onSelectVersion,
@@ -2181,9 +2255,15 @@ function DocumentSidePanel({
   chunksLoading: boolean;
   currentDocument: DocumentDetail | null;
   currentMarkdown: string;
+  metadata: DocumentMetadataResponse | null;
+  metadataDraft: Record<string, string>;
+  metadataLoading: boolean;
+  metadataSaving: boolean;
+  onMetadataDraftChange: (name: string, value: string) => void;
   onOpenDashboard: () => void;
   onOpenDocument: (documentId: string) => void;
   onRestoreVersion: (versionId: string) => void;
+  onSaveMetadata: () => void;
   onSelectOutline: (item: MarkdownOutlineItem) => void;
   onSelectTab: (tab: DocumentSideTab) => void;
   onSelectVersion: (versionId: string) => void;
@@ -2206,8 +2286,8 @@ function DocumentSidePanel({
   return (
     <div className="min-h-0">
       <div className="border-b border-zinc-200 px-3 py-3">
-        <div className="grid grid-cols-3 gap-1 rounded-md bg-zinc-100 p-1">
-          {(["outline", "chunks", "versions"] as const).map((item) => (
+        <div className="grid grid-cols-4 gap-1 rounded-md bg-zinc-100 p-1">
+          {(["outline", "chunks", "metadata", "versions"] as const).map((item) => (
             <button
               className={`rounded px-2 py-1.5 text-xs font-medium ${
                 tab === item
@@ -2289,6 +2369,82 @@ function DocumentSidePanel({
                 {t("Open KB dashboard")}
               </button>
             </div>
+          )}
+        </div>
+      ) : null}
+
+      {tab === "metadata" ? (
+        <div className="space-y-3 px-4 py-4">
+          <div>
+            <p className="text-sm font-semibold">{t("Metadata")}</p>
+            <p className="text-xs text-zinc-500">
+              {t("Dify-native document metadata for filtering.")}
+            </p>
+          </div>
+          {metadataLoading ? (
+            <EmptyPanel title={t("Loading metadata")} action={t("Reading document metadata.")} />
+          ) : metadata ? (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                {metadata.fields.built_in.map((field) => (
+                  <label className="block text-xs" key={field.name}>
+                    <span className="mb-1 flex items-center justify-between gap-2 text-zinc-500">
+                      <span>{field.name}</span>
+                      <span className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
+                        {t("Built-in")}
+                      </span>
+                    </span>
+                    <input
+                      className="h-8 w-full rounded-md border border-zinc-200 bg-zinc-50 px-2 text-xs text-zinc-500"
+                      readOnly
+                      value={String(metadata.values[field.name] ?? "")}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="space-y-2 border-t border-zinc-200 pt-3">
+                {metadata.fields.custom.map((field) => (
+                  <label className="block text-xs" key={field.id ?? field.name}>
+                    <span className="mb-1 flex items-center justify-between gap-2 text-zinc-600">
+                      <span>{field.name}</span>
+                      <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600">
+                        {field.type}
+                      </span>
+                    </span>
+                    <input
+                      className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-emerald-500"
+                      onChange={(event) => onMetadataDraftChange(field.name, event.target.value)}
+                      type={
+                        field.type === "number"
+                          ? "number"
+                          : field.type === "time"
+                            ? "datetime-local"
+                            : "text"
+                      }
+                      value={metadataDraft[field.name] ?? ""}
+                    />
+                  </label>
+                ))}
+                {metadata.fields.custom.length === 0 ? (
+                  <EmptyPanel
+                    title={t("No custom metadata fields")}
+                    action={t("Add fields in the knowledge base Metadata tab.")}
+                  />
+                ) : null}
+              </div>
+              {metadata.fields.custom.length > 0 ? (
+                <button
+                  className="inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+                  disabled={metadataSaving}
+                  onClick={onSaveMetadata}
+                  type="button"
+                >
+                  {metadataSaving ? t("Saving...") : t("Save metadata")}
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <EmptyPanel title={t("No metadata")} action={t("Select a page document first.")} />
           )}
         </div>
       ) : null}
@@ -2382,7 +2538,33 @@ function sideTabLabel(tab: DocumentSideTab): string {
   if (tab === "versions") {
     return "Versions";
   }
+  if (tab === "metadata") {
+    return "Metadata";
+  }
   return "Outline";
+}
+
+function toEditableMetadataValues(metadata: DocumentMetadataResponse): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const field of metadata.fields.custom) {
+    const value = metadata.values[field.name];
+    if (value === null || value === undefined) {
+      values[field.name] = "";
+    } else if (field.type === "time") {
+      values[field.name] = toDateTimeLocalValue(String(value));
+    } else {
+      values[field.name] = String(value);
+    }
+  }
+  return values;
+}
+
+function toDateTimeLocalValue(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toISOString().slice(0, 16);
 }
 
 function summarizeMarkdownDiff(currentMarkdown: string, versionMarkdown: string) {

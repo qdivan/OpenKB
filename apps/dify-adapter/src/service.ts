@@ -1,4 +1,4 @@
-import { createDatabaseClient, type PrismaClient } from "@openkb/db";
+import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import { RetrievalError, RetrievalService, type RetrievalSearchResult } from "@openkb/retrieval";
 
 import { DifyAuthService, type DifyApiKeyContext } from "./auth";
@@ -41,6 +41,25 @@ type DifyKnowledgeMappingRow = {
   dify_knowledge_id: string;
   knowledge_base_id: string;
   status: string;
+};
+
+type DifyMetadataContext = {
+  knowledgeBases: Map<string, { id: string; title: string; slug: string }>;
+  documents: Map<
+    string,
+    {
+      id: string;
+      title: string;
+      slug: string;
+      created_by: string;
+      created_at: Date;
+      updated_at: Date;
+      current_version_id: string | null;
+    }
+  >;
+  creators: Map<string, { display_name: string; email: string }>;
+  currentVersions: Map<string, { id: string; source_type: string }>;
+  metadataValues: Map<string, Record<string, unknown>>;
 };
 
 export class DifyAdapterService {
@@ -105,15 +124,15 @@ export class DifyAdapterService {
       throw error;
     }
 
-    const records = searchResponse.results
-      .filter((result) => normalizedScore(result.score) >= request.scoreThreshold)
-      .filter((result) =>
-        matchesMetadataConditions(result.metadata, [
+    const candidateRecords = await this.toDifyRecords(searchResponse.results);
+    const records = candidateRecords
+      .filter((record) => normalizedScore(record.score) >= request.scoreThreshold)
+      .filter((record) =>
+        matchesMetadataConditions(record.metadata, [
           keyMetadataCondition,
           request.metadataCondition
         ])
-      )
-      .map((result) => this.toDifyRecord(result));
+      );
 
     await this.writeAuditLog(apiKey, mapping, request, records, meta);
 
@@ -148,30 +167,152 @@ export class DifyAdapterService {
     return mapping;
   }
 
-  private toDifyRecord(result: RetrievalSearchResult): DifyRetrievalRecord {
+  private async toDifyRecords(results: RetrievalSearchResult[]): Promise<DifyRetrievalRecord[]> {
+    const context = await this.loadDifyMetadataContext(results);
+    return results.map((result) => this.toDifyRecord(result, context));
+  }
+
+  private async loadDifyMetadataContext(
+    results: RetrievalSearchResult[]
+  ): Promise<DifyMetadataContext> {
+    const knowledgeBaseIds = unique(results.map((result) => result.knowledge_base_id));
+    const documentIds = unique(results.map((result) => result.document_id));
+    const [knowledgeBases, documents] = await Promise.all([
+      knowledgeBaseIds.length
+        ? this.prisma.knowledgeBase.findMany({
+            where: { id: { in: knowledgeBaseIds } },
+            select: { id: true, title: true, slug: true }
+          })
+        : Promise.resolve([]),
+      documentIds.length
+        ? this.prisma.document.findMany({
+            where: { id: { in: documentIds } },
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              created_by: true,
+              created_at: true,
+              updated_at: true,
+              current_version_id: true
+            }
+          })
+        : Promise.resolve([])
+    ]);
+    const creatorIds = unique(documents.map((document) => document.created_by));
+    const currentVersionIds = unique(
+      documents.flatMap((document) =>
+        document.current_version_id ? [document.current_version_id] : []
+      )
+    );
+    const [creators, versions, fields, values] = await Promise.all([
+      creatorIds.length
+        ? this.prisma.user.findMany({
+            where: { id: { in: creatorIds } },
+            select: { id: true, display_name: true, email: true }
+          })
+        : Promise.resolve([]),
+      currentVersionIds.length
+        ? this.prisma.documentVersion.findMany({
+            where: { id: { in: currentVersionIds } },
+            select: { id: true, source_type: true }
+          })
+        : Promise.resolve([]),
+      knowledgeBaseIds.length
+        ? this.prisma.knowledgeBaseMetadataField.findMany({
+            where: { knowledge_base_id: { in: knowledgeBaseIds }, status: "active" },
+            select: { id: true, name: true }
+          })
+        : Promise.resolve([]),
+      documentIds.length
+        ? this.prisma.documentMetadataValue.findMany({
+            where: { document_id: { in: documentIds } },
+            select: { document_id: true, field_id: true, value: true }
+          })
+        : Promise.resolve([])
+    ]);
+    const fieldNames = new Map(fields.map((field) => [field.id, field.name]));
+    const metadataValues = new Map<string, Record<string, unknown>>();
+    for (const value of values) {
+      const fieldName = fieldNames.get(value.field_id);
+      if (!fieldName) {
+        continue;
+      }
+      const current = metadataValues.get(value.document_id) ?? {};
+      current[fieldName] = normalizeJsonValue(value.value);
+      metadataValues.set(value.document_id, current);
+    }
+
+    return {
+      knowledgeBases: new Map(
+        knowledgeBases.map((knowledgeBase) => [knowledgeBase.id, knowledgeBase])
+      ),
+      documents: new Map(documents.map((document) => [document.id, document])),
+      creators: new Map(creators.map((creator) => [creator.id, creator])),
+      currentVersions: new Map(versions.map((version) => [version.id, version])),
+      metadataValues
+    };
+  }
+
+  private toDifyRecord(
+    result: RetrievalSearchResult,
+    context: DifyMetadataContext
+  ): DifyRetrievalRecord {
     const score = normalizedScore(result.score);
     const path = `/${result.path.filter(Boolean).join("/")}`;
     const url = this.config.resultBaseUrl
       ? `${this.config.resultBaseUrl}/app/kb/${result.knowledge_base_id}/docs/${result.document_id}`
       : `/app/kb/${result.knowledge_base_id}/docs/${result.document_id}`;
     const retrievalMetadata = toRecord(result.metadata.openkb_retrieval);
+    const knowledgeBase = context.knowledgeBases.get(result.knowledge_base_id);
+    const document = context.documents.get(result.document_id);
+    const creator = document ? context.creators.get(document.created_by) : null;
+    const version = document?.current_version_id
+      ? context.currentVersions.get(document.current_version_id)
+      : null;
+    const documentMetadata = {
+      document_name: document?.title ?? result.title,
+      uploader: creator?.display_name || creator?.email || null,
+      upload_date: document?.created_at.toISOString() ?? null,
+      last_update_date: document?.updated_at.toISOString() ?? result.updated_at,
+      source: version?.source_type === "import" ? "file_upload" : "online_document",
+      ...(context.metadataValues.get(result.document_id) ?? {})
+    };
+    const scoreSource =
+      typeof retrievalMetadata.rerank_score === "number" && retrievalMetadata.rerank_failed !== true
+        ? "rerank"
+        : "retrieval";
     return {
       content: result.content,
       score,
-      title: result.title,
+      title: document?.title ?? result.title,
       metadata: {
         ...result.metadata,
+        ...documentMetadata,
         document_id: result.document_id,
         chunk_id: result.chunk_id,
+        segment_id: result.chunk_id,
         knowledge_base_id: result.knowledge_base_id,
+        knowledge_base_title: knowledgeBase?.title ?? null,
         workspace_id: result.workspace_id,
+        document_title: document?.title ?? result.title,
+        document_slug: document?.slug ?? null,
+        document_name: document?.title ?? result.title,
+        dataset_name: knowledgeBase?.title ?? null,
         heading_path: result.heading_path,
         context_mode: result.context_mode ?? retrievalMetadata.context_mode ?? null,
         match_chunk_id: result.match_chunk?.chunk_id ?? result.chunk_id,
         parent_chunk_id: result.parent_chunk?.chunk_id ?? null,
         path,
+        path_parts: result.path,
         url,
+        absolute_url: url.startsWith("http://") || url.startsWith("https://") ? url : null,
         updated_at: result.updated_at,
+        retrieval_mode: String(
+          result.context_mode ?? retrievalMetadata.context_mode ?? retrievalMetadata.mode ?? "chunk"
+        ),
+        score,
+        score_source: scoreSource,
         raw_score:
           typeof retrievalMetadata.raw_score === "number"
             ? retrievalMetadata.raw_score
@@ -230,6 +371,13 @@ export function normalizeDifyRetrievalRequest(
   }
 
   const body = value as Record<string, unknown>;
+  if (Object.keys(body).length === 0) {
+    throw new DifyAdapterError(
+      "INVALID_REQUEST",
+      "OpenKB Dify adapter was reached, but the request body is missing knowledge_id, query, and retrieval_setting. In Dify, configure the External Knowledge API endpoint as the base URL; Dify will append /retrieval.",
+      400
+    );
+  }
   const knowledgeId = requireText(body.knowledge_id, "knowledge_id");
   const query = requireText(body.query, "query");
   const retrievalSetting = requireObject(body.retrieval_setting, "retrieval_setting");
@@ -293,4 +441,11 @@ function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function normalizeJsonValue(value: Prisma.JsonValue): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  return value;
 }
