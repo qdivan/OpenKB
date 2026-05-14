@@ -208,6 +208,12 @@ model KnowledgeBaseChunkSetting {
   workspace_id               String   @db.Uuid
   knowledge_base_id          String   @unique @db.Uuid
   mode                       String   @default("parent_child")
+  doc_form                   String   @default("hierarchical_model")
+  indexing_technique         String   @default("high_quality")
+  process_rule_mode          String   @default("hierarchical")
+  process_rule               Json     @default("{}")
+  retrieval_model            Json     @default("{}")
+  summary_index_setting      Json     @default("{}")
   parent_mode                String   @default("paragraph")
   parent_delimiter           String   @default("\n\n")
   child_delimiter            String   @default("\n\n")
@@ -259,6 +265,12 @@ model Document {
   visibility        String?
   current_version_id String? @db.Uuid
   sort_order        Int      @default(0)
+  doc_form          String?
+  process_rule_snapshot Json @default("{}")
+  processing_status String   @default("current")
+  processing_revision Int    @default(1)
+  doc_language      String?
+  need_summary      Boolean  @default(false)
   created_by        String   @db.Uuid
   updated_by        String   @db.Uuid
   created_at        DateTime @default(now()) @db.Timestamptz(6)
@@ -442,6 +454,14 @@ model DocumentChunk {
   content_markdown  String
   token_count       Int?
   metadata          Json     @default("{}")
+  index_role        String   @default("content")
+  source_chunk_id   String?  @db.Uuid
+  status            String   @default("active")
+  override_content_text String?
+  override_content_markdown String?
+  overridden_by     String?  @db.Uuid
+  overridden_at     DateTime? @db.Timestamptz(6)
+  disabled_at       DateTime? @db.Timestamptz(6)
   created_at        DateTime @default(now()) @db.Timestamptz(6)
 
   @@unique([version_id, ordinal])
@@ -451,7 +471,79 @@ model DocumentChunk {
   @@index([document_id])
   @@index([parent_chunk_id])
   @@index([chunk_type])
+  @@index([index_role])
+  @@index([source_chunk_id])
   @@map("document_chunks")
+}
+
+model DocumentQaPair {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  document_id       String   @db.Uuid
+  question          String
+  answer            String
+  source_chunk_id   String?  @db.Uuid
+  source            String   @default("manual")
+  status            String   @default("active")
+  metadata          Json     @default("{}")
+  created_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([document_id])
+  @@index([source_chunk_id])
+  @@index([status])
+  @@map("document_qa_pairs")
+}
+
+model DocumentSummary {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  document_id       String   @db.Uuid
+  summary           String
+  status            String   @default("active")
+  metadata          Json     @default("{}")
+  created_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([document_id])
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([document_id])
+  @@index([status])
+  @@map("document_summaries")
+}
+
+model DocumentSegmentSummary {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  document_id       String   @db.Uuid
+  chunk_id          String   @db.Uuid
+  summary           String
+  status            String   @default("active")
+  metadata          Json     @default("{}")
+  created_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([chunk_id])
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([document_id])
+  @@index([status])
+  @@map("document_segment_summaries")
 }
 
 model ChunkRebuildJob {

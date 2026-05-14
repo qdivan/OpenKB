@@ -206,6 +206,7 @@ export default function EmailAdminClient() {
               <thead className="border-b text-xs text-zinc-500">
                 <tr>
                   <th className="px-2 py-2">{t("Recipient")}</th>
+                  <th className="px-2 py-2">{t("Template")}</th>
                   <th className="px-2 py-2">{t("Subject")}</th>
                   <th className="px-2 py-2">{t("Status")}</th>
                   <th className="px-2 py-2">{t("Attempts")}</th>
@@ -216,8 +217,9 @@ export default function EmailAdminClient() {
                 {outbox.map((item) => (
                   <tr className="border-b border-zinc-100" key={item.id}>
                     <td className="px-2 py-2">{item.to_email}</td>
+                    <td className="px-2 py-2">{t(item.template)}</td>
                     <td className="px-2 py-2">{item.subject}</td>
-                    <td className="px-2 py-2">{item.status}</td>
+                    <td className="px-2 py-2">{t(`email_outbox_${item.status}`)}</td>
                     <td className="px-2 py-2">{item.attempts}</td>
                     <td className="px-2 py-2">
                       <button
@@ -238,7 +240,7 @@ export default function EmailAdminClient() {
                 ))}
                 {outbox.length === 0 ? (
                   <tr>
-                    <td className="px-2 py-8 text-center text-zinc-500" colSpan={5}>
+                    <td className="px-2 py-8 text-center text-zinc-500" colSpan={6}>
                       {t("No email outbox records.")}
                     </td>
                   </tr>

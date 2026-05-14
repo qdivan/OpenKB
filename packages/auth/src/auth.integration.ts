@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { createDatabaseClient, type PrismaClient } from "@openkb/db";
+import type { SmtpTransport } from "@openkb/email";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { AuthError, AuthService } from "./service";
@@ -60,10 +61,14 @@ function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-function service(overrides: NodeJS.ProcessEnv = {}) {
+function service(
+  overrides: NodeJS.ProcessEnv = {},
+  options: { emailTransport?: SmtpTransport } = {}
+) {
   return new AuthService({
     prisma,
-    env: env(overrides)
+    env: env(overrides),
+    ...options
   });
 }
 
@@ -222,10 +227,17 @@ describe("AuthService integration", () => {
     const outbox = await prisma.authEmailOutbox.findFirstOrThrow({
       where: { template: "password_reset" }
     });
+    const token = tokenFromLink(outbox.link_url ?? "");
     await auth.confirmPasswordReset({
-      token: tokenFromLink(outbox.link_url ?? ""),
+      token,
       password: "new-password"
     });
+    await expect(
+      auth.confirmPasswordReset({
+        token,
+        password: "another-password"
+      })
+    ).rejects.toMatchObject({ code: "INVALID_OR_EXPIRED_TOKEN" });
 
     await expect(
       auth.login({ email: "reset@example.com", password: "old-password" })
@@ -238,6 +250,36 @@ describe("AuthService integration", () => {
       me: { user: { email: "reset@example.com" } }
     });
     expect(await prisma.authToken.count({ where: { consumed_at: { not: null } } })).toBe(1);
+  });
+
+  it("invalidates older password links when a new link is issued", async () => {
+    await createDefaultSettings({ email_verification_required: false });
+    const auth = service();
+    await auth.register({ email: "multi-reset@example.com", password: "old-password" });
+
+    await auth.requestPasswordReset("multi-reset@example.com");
+    const first = await prisma.authEmailOutbox.findFirstOrThrow({
+      where: { template: "password_reset" },
+      orderBy: { created_at: "asc" }
+    });
+    await auth.requestPasswordReset("multi-reset@example.com");
+    const second = await prisma.authEmailOutbox.findFirstOrThrow({
+      where: { template: "password_reset" },
+      orderBy: { created_at: "desc" }
+    });
+
+    await expect(
+      auth.confirmPasswordReset({
+        token: tokenFromLink(first.link_url ?? ""),
+        password: "first-new-password"
+      })
+    ).rejects.toMatchObject({ code: "INVALID_OR_EXPIRED_TOKEN" });
+    await expect(
+      auth.confirmPasswordReset({
+        token: tokenFromLink(second.link_url ?? ""),
+        password: "second-new-password"
+      })
+    ).resolves.toEqual({ ok: true });
   });
 
   it("lets admins activate and suspend users while blocking non-admins", async () => {
@@ -278,7 +320,7 @@ describe("AuthService integration", () => {
     expect(await prisma.auditLog.count()).toBe(2);
   });
 
-  it("lets admins create users with password reset links and revoke sessions", async () => {
+  it("lets admins create users with account setup links and revoke sessions", async () => {
     await createDefaultSettings({ email_verification_required: false });
     const auth = service();
     await auth.register({ email: "admin@example.com", password: "password-123" });
@@ -295,7 +337,9 @@ describe("AuthService integration", () => {
       tenantRole: "member"
     });
     expect(created.reset_link).toContain("/password-reset?token=");
-    expect(await prisma.authEmailOutbox.count({ where: { template: "password_reset" } })).toBe(1);
+    expect(created.setup_link).toBe(created.reset_link);
+    expect(await prisma.authEmailOutbox.count({ where: { template: "account_setup" } })).toBe(1);
+    expect(await prisma.authToken.count({ where: { purpose: "account_setup" } })).toBe(1);
 
     await auth.confirmPasswordReset({
       token: tokenFromLink(created.reset_link),
@@ -321,6 +365,45 @@ describe("AuthService integration", () => {
     });
     expect(JSON.stringify(auditLogs.map((log) => log.metadata))).not.toContain("reset_link");
     expect(JSON.stringify(auditLogs.map((log) => log.metadata))).not.toContain("new-password");
+  });
+
+  it("auto-sends admin account setup email when SMTP is configured", async () => {
+    await createDefaultSettings({ email_verification_required: false });
+    const sent: Array<{ to: string; subject: string }> = [];
+    const auth = service(
+      {
+        OPENKB_SMTP_HOST: "smtp.example.com",
+        OPENKB_SMTP_FROM: "OpenKB <noreply@example.com>",
+        OPENKB_SMTP_PORT: "587",
+        OPENKB_SMTP_SECURE: "false"
+      },
+      {
+        emailTransport: {
+          async send(_config, message) {
+            sent.push({ to: message.to, subject: message.subject });
+          }
+        }
+      }
+    );
+    await auth.register({ email: "admin@example.com", password: "password-123" });
+    const adminLogin = await auth.login({ email: "admin@example.com", password: "password-123" });
+
+    const created = await auth.createAdminUser(adminLogin.sessionToken, {
+      email: "smtp-user@example.com",
+      tenant_role: "member"
+    });
+
+    expect(sent).toEqual([
+      {
+        to: "smtp-user@example.com",
+        subject: "Welcome to OpenKB - set your password"
+      }
+    ]);
+    const outbox = await prisma.authEmailOutbox.findFirstOrThrow({
+      where: { user_id: created.user.id }
+    });
+    expect(outbox.status).toBe("sent");
+    expect(outbox.attempts).toBe(1);
   });
 
   it("soft-deletes users while preserving historical creator identity and removing access", async () => {

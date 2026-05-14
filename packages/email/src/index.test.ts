@@ -5,6 +5,7 @@ import {
   formatSmtpMessage,
   getSmtpConfig,
   sendEmail,
+  shiftSmtpResponse,
   type SmtpTransport
 } from "./index";
 
@@ -102,5 +103,30 @@ describe("@openkb/email", () => {
     );
 
     expect(message).toContain("\r\nfirst\r\n..secret\r\n...already");
+  });
+
+  it("consumes SMTP multiline responses already present in one socket buffer", () => {
+    const response = shiftSmtpResponse(
+      "250-smtp.aliyun.com\r\n250-PIPELINING\r\n250-AUTH PLAIN LOGIN\r\n250 AUTH=PLAIN LOGIN\r\n"
+    );
+
+    expect(response).toEqual({
+      line: "250 AUTH=PLAIN LOGIN",
+      buffer: ""
+    });
+  });
+
+  it("keeps partial SMTP multiline responses for later socket data", () => {
+    const partial = shiftSmtpResponse("250-smtp.aliyun.com\r\n250 AUTH");
+    expect(partial).toEqual({
+      line: null,
+      buffer: "250 AUTH"
+    });
+
+    const complete = shiftSmtpResponse(`${partial.buffer} PLAIN LOGIN\r\n`);
+    expect(complete).toEqual({
+      line: "250 AUTH PLAIN LOGIN",
+      buffer: ""
+    });
   });
 });

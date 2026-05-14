@@ -4,6 +4,7 @@ import {
   activeProfileSupportsDenseVector,
   calculateCandidateLimit,
   filterRetrievalAccessPrincipals,
+  modeFromKnowledgeBaseRetrievalSetting,
   normalizeRetrievalAppSearchInput,
   normalizeRetrievalSearchInput,
   resolveEffectiveRetrievalMode,
@@ -53,10 +54,22 @@ describe("@openkb/retrieval input helpers", () => {
       normalizeRetrievalSearchInput({
         user,
         query: "docs",
-        filters: { tags: ["mcp", "mcp", "rag"] }
+        filters: {
+          tags: ["mcp", "mcp", "rag"],
+          metadata_condition: {
+            logical_operator: "or",
+            conditions: [{ name: "source", comparison_operator: "is", value: "file_upload" }]
+          }
+        }
       })
     ).toMatchObject({
-      filters: { tags: ["mcp", "rag"] }
+      filters: {
+        tags: ["mcp", "rag"],
+        metadataCondition: {
+          logicalOperator: "or",
+          conditions: [{ name: "source", operator: "is", value: "file_upload" }]
+        }
+      }
     });
 
     expect(() => normalizeRetrievalSearchInput({ user, query: "" })).toThrow(RetrievalError);
@@ -131,6 +144,36 @@ describe("@openkb/retrieval input helpers", () => {
         rerankConfigured: true
       })
     ).toMatchObject({ requestedMode: "hybrid", effectiveMode: "hybrid" });
+
+    expect(() =>
+      resolveEffectiveRetrievalMode({
+        embeddingConfigured: false,
+        rerankConfigured: false,
+        storedMode: "hybrid",
+        strictEmbeddingRequired: true
+      })
+    ).toThrow("embedding model is configured");
+  });
+
+  it("maps Dify retrieval_model settings to OpenKB retrieval modes", () => {
+    expect(
+      modeFromKnowledgeBaseRetrievalSetting({
+        indexing_technique: "economy",
+        retrieval_model: { search_method: "keyword_search" }
+      })
+    ).toBe("bm25");
+    expect(
+      modeFromKnowledgeBaseRetrievalSetting({
+        indexing_technique: "high_quality",
+        retrieval_model: { search_method: "semantic_search", reranking_enable: true }
+      })
+    ).toBe("dense_rerank");
+    expect(
+      modeFromKnowledgeBaseRetrievalSetting({
+        indexing_technique: "high_quality",
+        retrieval_model: { search_method: "hybrid_search", reranking_enable: true }
+      })
+    ).toBe("hybrid_rerank");
   });
 
   it("requires an active dense profile with matching dim and model", () => {
@@ -289,6 +332,361 @@ describe("@openkb/retrieval input helpers", () => {
     });
   });
 
+  it("hydrates summary hits from PostgreSQL source chunks instead of Milvus metadata", async () => {
+    const prisma = {
+      retrievalSetting: { findFirst: async () => ({ mode: "bm25" }) },
+      milvusIndexProfile: { findFirst: async () => null },
+      knowledgeBaseChunkSetting: { findFirst: async () => null },
+      documentQaPair: { findMany: async () => [] },
+      documentChunk: {
+        findMany: async (args: { where?: { id?: { in?: string[] } }; select?: object }) => {
+          const ids = args.where?.id?.in ?? [];
+          if (ids.includes("summary_1")) {
+            return [
+              {
+                id: "summary_1",
+                tenant_id: "tenant_1",
+                workspace_id: "workspace_1",
+                document_id: "doc_1",
+                knowledge_base_id: "kb_1",
+                version_id: "version_1",
+                index_role: "summary",
+                source_chunk_id: "source_good",
+                parent_chunk_id: null,
+                chunk_type: "general",
+                heading_path: [],
+                content_text: "Summary text",
+                content_markdown: "Summary text",
+                override_content_text: null,
+                override_content_markdown: null,
+                token_count: 2,
+                start_line: null,
+                end_line: null,
+                start_char: null,
+                end_char: null,
+                metadata: {
+                  hit_type: "summary",
+                  original_chunk_id: "source_good"
+                }
+              }
+            ];
+          }
+          if (ids.includes("source_good")) {
+            const isHydrationRead = Boolean(args.select && "content_text" in args.select);
+            return [
+              {
+                id: "source_good",
+                document_id: "doc_1",
+                knowledge_base_id: "kb_1",
+                version_id: "version_1",
+                ...(isHydrationRead
+                  ? {
+                      chunk_type: "general",
+                      heading_path: ["Trusted"],
+                      content_text: "Trusted source body",
+                      content_markdown: "Trusted source body",
+                      override_content_text: null,
+                      override_content_markdown: null,
+                      token_count: 3,
+                      start_line: 1,
+                      end_line: 1,
+                      start_char: 0,
+                      end_char: 19
+                    }
+                  : {})
+              }
+            ];
+          }
+          return [];
+        }
+      },
+      knowledgeBase: { findMany: async () => [{ id: "kb_1", title: "KB" }] },
+      document: {
+        findMany: async () => [
+          {
+            id: "doc_1",
+            parent_id: null,
+            knowledge_base_id: "kb_1",
+            title: "Doc",
+            current_version_id: "version_1",
+            status: "published"
+          }
+        ]
+      },
+      $disconnect: async () => undefined
+    };
+    const service = new RetrievalService({
+      prisma: prisma as never,
+      milvus: {
+        config: { activeAlias: "openkb_chunks_active" },
+        searchChunks: async () => [
+          makeCandidate("summary_1", "doc_1", "Summary text", 0.8, {
+            hit_type: "summary",
+            original_chunk_id: "source_bad",
+            source_chunk_id: "source_bad"
+          })
+        ]
+      } as never,
+      permissions: {
+        requireCanRead: async () => undefined,
+        getAccessPrincipals: async () => ["user:u1"],
+        canRead: async () => true
+      } as never,
+      modelClient: {
+        embeddingConfigured: false,
+        rerankConfigured: false,
+        config: { embedding: { dim: 2048 }, rerank: {} }
+      } as never,
+      env: {}
+    });
+
+    const response = await service.search({
+      user,
+      query: "summary",
+      knowledge_base_ids: ["kb_1"]
+    });
+
+    expect(response.results[0]).toMatchObject({
+      chunk_id: "summary_1",
+      content: "Trusted source body",
+      metadata: {
+        hit_type: "summary",
+        original_chunk_id: "source_good",
+        source_chunk_id: "source_good"
+      }
+    });
+  });
+
+  it("filters QA hits when the PostgreSQL QA source chunk is no longer active", async () => {
+    const prisma = {
+      retrievalSetting: { findFirst: async () => ({ mode: "bm25" }) },
+      milvusIndexProfile: { findFirst: async () => null },
+      knowledgeBaseChunkSetting: { findFirst: async () => null },
+      documentQaPair: {
+        findMany: async () => [
+          {
+            id: "qa_1",
+            tenant_id: "tenant_1",
+            workspace_id: "workspace_1",
+            document_id: "doc_1",
+            knowledge_base_id: "kb_1",
+            question: "Who leads Shu?",
+            answer: "Liu Bei.",
+            source_chunk_id: "disabled_source",
+            source: "manual",
+            status: "active",
+            metadata: {}
+          }
+        ]
+      },
+      documentChunk: {
+        findMany: async (args: { where?: { id?: { in?: string[] } } }) => {
+          const ids = args.where?.id?.in ?? [];
+          if (ids.includes("qa_chunk")) {
+            return [
+              {
+                id: "qa_chunk",
+                tenant_id: "tenant_1",
+                workspace_id: "workspace_1",
+                document_id: "doc_1",
+                knowledge_base_id: "kb_1",
+                version_id: "version_1",
+                index_role: "content",
+                source_chunk_id: null,
+                parent_chunk_id: null,
+                chunk_type: "general",
+                heading_path: [],
+                content_text: "Who leads Shu?",
+                content_markdown: "Who leads Shu?",
+                override_content_text: null,
+                override_content_markdown: null,
+                token_count: 3,
+                start_line: null,
+                end_line: null,
+                start_char: null,
+                end_char: null,
+                metadata: {
+                  hit_type: "qa",
+                  qa_pair_id: "qa_1"
+                }
+              }
+            ];
+          }
+          return [];
+        }
+      },
+      knowledgeBase: { findMany: async () => [{ id: "kb_1", title: "KB" }] },
+      document: {
+        findMany: async () => [
+          {
+            id: "doc_1",
+            parent_id: null,
+            knowledge_base_id: "kb_1",
+            title: "Doc",
+            current_version_id: "version_1",
+            status: "published"
+          }
+        ]
+      },
+      $disconnect: async () => undefined
+    };
+    const service = new RetrievalService({
+      prisma: prisma as never,
+      milvus: {
+        config: { activeAlias: "openkb_chunks_active" },
+        searchChunks: async () => [
+          makeCandidate("qa_chunk", "doc_1", "Who leads Shu?", 0.8, {
+            hit_type: "qa",
+            qa_pair_id: "qa_1",
+            qa_answer: "Stale Milvus answer",
+            source_chunk_id: "disabled_source"
+          })
+        ]
+      } as never,
+      permissions: {
+        requireCanRead: async () => undefined,
+        getAccessPrincipals: async () => ["user:u1"],
+        canRead: async () => true
+      } as never,
+      modelClient: {
+        embeddingConfigured: false,
+        rerankConfigured: false,
+        config: { embedding: { dim: 2048 }, rerank: {} }
+      } as never,
+      env: {}
+    });
+
+    await expect(
+      service.search({
+        user,
+        query: "qa",
+        knowledge_base_ids: ["kb_1"]
+      })
+    ).resolves.toMatchObject({ results: [] });
+  });
+
+  it("injects a single KB retrieval_model top_k, score threshold and hybrid weights", async () => {
+    const searchCalls: unknown[] = [];
+    const prisma = {
+      retrievalSetting: { findFirst: async () => ({ mode: "bm25" }) },
+      milvusIndexProfile: {
+        findFirst: async () => ({
+          vector_dim: 2,
+          embedding_function_name: "openkb_direct_embedding",
+          function_metadata: { dense_vector: true, embedding_model: "embedding-model" }
+        })
+      },
+      knowledgeBaseChunkSetting: {
+        findMany: async () => [
+          {
+            indexing_technique: "high_quality",
+            retrieval_model: {
+              search_method: "hybrid_search",
+              top_k: 3,
+              score_threshold_enabled: true,
+              score_threshold: 0.8,
+              weights: {
+                keyword_setting: { keyword_weight: 0.3 },
+                vector_setting: { vector_weight: 0.7 }
+              }
+            }
+          }
+        ],
+        findFirst: async () => null
+      },
+      documentChunk: {
+        findMany: async () => [
+          {
+            id: "chunk_high",
+            tenant_id: "tenant_1",
+            document_id: "doc_high",
+            knowledge_base_id: "kb_1",
+            version_id: "version_1"
+          },
+          {
+            id: "chunk_low",
+            tenant_id: "tenant_1",
+            document_id: "doc_low",
+            knowledge_base_id: "kb_1",
+            version_id: "version_1"
+          }
+        ]
+      },
+      knowledgeBase: {
+        findMany: async () => [{ id: "kb_1", title: "KB" }]
+      },
+      document: {
+        findMany: async () => [
+          {
+            id: "doc_high",
+            parent_id: null,
+            knowledge_base_id: "kb_1",
+            title: "High",
+            current_version_id: "version_1",
+            status: "published"
+          },
+          {
+            id: "doc_low",
+            parent_id: null,
+            knowledge_base_id: "kb_1",
+            title: "Low",
+            current_version_id: "version_1",
+            status: "published"
+          }
+        ]
+      },
+      $disconnect: async () => undefined
+    };
+    const service = new RetrievalService({
+      prisma: prisma as never,
+      milvus: {
+        config: { activeAlias: "openkb_chunks_active" },
+        searchChunks: async (input: unknown) => {
+          searchCalls.push(input);
+          return [
+            makeCandidate("chunk_high", "doc_high", "high score", 0.9),
+            makeCandidate("chunk_low", "doc_low", "low score", 0.7)
+          ];
+        }
+      } as never,
+      permissions: {
+        requireCanRead: async () => undefined,
+        getAccessPrincipals: async () => ["user:u1"],
+        canRead: async () => true
+      } as never,
+      modelClient: {
+        embeddingConfigured: true,
+        rerankConfigured: false,
+        config: {
+          embedding: { dim: 2, model: "embedding-model" },
+          rerank: {}
+        },
+        embedText: async () => [0.1, 0.2]
+      } as never,
+      env: {}
+    });
+
+    const response = await service.search({
+      user,
+      query: "hybrid",
+      knowledge_base_ids: ["kb_1"]
+    });
+
+    expect(searchCalls[0]).toMatchObject({
+      mode: "hybrid",
+      hybridWeights: { keywordWeight: 0.3, vectorWeight: 0.7 },
+      limit: 20
+    });
+    expect(response.top_k).toBe(3);
+    expect(response.metadata).toMatchObject({
+      retrieval_mode: "hybrid",
+      score_threshold_applied: 0.8,
+      hybrid_weights: { keywordWeight: 0.3, vectorWeight: 0.7 }
+    });
+    expect(response.results).toHaveLength(1);
+    expect(response.results[0]?.chunk_id).toBe("chunk_high");
+  });
+
   it("expands authorized child matches to parent context after filtering", async () => {
     const prisma = {
       retrievalSetting: { findFirst: async () => ({ mode: "bm25" }) },
@@ -314,9 +712,25 @@ describe("@openkb/retrieval input helpers", () => {
                 {
                   id: "child_1",
                   tenant_id: "tenant_1",
+                  workspace_id: "workspace_1",
                   document_id: "doc_1",
                   knowledge_base_id: "kb_1",
-                  version_id: "version_1"
+                  version_id: "version_1",
+                  index_role: "content",
+                  source_chunk_id: null,
+                  parent_chunk_id: "parent_1",
+                  chunk_type: "child",
+                  heading_path: ["Guide"],
+                  content_text: "child match",
+                  content_markdown: "child match",
+                  override_content_text: null,
+                  override_content_markdown: null,
+                  token_count: 2,
+                  start_line: null,
+                  end_line: null,
+                  start_char: null,
+                  end_char: null,
+                  metadata: { parent_chunk_id: "parent_1", chunk_type: "child" }
                 }
               ]
       },

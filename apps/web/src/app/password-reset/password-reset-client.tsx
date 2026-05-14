@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
@@ -9,6 +9,7 @@ import { confirmPasswordReset } from "@/lib/openkb-api";
 
 export default function PasswordResetClient() {
   const { t } = useI18n();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const token = useMemo(() => searchParams.get("token") ?? "", [searchParams]);
   const [password, setPassword] = useState("");
@@ -34,6 +35,7 @@ export default function PasswordResetClient() {
       setMessage(t("Password updated. You can log in now."));
       setPassword("");
       setConfirmPassword("");
+      router.replace("/login?reset=success");
     } catch (error) {
       setMessage(
         error instanceof TypeError

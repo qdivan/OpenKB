@@ -50,7 +50,6 @@ export function SearchPageClient() {
         const result = await searchKnowledge({
           query: trimmed,
           knowledge_base_ids: scopedIds,
-          top_k: 10,
           filters: {}
         });
         setResponse(result);

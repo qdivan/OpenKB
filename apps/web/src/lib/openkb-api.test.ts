@@ -19,6 +19,7 @@ import {
   isUnauthorized,
   listAdminImportTools,
   listAdminUsers,
+  listKnowledgeBaseChunks,
   listDocumentVersions,
   listShareLinks,
   probeAdminImportTool,
@@ -28,6 +29,7 @@ import {
   searchKnowledge,
   setAdminUserTenantRole,
   updateDocumentMetadata,
+  updateDocumentSegment,
   updateAdminImportFormatRoute,
   updateAdminImportTool,
   updateAdminModelSetting,
@@ -87,6 +89,36 @@ describe("OpenKB API client", () => {
     });
   });
 
+  it("builds segment list and management requests", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listKnowledgeBaseChunks("kb_1", {
+      document_id: "doc_1",
+      status: "all",
+      type: "child",
+      limit: 50
+    });
+    await updateDocumentSegment("doc_1", "chunk_1", {
+      reset_override: true,
+      status: "deleted"
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:4000/api/knowledge-bases/kb_1/chunks?document_id=doc_1&type=child&limit=50&status=all",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:4000/api/documents/doc_1/chunks/chunk_1",
+      expect.objectContaining({
+        body: JSON.stringify({ reset_override: true, status: "deleted" }),
+        method: "PUT"
+      })
+    );
+  });
+
   it("normalizes network failures into API request errors", async () => {
     vi.stubGlobal(
       "fetch",
@@ -124,6 +156,46 @@ describe("OpenKB API client", () => {
         credentials: "include",
         method: "POST",
         body: JSON.stringify({ query: "MCP", knowledge_base_ids: ["kb_1"] })
+      })
+    );
+  });
+
+  it("passes retrieval model overrides and score threshold to search", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ query: "MCP", top_k: 5, results: [] }))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await searchKnowledge({
+      query: "MCP",
+      knowledge_base_ids: ["kb_1"],
+      score_threshold: 0.2,
+      retrieval_model: {
+        search_method: "hybrid_search",
+        reranking_enable: true,
+        weights: {
+          keyword_setting: { keyword_weight: 0.4 },
+          vector_setting: { vector_weight: 0.6 }
+        }
+      }
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/search",
+      expect.objectContaining({
+        body: JSON.stringify({
+          query: "MCP",
+          knowledge_base_ids: ["kb_1"],
+          score_threshold: 0.2,
+          retrieval_model: {
+            search_method: "hybrid_search",
+            reranking_enable: true,
+            weights: {
+              keyword_setting: { keyword_weight: 0.4 },
+              vector_setting: { vector_weight: 0.6 }
+            }
+          }
+        })
       })
     );
   });

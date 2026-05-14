@@ -25,6 +25,8 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Create accounts, change tenant roles, revoke sessions, and review account audit logs.":
     "创建账号、调整租户角色、吊销会话并查看账号审计日志。",
   "Create user": "创建用户",
+  "User created. A welcome setup email was queued or sent.":
+    "用户已创建，欢迎设置密码邮件已入队或发送。",
   "Creating...": "创建中...",
   Deleted: "已删除",
   Suspended: "已禁用",
@@ -52,6 +54,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   Password: "密码",
   "Password reset failed.": "密码重置失败。",
   "Password reset token is missing.": "缺少密码重置 token。",
+  "Password setup / reset": "密码设置 / 重置",
   "Passwords do not match.": "两次输入的密码不一致。",
   "Permission Boundary": "权限边界",
   "Phase 11 Deployment": "Phase 11 部署",
@@ -69,6 +72,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Search this knowledge base": "搜索当前知识库",
   "Set password": "设置密码",
   "Signing in...": "登录中...",
+  "Password updated. Please log in.": "密码已更新，请登录。",
   "Saving...": "保存中...",
   "System admins": "系统管理员",
   "User-bound Streamable HTTP server": "用户绑定的 Streamable HTTP 服务",
@@ -86,6 +90,11 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Add headings to this page.": "给页面添加标题后会显示大纲。",
   "Admin roles manage configuration and accounts; private content still requires explicit content permission.":
     "管理员角色负责配置和账号管理；私有内容仍然需要明确的内容权限。",
+  "Admin visible": "管理可见",
+  "Admin visible knowledge base requires audited takeover before reading.":
+    "该知识库仅对管理员元数据可见，读取内容前需要审计接管。",
+  "Admin visible, content locked": "管理员可见，内容未授权",
+  "Audited content access takeover": "审计接管内容权限",
   Alignment: "对齐",
   "Alignment requires a serializable block attribute.": "对齐需要可序列化的块属性。",
   Alias: "别名",
@@ -106,6 +115,87 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Chunk map": "分块地图",
   "Chunk rebuild": "分块重建",
   "Chunk settings": "分块设置",
+  "QA pairs": "QA 对",
+  "Questions are indexed; answers are returned to search, MCP, and Dify.":
+    "索引问题；搜索、MCP 和 Dify 返回答案。",
+  "QA changes require reprocess and then Milvus index rebuild before retrieval updates.":
+    "QA 变更需要先重新处理分块，再重建 Milvus 索引后才会影响检索。",
+  Question: "问题",
+  Answer: "答案",
+  "Add QA pair": "添加 QA",
+  "CSV import and generation": "CSV 导入与生成",
+  "Import CSV": "导入 CSV",
+  "Generate mock QA": "生成 mock QA",
+  "Generate LLM QA": "生成 LLM QA",
+  "Loading QA": "正在加载 QA",
+  "Reading QA pairs.": "正在读取 QA 对。",
+  "No QA pairs": "暂无 QA",
+  "Add QA manually or import CSV.": "可以手动添加 QA 或导入 CSV。",
+  "Source chunk": "来源 segment",
+  "QA updated. Reprocess chunks, then rebuild Milvus index before retrieval updates.":
+    "QA 已更新。请重新处理分块，并在需要检索生效时重建 Milvus 索引。",
+  "Imported {created} QA pairs with {errors} errors.":
+    "已导入 {created} 个 QA，包含 {errors} 个错误。",
+  "Imported {count} QA pairs.": "已导入 {count} 个 QA。",
+  "Generated {count} QA pairs with warnings.": "已生成 {count} 个 QA，并包含警告。",
+  "Generated {count} QA pairs.": "已生成 {count} 个 QA。",
+  Summaries: "摘要",
+  Summary: "摘要",
+  "Summaries are derived retrieval indexes and never rewrite Markdown.":
+    "摘要是派生检索索引，不会反写 Markdown 正文。",
+  "Summary changes require a Milvus index rebuild before search, MCP, or Dify use them.":
+    "摘要变更需要重建 Milvus 索引后，搜索、MCP 或 Dify 才会使用。",
+  "Document summary": "文档摘要",
+  "Save document summary": "保存文档摘要",
+  "Mock document summary": "Mock 文档摘要",
+  "LLM document summary": "LLM 文档摘要",
+  "Mock all segment summaries": "Mock 全部 segment 摘要",
+  "Loading summaries": "正在加载摘要",
+  "Reading summaries.": "正在读取摘要。",
+  "No document summary": "暂无文档摘要",
+  "Create one manually or generate it explicitly.": "可以手动创建，或显式触发生成。",
+  "Segment summaries": "Segment 摘要",
+  "No summaries": "暂无摘要",
+  "Summary updated. Rebuild Milvus index before retrieval updates.":
+    "摘要已更新。请重建 Milvus 索引后让检索生效。",
+  "Dify doc form": "Dify 文档形态",
+  "General document": "普通文档",
+  "Parent-child document": "父子文档",
+  "QA document": "QA 文档",
+  "Indexing technique": "索引技术",
+  "Economy keyword/BM25": "Economy 关键词/BM25",
+  "High quality Embedding/Hybrid": "High quality Embedding/Hybrid",
+  "Search method": "检索方式",
+  "Semantic search": "语义检索",
+  "Full text search": "全文检索",
+  "Hybrid search": "混合检索",
+  "Keyword search": "关键词检索",
+  "Default top K": "默认 top K",
+  "Summary index": "摘要索引",
+  "Enable manual summary generation": "启用手动摘要生成",
+  "Disable segment": "禁用 segment",
+  "Enable segment": "启用 segment",
+  "Edit retrieval content": "编辑检索内容",
+  "Effective retrieval content": "生效检索内容",
+  "Source content": "原始内容",
+  "Reset override": "重置覆盖",
+  "Restore segment": "恢复 segment",
+  "Show deleted segments": "显示已删除 segment",
+  "Soft delete segment": "软删除 segment",
+  "Disabled segments stay in PostgreSQL but are excluded from retrieval after the next Milvus rebuild.":
+    "禁用的 segment 会保留在 PostgreSQL 中，但在下次 Milvus 重建后会从检索中排除。",
+  "Reset this segment override and return retrieval content to the source chunk?":
+    "重置这个 segment 的覆盖内容，并让检索内容回到原始分块吗？",
+  "Soft-deleted segments are hidden by default and excluded from retrieval after the next Milvus rebuild.":
+    "软删除的 segment 默认隐藏，并会在下次 Milvus 重建后从检索中排除。",
+  "Segment changes are stored in PostgreSQL. Rebuild the Milvus index before search, MCP, or Dify use them.":
+    "Segment 变更已写入 PostgreSQL。需要重建 Milvus 索引后，搜索、MCP、Dify 才会使用这些变更。",
+  "PostgreSQL segment updated. Rebuild the Milvus index before Web Search, MCP, or Dify use this change.":
+    "PostgreSQL segment 已更新。需要重建 Milvus 索引后，Web Search、MCP、Dify 才会使用这次变更。",
+  "Open the document Chunks panel to manage segment status or overrides.":
+    "打开文档右侧“分块”面板管理 segment 状态或覆盖内容。",
+  disabled: "禁用",
+  override: "已覆盖",
   Chunks: "分块",
   "Clear basic formatting": "清除基础格式",
   "Clear basic inline Markdown formatting in this document?":
@@ -118,6 +208,18 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
     "配置检索模式、检测模型端点并排队索引重建。",
   Confirm: "确认",
   "Copy link": "复制链接",
+  account_setup: "欢迎设置密码邮件",
+  password_reset: "密码重置邮件",
+  email_verification: "邮箱验证邮件",
+  email_outbox_pending: "待发送",
+  email_outbox_sent: "已发送",
+  email_outbox_failed: "失败",
+  Template: "模板",
+  "Take over access": "接管访问权限",
+  "This will add you as a viewer collaborator and write an audit log before private content is readable.":
+    "这会先写入审计日志，并将你加入为 viewer 协作者，然后才能读取私有内容。",
+  "You can manage this knowledge base metadata, but private documents require an audited takeover before reading.":
+    "你可以管理这个知识库的元数据，但读取私有文档前需要先进行审计接管。",
   Create: "创建",
   "Create document": "创建文档",
   "Create folder": "创建目录",
@@ -479,7 +581,10 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   中文: "中文",
   active: "活跃",
   all: "全部",
+  csv: "CSV",
   deleted: "已删除",
+  llm: "LLM",
+  manual: "手动",
   member: "成员",
   pending_activation: "待激活",
   pending_email_verification: "待邮箱验证",
@@ -676,10 +781,98 @@ Object.assign(ZH_CN_TRANSLATIONS, {
     "软删除 {email}？历史创建人名称会保留，但该账号的工作区成员身份、协作者权限、租户角色和会话会被移除。",
   "Revoke active sessions for {email}? This only signs the user out and does not change account status or permissions.":
     "吊销 {email} 的当前会话？这只会让用户重新登录，不会改变账号状态或权限。",
-  "Document published. PostgreSQL chunks are ready; rebuild the Milvus index when retrieval needs to reflect this change.":
-    "文档已发布，PostgreSQL 分块已确认就绪；如需检索立即反映此次变化，请重建 Milvus 索引。",
+  "Document published. Reprocess chunks before rebuilding the Milvus index.":
+    "文档已发布。请先重处理分块，再按需重建 Milvus 索引。",
+  "Save the document before reprocessing chunks.": "重处理分块前请先保存文档。",
+  "Document chunks reprocessed. Rebuild Milvus index when retrieval should update.":
+    "文档分块已重处理。如需检索更新，请重建 Milvus 索引。",
+  "Version restored. Reprocess chunks before rebuilding the search index.":
+    "版本已恢复。请先重处理分块，再按需重建搜索索引。",
+  "Needs reprocess": "需要重处理",
+  needs_reprocess: "需要重处理",
+  processing: "处理中",
+  failed: "失败",
+  current: "当前",
+  "This document changed after its chunks were generated.":
+    "当前文档内容或处理规则已变化，现有 PostgreSQL 分块可能不是最新版本。",
+  "Reprocess chunks": "重处理分块",
+  "Reprocess chunks before this document can be searched.":
+    "请先重处理分块，此文档才能按最新内容参与检索。",
+  Segments: "Segments",
+  "Segment map": "Segment 地图",
+  "Document segments": "文档 Segments",
+  "Child segments": "子 Segments",
+  "segments stale": "Segments 已过期",
+  "{count} segments": "{count} 个 Segments",
+  "No segments for this document": "此文档暂无 Segments",
+  "Select a document to inspect segments": "请选择文档查看 Segments",
+  "Open the document Segments panel to manage segment status or overrides.":
+    "打开文档右侧 Segments 面板管理 segment 状态或覆盖内容。",
+  "Loading segments": "正在加载 Segments",
+  "Reading PostgreSQL segments.": "正在读取 PostgreSQL Segments。",
+  "This document changed after its segments were generated.":
+    "当前文档内容或处理规则已变化，现有 PostgreSQL Segments 可能不是最新版本。",
+  "Reprocess document segments": "重处理文档 Segments",
+  "Reprocess segments before this document can be searched.":
+    "请先重处理 Segments，此文档才能按最新内容参与检索。",
+  "Document published. Reprocess segments before rebuilding the Milvus index.":
+    "文档已发布。请先重处理 Segments，再按需重建 Milvus 索引。",
+  "Version restored. Reprocess segments before rebuilding the search index.":
+    "版本已恢复。请先重处理 Segments，再按需重建搜索索引。",
+  "Save the document before reprocessing segments.": "重处理 Segments 前请先保存文档。",
+  "Document segments reprocessed. Rebuild Milvus index when retrieval should update.":
+    "文档 Segments 已重处理。如需检索更新，请重建 Milvus 索引。",
+  "QA updated. Reprocess segments, then rebuild Milvus index before retrieval updates.":
+    "QA 已更新。请重处理 Segments，并在需要检索生效时重建 Milvus 索引。",
+  "summary hit": "摘要命中",
+  Processing: "处理",
+  "Processing mode": "处理模式",
+  "Chunk rules": "分块规则",
+  "Retrieval policy": "检索策略",
+  Reprocess: "重处理",
+  "These Dify-like settings decide how documents are processed into derived segments. They do not configure model secrets.":
+    "这些 Dify-like 设置决定文档如何被处理成派生 Segments；它们不配置模型密钥。",
+  "Process rule mode": "处理规则模式",
+  "Automatic segmentation": "自动分段",
+  "Custom segmentation": "自定义分段",
+  "Hierarchical segmentation": "父子分段",
+  "Parent segmentation creates retrieval context. Subchunk segmentation creates matchable child segments.":
+    "父级分段生成检索上下文；子块分段生成可命中的 child segments。",
+  "Process rule preview": "处理规则预览",
+  "This is the knowledge base default retrieval policy. Requests may override top K and filters, but model endpoints stay system-admin only.":
+    "这是知识库默认检索策略。请求可以覆盖 top K 和过滤条件，但模型 endpoint 仍只能由系统管理员配置。",
+  "Score threshold": "分数阈值",
+  "Enable score threshold": "启用分数阈值",
+  "Apply threshold after permission final check": "权限终检后应用阈值",
+  "Keyword weight": "关键词权重",
+  "Vector weight": "向量权重",
+  Rerank: "Rerank",
+  "Enable rerank after candidate retrieval": "候选召回后启用 Rerank",
+  "Summary index settings decide whether generated summaries can participate in retrieval. They never trigger LLM generation automatically.":
+    "摘要索引设置只决定已生成摘要是否参与检索，不会自动触发 LLM 生成。",
+  "Allow manually generated summaries to be indexed": "允许显式生成的摘要参与索引",
+  "Summary prompt": "摘要提示词",
+  "Optional system prompt for explicit summary generation": "显式生成摘要时可选的系统提示词",
+  "Reprocess documents": "重处理文档",
+  "Reprocess rebuilds PostgreSQL segments from Markdown. Search, MCP, and Dify still need a Milvus index rebuild before they use the new segments.":
+    "重处理会从 Markdown 重建 PostgreSQL Segments；搜索、MCP 和 Dify 仍需要 Milvus 索引重建后才会使用新 Segments。",
+  "{count} documents need reprocess": "{count} 篇文档需要重处理",
+  "{count} page documents": "{count} 篇页面文档",
+  "No page documents": "暂无页面文档",
+  "Queue KB chunk rebuild": "排队 KB 分块重建",
+  "Processing snapshot": "处理快照",
+  "Dify-like document processing is snapshotted per document version and reprocessed explicitly.":
+    "Dify-like 文档处理会按文档版本保存快照，并由用户显式重处理。",
+  "Processing status": "处理状态",
+  "Publishing, reprocessing, and Milvus index rebuild are separate steps. Reprocess updates PostgreSQL segments; index rebuild updates search, MCP, and Dify.":
+    "发布、重处理和 Milvus 索引重建是三个独立步骤。重处理更新 PostgreSQL Segments；索引重建更新搜索、MCP 和 Dify。",
+  "Document form": "文档形态",
+  "Processing revision": "处理版本",
+  "Current version id": "当前版本 ID",
+  "Current version hash": "当前版本 Hash",
+  "Process rule snapshot": "处理规则快照",
   "Publish indexing help":
-    "发布会让当前文档版本进入可检索候选，并确保 PostgreSQL 分块存在；它不会在请求中同步写入 Milvus embedding。Milvus 索引通过后台 blue-green 重建任务刷新。",
+    "发布只决定当前文档版本是否可进入检索候选；它不会同步重建 PostgreSQL 分块，也不会写入 Milvus embedding。内容或规则变化后请显式重处理分块，再按需执行 Milvus blue-green 索引重建。",
   "Inspect Milvus health, active aliases, embedding profiles, and blue-green rebuild jobs.":
     "查看 Milvus 健康状态、当前别名、Embedding profile 和 blue-green 重建任务。",
   "When to rebuild the Milvus index": "什么时候需要重建 Milvus 索引",

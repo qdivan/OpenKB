@@ -73,6 +73,10 @@ first_user_becomes_admin
 
 所有操作写入 audit_logs。
 
+管理员创建账号时不生成临时明文密码，也不使用普通“重置密码”文案。系统创建 `account_setup` 一次性 token，并写入“欢迎设置密码”邮件。若生产 SMTP 已配置，系统会立即尝试投递；未配置或投递失败时，记录保留在 `auth_email_outbox`，管理员可以在邮件队列中重试。
+
+`account_setup` 和 `password_reset` 链接都只能使用一次。同一用户再次生成设置/重置链接时，旧的未使用设置/重置链接必须失效。设置或重置成功后，用户应回到登录页；当前链接再次提交必须返回 `INVALID_OR_EXPIRED_TOKEN`。
+
 ## 6. 邀请注册
 
 用户通过邀请链接注册时：

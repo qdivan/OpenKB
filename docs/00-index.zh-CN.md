@@ -1,8 +1,6 @@
 # 00 — OpenKB 文档索引
 
-> 新增：`docs/26-dify-external-knowledge-setup.zh-CN.md` 记录 OpenKB 作为 Dify External Knowledge 的配置、metadata 映射和本地 Docker/WSL 验证指南。
-
-Codex 开始任何代码工作前，必须按下面顺序阅读。
+本文档把 OpenKB 文档分为四类：当前规范、路线图、对齐审计和历史快照。Codex 开始任何代码工作前，应优先阅读“最高优先级”和“当前规范”；历史快照只用于追溯，不应覆盖当前规范。
 
 ## 最高优先级
 
@@ -37,17 +35,22 @@ Codex 开始任何代码工作前，必须按下面顺序阅读。
 - `docs/13-deployment.zh-CN.md`：Docker Compose 和 K8s。
 - `docs/14-ui-routes.zh-CN.md`：UI 路由和页面。
 - `docs/15-roadmap-and-codex-tasks.zh-CN.md`：开发路线。
-- `docs/23-docs-code-gap-analysis.zh-CN.md`：本机开发移交档案和当前状态。
 - `docs/24-public-test-platform-deployment.zh-CN.md`：公网测试平台安全部署文档。
 - `docs/25-local-quickstart.zh-CN.md`：本地 Docker Compose 快速部署和源码开发端口。
 - `docs/18-decision-overrides-v0.3.zh-CN.md`：v0.3 最高优先级决策覆盖清单。
 - `docs/21-v0.3.2-clarifications.zh-CN.md`：Codex 首轮发现点的澄清和修正。
 - `docs/22-v0.3.3-clarifications.zh-CN.md`：Codex 第二轮发现点的澄清和修正。
 
+## Dify 与对齐审计
+
+- `docs/26-dify-external-knowledge-setup.zh-CN.md`：OpenKB 作为 Dify External Knowledge 的配置、metadata 映射和本地 Docker/WSL 验证指南。
+- `docs/27-dify-knowledge-alignment.zh-CN.md`：Dify 1.14.1 知识库处理、分块、检索策略、QA、摘要和 segment 管理的 OpenKB 对齐计划。
+- `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`：本地 Dify 1.14.1 升级记录、真实运行验证、差异矩阵和 Phase 22 后续拆分计划。
+
 ## 辅助文档
 
 - `docs/17-glossary.zh-CN.md`：术语表。
-- `docs/23-docs-code-gap-analysis.zh-CN.md`：本机开发移交档案。
+- `docs/23-docs-code-gap-analysis.zh-CN.md`：历史本机开发移交快照。该文档可能包含过期 phase/status 表述，当前状态以 README、`docs/15`、`docs/27`、`docs/28` 为准。
 - `docs/24-public-test-platform-deployment.zh-CN.md`：公网测试平台部署清单。
 - `docs/25-local-quickstart.zh-CN.md`：本地快速启动、源码开发端口和冒烟测试。
 - `docs/99-references.md`：参考资料。

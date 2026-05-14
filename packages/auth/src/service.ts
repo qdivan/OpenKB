@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import bcrypt from "bcryptjs";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
+import { getSmtpConfig, sendEmail, type SmtpTransport } from "@openkb/email";
 
 export const AUTH_COOKIE_NAME = "openkb_session";
 
@@ -132,6 +133,7 @@ export type AuthServiceOptions = {
   prisma?: PrismaClient;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
+  emailTransport?: SmtpTransport;
 };
 
 type AuthSettingsRecord = {
@@ -146,17 +148,19 @@ type AuthSettingsRecord = {
   first_user_becomes_admin: boolean;
 };
 
-type TokenPurpose = "email_verification" | "password_reset";
+type TokenPurpose = "email_verification" | "password_reset" | "account_setup";
 
 export class AuthService {
   private readonly prisma: PrismaClient;
   private readonly env: NodeJS.ProcessEnv;
   private readonly now: () => Date;
+  private readonly emailTransport?: SmtpTransport;
 
   constructor(options: AuthServiceOptions = {}) {
     this.prisma = options.prisma ?? createDatabaseClient();
     this.env = options.env ?? process.env;
     this.now = options.now ?? (() => new Date());
+    this.emailTransport = options.emailTransport;
   }
 
   async disconnect(): Promise<void> {
@@ -230,23 +234,31 @@ export class AuthService {
       });
 
       let verificationLink: string | null = null;
+      let verificationOutboxId: string | null = null;
       if (settings.email_verification_required) {
-        verificationLink = await this.createAuthTokenAndOutbox(tx, {
+        const outbox = await this.createAuthTokenAndOutbox(tx, {
           tenantId: tenant.id,
           userId: user.id,
           email: user.email,
           purpose: "email_verification",
           ttlHours: this.emailVerificationTtlHours()
         });
+        verificationLink = outbox.linkUrl;
+        verificationOutboxId = outbox.outboxId;
       } else {
         await this.promoteFirstAdminIfNeeded(tx, tenant.id, user.id, settings);
       }
 
       return {
         user,
-        verificationLink
+        verificationLink,
+        verificationOutboxId
       };
     });
+
+    if (result.verificationOutboxId) {
+      await this.deliverOutboxIfSmtpConfigured(result.verificationOutboxId);
+    }
 
     return {
       user: toPublicUser(result.user),
@@ -397,15 +409,17 @@ export class AuthService {
 
     const tenantId = await this.resolveUserTenantId(user.id);
 
-    await this.prisma.$transaction(async (tx) => {
-      await this.createAuthTokenAndOutbox(tx, {
+    const outbox = await this.prisma.$transaction(async (tx) =>
+      this.createAuthTokenAndOutbox(tx, {
         tenantId,
         userId: user.id,
         email: user.email,
         purpose: "password_reset",
         ttlHours: this.passwordResetTtlHours()
-      });
-    });
+      })
+    );
+
+    await this.deliverOutboxIfSmtpConfigured(outbox.outboxId);
 
     return { ok: true };
   }
@@ -417,12 +431,14 @@ export class AuthService {
 
     await this.prisma.$transaction(async (tx) => {
       const authToken = await tx.authToken.findUnique({ where: { token_hash: tokenHash } });
-      if (
-        !authToken ||
-        authToken.purpose !== "password_reset" ||
-        authToken.consumed_at ||
-        authToken.expires_at <= now
-      ) {
+      if (!authToken || !isPasswordTokenPurpose(authToken.purpose) || authToken.expires_at <= now) {
+        throw new AuthError("INVALID_OR_EXPIRED_TOKEN", "Password reset token is invalid.", 400);
+      }
+      const consumed = await tx.authToken.updateMany({
+        where: { id: authToken.id, consumed_at: null },
+        data: { consumed_at: now }
+      });
+      if (consumed.count !== 1) {
         throw new AuthError("INVALID_OR_EXPIRED_TOKEN", "Password reset token is invalid.", 400);
       }
 
@@ -432,10 +448,6 @@ export class AuthService {
           password_hash: await bcrypt.hash(password, 12),
           updated_at: now
         }
-      });
-      await tx.authToken.update({
-        where: { id: authToken.id },
-        data: { consumed_at: now }
       });
       await tx.authSession.updateMany({
         where: {
@@ -551,11 +563,11 @@ export class AuthService {
         update: { role }
       });
 
-      const resetLink = await this.createAuthTokenAndOutbox(tx, {
+      const setupOutbox = await this.createAuthTokenAndOutbox(tx, {
         tenantId: admin.tenantId,
         userId: user.id,
         email: user.email,
-        purpose: "password_reset",
+        purpose: "account_setup",
         ttlHours: this.passwordResetTtlHours()
       });
       await this.writeAuditLog(tx, admin, "admin.user.create", "user", user.id, {
@@ -563,12 +575,15 @@ export class AuthService {
         restored: Boolean(existing)
       });
 
-      return { user, resetLink };
+      return { user, setupOutbox };
     });
+
+    await this.deliverOutboxIfSmtpConfigured(result.setupOutbox.outboxId);
 
     return {
       user: await this.toAdminUser(admin.tenantId, result.user),
-      reset_link: result.resetLink
+      setup_link: result.setupOutbox.linkUrl,
+      reset_link: result.setupOutbox.linkUrl
     };
   }
 
@@ -726,8 +741,8 @@ export class AuthService {
     const targetRole = await this.getTenantRole(admin.tenantId, userId);
     this.assertCanManageTarget(admin, target.id, targetRole);
 
-    const resetLink = await this.prisma.$transaction(async (tx) => {
-      const link = await this.createAuthTokenAndOutbox(tx, {
+    const resetOutbox = await this.prisma.$transaction(async (tx) => {
+      const outbox = await this.createAuthTokenAndOutbox(tx, {
         tenantId: admin.tenantId,
         userId: target.id,
         email: target.email,
@@ -735,10 +750,12 @@ export class AuthService {
         ttlHours: this.passwordResetTtlHours()
       });
       await this.writeAuditLog(tx, admin, "admin.user.password_reset", "user", target.id);
-      return link;
+      return outbox;
     });
 
-    return { ok: true, reset_link: resetLink };
+    await this.deliverOutboxIfSmtpConfigured(resetOutbox.outboxId);
+
+    return { ok: true, reset_link: resetOutbox.linkUrl };
   }
 
   async setTenantRole(adminSessionToken: string, userId: string, roleInput: string) {
@@ -1223,15 +1240,24 @@ export class AuthService {
       purpose: TokenPurpose;
       ttlHours: number;
     }
-  ): Promise<string> {
+  ): Promise<{ linkUrl: string; outboxId: string }> {
     const rawToken = createRawToken();
     const now = this.now();
     const expiresAt = addHours(now, input.ttlHours);
     const linkUrl = this.createLink(input.purpose, rawToken);
-    const subject =
-      input.purpose === "email_verification"
-        ? "Verify your OpenKB email"
-        : "Reset your OpenKB password";
+    const subject = authEmailSubject(input.purpose);
+
+    if (isPasswordTokenPurpose(input.purpose)) {
+      await tx.authToken.updateMany({
+        where: {
+          tenant_id: input.tenantId,
+          user_id: input.userId,
+          purpose: { in: ["password_reset", "account_setup"] },
+          consumed_at: null
+        },
+        data: { consumed_at: now }
+      });
+    }
 
     await tx.authToken.create({
       data: {
@@ -1243,7 +1269,7 @@ export class AuthService {
         created_at: now
       }
     });
-    await tx.authEmailOutbox.create({
+    const outbox = await tx.authEmailOutbox.create({
       data: {
         tenant_id: input.tenantId,
         user_id: input.userId,
@@ -1259,13 +1285,45 @@ export class AuthService {
       }
     });
 
-    return linkUrl;
+    return { linkUrl, outboxId: outbox.id };
   }
 
   private createLink(purpose: TokenPurpose, token: string): string {
     const baseUrl = (this.env.APP_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
     const path = purpose === "email_verification" ? "/verify-email" : "/password-reset";
     return `${baseUrl}${path}?token=${encodeURIComponent(token)}`;
+  }
+
+  private async deliverOutboxIfSmtpConfigured(outboxId: string): Promise<void> {
+    const item = await this.prisma.authEmailOutbox.findUnique({ where: { id: outboxId } });
+    if (!item || item.status !== "pending") {
+      return;
+    }
+    const setting = await this.prisma.smtpSetting.findUnique({ where: { scope: "instance" } });
+    const config = getSmtpConfig(this.env, setting);
+    if (!config.enabled) {
+      return;
+    }
+
+    const result = await sendEmail(
+      config,
+      {
+        to: item.to_email,
+        subject: item.subject,
+        text: authEmailText(item.subject, item.link_url)
+      },
+      this.emailTransport ? { transport: this.emailTransport } : {}
+    );
+    await this.prisma.authEmailOutbox.update({
+      where: { id: item.id },
+      data: {
+        status: result.ok ? "sent" : "failed",
+        sent_at: result.ok ? this.now() : item.sent_at,
+        error: result.ok ? null : (result.error ?? "Email delivery failed."),
+        attempts: { increment: 1 },
+        last_attempt_at: this.now()
+      }
+    });
   }
 
   private async getAuthenticatedUserByUserId(
@@ -1492,6 +1550,26 @@ function normalizeTenantRole(value: string): TenantRole {
 
 function isTenantRole(value: string | undefined | null): value is TenantRole {
   return value === "system_admin" || value === "tenant_admin" || value === "member";
+}
+
+function isPasswordTokenPurpose(
+  value: string
+): value is Extract<TokenPurpose, "password_reset" | "account_setup"> {
+  return value === "password_reset" || value === "account_setup";
+}
+
+function authEmailSubject(purpose: TokenPurpose): string {
+  if (purpose === "email_verification") {
+    return "Verify your OpenKB email";
+  }
+  if (purpose === "account_setup") {
+    return "Welcome to OpenKB - set your password";
+  }
+  return "Reset your OpenKB password";
+}
+
+function authEmailText(subject: string, linkUrl: string | null): string {
+  return linkUrl ? `${subject}\n\n${linkUrl}` : subject;
 }
 
 function normalizeEmail(email: string): string {

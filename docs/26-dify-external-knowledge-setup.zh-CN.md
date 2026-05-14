@@ -56,6 +56,10 @@
    - 用 `Copy test curl` 生成脱敏测试请求；把 `<DIFY_API_KEY>` 替换为刚创建时显示的一次性 raw key。
    - 查看“可过滤 metadata 字段”，确认业务字段来自 KB Metadata schema，而不是仅依赖 chunk 技术字段。
 
+OpenKB Admin -> Dify 的配置向导会展示 endpoint、External Knowledge ID、mapping 和可过滤 metadata 字段；普通列表和截图都不会回显 raw key。
+
+![OpenKB Dify Admin](assets/openkb-admin-dify.png)
+
 ## Dify 端配置
 
 Dify UI 会自动在 API Endpoint 后拼接 `/retrieval`。因此 API Endpoint 填 base URL，不要填 `/retrieval`。
@@ -173,6 +177,10 @@ OpenKB adapter 会保证每条 Dify record 至少包含以下 metadata：
 | `metadata.absolute_url` | `DIFY_RESULT_BASE_URL` / `APP_BASE_URL` | 可直接打开的 OpenKB 文档 URL；未配置 base URL 时为 `null` |
 | `metadata.retrieval_mode` | OpenKB retrieval context | `chunk` / `parent_child` / `full_text` 等 |
 | `metadata.score_source` | retrieval/rerank 状态 | `retrieval` 或 `rerank` |
+| `metadata.retrieval_model` | KB 默认检索策略 + Dify request override | Dify-like `semantic_search/full_text_search/hybrid_search/keyword_search` 配置 |
+| `metadata.mixed_retrieval_model` | Retrieval Service 策略解析 | 多 KB 策略不一致时为 `true`；Dify 单 KB mapping 通常为 `false` |
+| `metadata.openkb_retrieval.hybrid_weights` | KB `retrieval_model.weights` | Hybrid keyword/vector 权重 |
+| `metadata.openkb_retrieval.score_threshold_applied` | KB 或 Dify request 阈值 | 实际用于过滤的 score threshold |
 | `metadata.document_id` | `documents.id` | OpenKB document id |
 | `metadata.chunk_id` | `document_chunks.id` | OpenKB chunk id |
 | `metadata.knowledge_base_id` | `knowledge_bases.id` | OpenKB knowledge base id |
@@ -219,6 +227,11 @@ Dify 内部知识库的 metadata schema 与 OpenKB 对齐如下：
   "mode": "dense_rerank",
   "raw_score": 0.21,
   "rerank_score": 0.56,
+  "retrieval_model": {
+    "search_method": "hybrid_search",
+    "top_k": 5
+  },
+  "score_threshold_applied": 0.2,
   "context_mode": "parent_child",
   "match_chunk_id": "...",
   "parent_chunk_id": "..."

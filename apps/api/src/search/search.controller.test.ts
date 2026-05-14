@@ -34,7 +34,13 @@ describe("SearchController", () => {
 
     await expect(
       controller.search(
-        { query: "MCP", knowledge_base_ids: ["kb_1"], top_k: 10 },
+        {
+          query: "MCP",
+          knowledge_base_ids: ["kb_1"],
+          top_k: 10,
+          score_threshold: 0.2,
+          retrieval_model: { search_method: "hybrid_search" }
+        },
         { headers: { cookie: "openkb_session=session_1" } } as never,
         reply() as never
       )
@@ -44,7 +50,9 @@ describe("SearchController", () => {
       expect.objectContaining({
         query: "MCP",
         knowledge_base_ids: ["kb_1"],
-        top_k: 10
+        top_k: 10,
+        score_threshold: 0.2,
+        retrieval_model: { search_method: "hybrid_search" }
       })
     );
   });

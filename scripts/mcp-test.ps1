@@ -15,10 +15,9 @@ function Invoke-Step {
 
 try {
   Set-OpenKBTestPostgresEnv
+  Set-OpenKBTestMilvusEnv
   Invoke-Step { pnpm db:test:up } "db:test:up"
   Invoke-Step { pnpm milvus:test:up } "milvus:test:up"
-  $milvusPort = if ($env:OPENKB_MILVUS_TEST_PORT) { $env:OPENKB_MILVUS_TEST_PORT } else { "59530" }
-  $env:MILVUS_URI = "localhost:$milvusPort"
   $env:MILVUS_ACTIVE_ALIAS = "openkb_chunks_active"
   $env:MILVUS_COLLECTION_PREFIX = "openkb_chunks"
   $env:MILVUS_ENABLE_BM25 = "true"

@@ -32,6 +32,9 @@ const allTables = [
   "milvus_index_profiles",
   "import_format_routes",
   "import_tool_settings",
+  "document_summaries",
+  "document_segment_summaries",
+  "document_qa_pairs",
   "document_chunks",
   "import_jobs",
   "share_links",
@@ -349,6 +352,100 @@ fs.writeFileSync(output, "# Mock DOCX\\n\\n![Figure](media/figure.png)");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("rebuilds KB chunks without dropping QA or document summary derived index rows", async () => {
+    const seed = await seedDev({ prisma });
+    await prisma.knowledgeBaseChunkSetting.update({
+      where: { knowledge_base_id: seed.knowledgeBaseId },
+      data: {
+        doc_form: "qa_model",
+        process_rule_mode: "automatic",
+        mode: "general",
+        updated_by: seed.userId
+      }
+    });
+    const sourceChunk = await prisma.documentChunk.findFirstOrThrow({
+      where: { document_id: seed.documentId, status: "active", index_role: "content" },
+      orderBy: { ordinal: "asc" }
+    });
+    const qaPair = await prisma.documentQaPair.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        document_id: seed.documentId,
+        question: "Who appears in the seed document?",
+        answer: "OpenKB appears in the seed document.",
+        source: "manual",
+        status: "active",
+        created_by: seed.userId
+      }
+    });
+    const documentSummary = await prisma.documentSummary.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        document_id: seed.documentId,
+        summary: "Seed document summary for rebuild compatibility.",
+        status: "active",
+        created_by: seed.userId
+      }
+    });
+    await prisma.documentSegmentSummary.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        document_id: seed.documentId,
+        chunk_id: sourceChunk.id,
+        summary: "Stale segment summary should not be migrated.",
+        status: "active",
+        created_by: seed.userId
+      }
+    });
+    const job = await prisma.chunkRebuildJob.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        settings_revision: 1,
+        status: "pending",
+        requested_by: seed.userId,
+        metadata: {}
+      }
+    });
+
+    expect(await runImportOnce({ prisma, storage })).toMatchObject({
+      processed: true,
+      job_id: job.id,
+      status: "succeeded"
+    });
+
+    const chunks = await prisma.documentChunk.findMany({
+      where: { document_id: seed.documentId, status: "active" },
+      orderBy: { ordinal: "asc" }
+    });
+    expect(
+      chunks.some(
+        (chunk) =>
+          chunk.index_role === "content" &&
+          chunk.content_text === qaPair.question &&
+          (chunk.metadata as { qa_pair_id?: string }).qa_pair_id === qaPair.id
+      )
+    ).toBe(true);
+    expect(
+      chunks.some(
+        (chunk) =>
+          chunk.index_role === "summary" &&
+          chunk.content_text === documentSummary.summary &&
+          (chunk.metadata as { summary_id?: string }).summary_id === documentSummary.id
+      )
+    ).toBe(true);
+    await expect(
+      prisma.documentSegmentSummary.findUnique({ where: { chunk_id: sourceChunk.id } })
+    ).resolves.toMatchObject({ status: "deleted" });
   });
 });
 

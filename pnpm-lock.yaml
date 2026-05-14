@@ -208,6 +208,9 @@ importers:
       '@openkb/db':
         specifier: workspace:*
         version: link:../db
+      '@openkb/email':
+        specifier: workspace:*
+        version: link:../email
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3

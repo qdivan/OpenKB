@@ -153,4 +153,83 @@ Child chunks keep searchable text.`,
     expect(children.every((chunk) => chunk.parent_ordinal === 0)).toBe(true);
     expect(parents[0]?.content_text).toContain("One long paragraph");
   });
+
+  it("maps Dify text_model to general chunks and qa_model to question chunks", () => {
+    const textChunks = chunkMarkdownForIndex("# A\n\nBody", {
+      doc_form: "text_model",
+      settings_revision: 4
+    });
+    expect(textChunks.every((chunk) => chunk.chunk_type === "general")).toBe(true);
+    expect(textChunks[0]?.settings_revision).toBe(4);
+
+    const qaChunks = chunkMarkdownForIndex("", {
+      doc_form: "qa_model",
+      settings_revision: 5,
+      qa_pairs: [
+        {
+          id: "qa-1",
+          question: "Who visited the cottage?",
+          answer: "Liu Bei visited Zhuge Liang.",
+          source: "manual"
+        }
+      ]
+    });
+    expect(qaChunks).toHaveLength(1);
+    expect(qaChunks[0]).toMatchObject({
+      chunk_type: "general",
+      content_text: "Who visited the cottage?",
+      content_markdown: expect.stringContaining("Liu Bei visited Zhuge Liang."),
+      settings_revision: 5,
+      metadata: expect.objectContaining({
+        doc_form: "qa_model",
+        qa_pair_id: "qa-1",
+        qa_question: "Who visited the cottage?",
+        qa_answer: "Liu Bei visited Zhuge Liang."
+      })
+    });
+  });
+
+  it("applies Dify custom segmentation and preprocessing rules for text_model chunks", () => {
+    const chunks = chunkMarkdownForIndex(
+      "Alpha    beta contact me@example.com.\n\nGamma https://example.com/page delta.",
+      {
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        process_rule: {
+          pre_processing_rules: [
+            { id: "remove_extra_spaces", enabled: true },
+            { id: "remove_urls_emails", enabled: true }
+          ],
+          segmentation: { separator: "\n\n", max_tokens: 20, chunk_overlap: 6 }
+        },
+        settings_revision: 9
+      }
+    );
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0]?.content_text).toContain("Alpha beta contact");
+    expect(chunks.map((chunk) => chunk.content_text).join(" ")).not.toContain("example.com");
+    expect(chunks.map((chunk) => chunk.metadata)).toContainEqual(
+      expect.objectContaining({
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        chunk_type: "general",
+        settings_revision: 9
+      })
+    );
+  });
+
+  it("uses automatic defaults without persisted custom process_rule values", () => {
+    const chunks = chunkMarkdownForIndex("A paragraph. ".repeat(220), {
+      doc_form: "text_model",
+      process_rule_mode: "automatic",
+      process_rule: {
+        segmentation: { separator: "###", max_tokens: 9999, chunk_overlap: 0 }
+      },
+      settings_revision: 2
+    });
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.settings_revision === 2)).toBe(true);
+  });
 });

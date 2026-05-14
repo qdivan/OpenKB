@@ -5,7 +5,8 @@ import {
   chunkMarkdownForIndex,
   MarkdownConversionError,
   type HierarchicalMarkdownChunk,
-  type ImportConversionWarning
+  type ImportConversionWarning,
+  type MarkdownChunkingSettings
 } from "@openkb/markdown";
 import {
   checksumSha256,
@@ -263,6 +264,10 @@ async function processClaimedImportJob(
       });
       const chunks = chunkMarkdownForIndex(markdown, {
         mode: settings.mode === "general" ? "general" : "parent_child",
+        doc_form: normalizeDocForm(settings.doc_form, settings.mode),
+        indexing_technique: settings.indexing_technique === "economy" ? "economy" : "high_quality",
+        process_rule_mode: normalizeProcessRuleMode(settings.process_rule_mode),
+        process_rule: settings.process_rule,
         parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
         parent_delimiter: settings.parent_delimiter,
         child_delimiter: settings.child_delimiter,
@@ -276,6 +281,11 @@ async function processClaimedImportJob(
         where: { id: document.id },
         data: {
           current_version_id: version.id,
+          doc_form: normalizeDocForm(settings.doc_form, settings.mode),
+          process_rule_snapshot: buildProcessingSnapshot(settings),
+          processing_status: "current",
+          processing_revision: settings.revision,
+          need_summary: summaryIndexEnabled(settings.summary_index_setting),
           updated_at: now
         }
       });
@@ -327,6 +337,7 @@ async function processClaimedImportJob(
           content_text: chunk.content_text,
           content_markdown: chunk.content_markdown,
           token_count: chunk.token_count,
+          status: "active",
           metadata: {
             ...chunk.metadata,
             import_job_id: job.id,
@@ -432,8 +443,13 @@ async function processClaimedChunkRebuildJob(prisma: PrismaClient, jobId: string
   const versionById = new Map(versions.map((version) => [version.id, version]));
   let chunkCount = 0;
   const now = new Date();
+  const documentIds = documents.map((document) => document.id);
 
   await prisma.$transaction(async (tx) => {
+    await tx.documentSegmentSummary.updateMany({
+      where: { document_id: { in: documentIds }, status: "active" },
+      data: { status: "deleted", updated_at: now }
+    });
     await tx.documentChunk.deleteMany({
       where: {
         knowledge_base_id: job.knowledge_base_id,
@@ -448,47 +464,88 @@ async function processClaimedChunkRebuildJob(prisma: PrismaClient, jobId: string
       if (!version) {
         continue;
       }
+      const markdownSettings = toMarkdownChunkingSettings(settings, document);
+      const qaPairs =
+        markdownSettings.doc_form === "qa_model"
+          ? await tx.documentQaPair.findMany({
+              where: { document_id: document.id, status: "active" },
+              orderBy: { created_at: "asc" }
+            })
+          : [];
       const chunks = materializeDocumentChunks(
         chunkMarkdownForIndex(version.markdown, {
-          mode: settings.mode === "general" ? "general" : "parent_child",
-          parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
-          parent_delimiter: settings.parent_delimiter,
-          child_delimiter: settings.child_delimiter,
-          parent_max_characters: settings.parent_max_characters,
-          child_max_characters: settings.child_max_characters,
-          child_overlap_characters: settings.child_overlap_characters,
-          settings_revision: settings.revision
+          ...markdownSettings,
+          qa_pairs: qaPairs.map((pair) => ({
+            id: pair.id,
+            question: pair.question,
+            answer: pair.answer,
+            source: pair.source as "manual" | "csv" | "llm",
+            source_chunk_id: pair.source_chunk_id
+          }))
         })
       );
       chunkCount += chunks.length;
-      if (chunks.length === 0) {
-        continue;
+      if (chunks.length > 0) {
+        await tx.documentChunk.createMany({
+          data: chunks.map((chunk) => ({
+            id: chunk.id,
+            tenant_id: document.tenant_id,
+            workspace_id: document.workspace_id,
+            knowledge_base_id: document.knowledge_base_id,
+            document_id: document.id,
+            version_id: version.id,
+            ordinal: chunk.ordinal,
+            chunk_type: chunk.chunk_type,
+            parent_chunk_id: chunk.parent_chunk_id,
+            settings_revision: settings.revision,
+            start_line: chunk.start_line,
+            end_line: chunk.end_line,
+            start_char: chunk.start_char,
+            end_char: chunk.end_char,
+            parent_ordinal: chunk.parent_ordinal,
+            child_ordinal: chunk.child_ordinal,
+            heading_path: chunk.heading_path,
+            content_text: chunk.content_text,
+            content_markdown: chunk.content_markdown,
+            token_count: chunk.token_count,
+            index_role: "content",
+            source_chunk_id: null,
+            status: "active",
+            metadata: {
+              ...(toRecord(chunk.metadata) as Record<string, unknown>),
+              processing_revision: (document.processing_revision ?? 1) + 1,
+              content_version_id: version.id,
+              content_markdown_hash: version.markdown_hash
+            } as Prisma.InputJsonValue,
+            created_at: now
+          }))
+        });
       }
-      await tx.documentChunk.createMany({
-        data: chunks.map((chunk) => ({
-          id: chunk.id,
-          tenant_id: document.tenant_id,
-          workspace_id: document.workspace_id,
-          knowledge_base_id: document.knowledge_base_id,
-          document_id: document.id,
-          version_id: version.id,
-          ordinal: chunk.ordinal,
-          chunk_type: chunk.chunk_type,
-          parent_chunk_id: chunk.parent_chunk_id,
-          settings_revision: settings.revision,
-          start_line: chunk.start_line,
-          end_line: chunk.end_line,
-          start_char: chunk.start_char,
-          end_char: chunk.end_char,
-          parent_ordinal: chunk.parent_ordinal,
-          child_ordinal: chunk.child_ordinal,
-          heading_path: chunk.heading_path,
-          content_text: chunk.content_text,
-          content_markdown: chunk.content_markdown,
-          token_count: chunk.token_count,
-          metadata: chunk.metadata as Prisma.InputJsonValue,
-          created_at: now
-        }))
+      const documentSummary = await tx.documentSummary.findUnique({
+        where: { document_id: document.id }
+      });
+      if (documentSummary?.status === "active") {
+        await createDocumentSummaryIndexChunk(tx, {
+          document,
+          version,
+          summary: documentSummary.summary,
+          summaryId: documentSummary.id,
+          ordinal: nextChunkOrdinal(chunks),
+          settingsRevision: settings.revision,
+          now
+        });
+        chunkCount += 1;
+      }
+      await tx.document.update({
+        where: { id: document.id },
+        data: {
+          doc_form: normalizeDocForm(settings.doc_form, settings.mode),
+          process_rule_snapshot: buildProcessingSnapshot(settings, document, version),
+          processing_status: "current",
+          processing_revision: (document.processing_revision ?? 1) + 1,
+          need_summary: summaryIndexEnabled(settings.summary_index_setting),
+          updated_at: now
+        }
       });
     }
 
@@ -720,6 +777,71 @@ function materializeDocumentChunks(chunks: HierarchicalMarkdownChunk[]): Materia
   }));
 }
 
+async function createDocumentSummaryIndexChunk(
+  tx: Prisma.TransactionClient,
+  input: {
+    document: {
+      tenant_id: string;
+      workspace_id: string;
+      knowledge_base_id: string;
+      id: string;
+      doc_form?: string | null;
+    };
+    version: { id: string };
+    summary: string;
+    summaryId: string;
+    ordinal: number;
+    settingsRevision: number;
+    now: Date;
+  }
+): Promise<void> {
+  await tx.documentChunk.create({
+    data: {
+      tenant_id: input.document.tenant_id,
+      workspace_id: input.document.workspace_id,
+      knowledge_base_id: input.document.knowledge_base_id,
+      document_id: input.document.id,
+      version_id: input.version.id,
+      ordinal: input.ordinal,
+      chunk_type: "general",
+      parent_chunk_id: null,
+      settings_revision: input.settingsRevision,
+      start_line: null,
+      end_line: null,
+      start_char: null,
+      end_char: null,
+      parent_ordinal: null,
+      child_ordinal: null,
+      heading_path: [],
+      content_text: input.summary,
+      content_markdown: input.summary,
+      token_count: estimateTextTokens(input.summary),
+      index_role: "summary",
+      source_chunk_id: null,
+      status: "active",
+      metadata: {
+        hit_type: "summary",
+        summary_hit: true,
+        summary_id: input.summaryId,
+        summary_scope: "document",
+        summary_text: input.summary,
+        original_chunk_id: null,
+        doc_form: input.document.doc_form,
+        index_role: "summary"
+      },
+      created_at: input.now
+    }
+  });
+}
+
+function nextChunkOrdinal(chunks: Array<{ ordinal: number }>): number {
+  return Math.max(-1, ...chunks.map((chunk) => chunk.ordinal)) + 1;
+}
+
+function estimateTextTokens(value: string): number {
+  return Math.max(1, Math.ceil(value.replace(/\s+/g, " ").trim().length / 4));
+}
+
 async function getOrCreateChunkSettings(
   tx: Prisma.TransactionClient,
   input: {
@@ -744,6 +866,12 @@ async function getOrCreateChunkSettings(
       workspace_id: input.workspaceId,
       knowledge_base_id: input.knowledgeBaseId,
       mode: legacyChunkCount > 0 ? "general" : "parent_child",
+      doc_form: legacyChunkCount > 0 ? "text_model" : "hierarchical_model",
+      indexing_technique: "high_quality",
+      process_rule_mode: legacyChunkCount > 0 ? "custom" : "hierarchical",
+      process_rule: {},
+      retrieval_model: {},
+      summary_index_setting: { enable: false },
       parent_mode: "paragraph",
       updated_by: input.userId
     }
@@ -753,6 +881,167 @@ async function getOrCreateChunkSettings(
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeDocForm(
+  value: unknown,
+  mode?: string
+): "text_model" | "hierarchical_model" | "qa_model" {
+  if (value === "text_model" || value === "hierarchical_model" || value === "qa_model") {
+    return value;
+  }
+  return mode === "general" ? "text_model" : "hierarchical_model";
+}
+
+function normalizeProcessRuleMode(value: unknown): "automatic" | "custom" | "hierarchical" {
+  if (value === "automatic" || value === "custom" || value === "hierarchical") {
+    return value;
+  }
+  return "custom";
+}
+
+function toMarkdownChunkingSettings(
+  settings: {
+    mode: string;
+    doc_form?: string | null;
+    indexing_technique?: string | null;
+    process_rule_mode?: string | null;
+    process_rule?: Prisma.JsonValue;
+    parent_mode: string;
+    parent_delimiter: string;
+    child_delimiter: string;
+    parent_max_characters: number;
+    child_max_characters: number;
+    child_overlap_characters: number;
+    revision: number;
+  },
+  document?: { process_rule_snapshot?: Prisma.JsonValue | null }
+): MarkdownChunkingSettings {
+  const override = getDocumentProcessingOverride(document?.process_rule_snapshot ?? null);
+  const processRule = toRecord(override?.process_rule ?? settings.process_rule);
+  const segmentation = toRecord(processRule.segmentation);
+  const subchunkSegmentation = toRecord(processRule.subchunk_segmentation);
+  return {
+    mode:
+      settings.mode === "general" || settings.doc_form === "text_model"
+        ? "general"
+        : "parent_child",
+    doc_form: normalizeDocForm(settings.doc_form, settings.mode),
+    indexing_technique: settings.indexing_technique === "economy" ? "economy" : "high_quality",
+    process_rule_mode: normalizeProcessRuleMode(settings.process_rule_mode),
+    process_rule: override?.process_rule ?? settings.process_rule,
+    parent_mode:
+      override?.parent_mode ?? (settings.parent_mode === "full_doc" ? "full_doc" : "paragraph"),
+    parent_delimiter: readRuleSeparator(segmentation, settings.parent_delimiter),
+    child_delimiter: readRuleSeparator(subchunkSegmentation, settings.child_delimiter),
+    parent_max_characters: readRuleMaxTokens(segmentation, settings.parent_max_characters),
+    chunk_overlap_characters: readRuleOverlap(segmentation, 0),
+    child_max_characters: readRuleMaxTokens(subchunkSegmentation, settings.child_max_characters),
+    child_overlap_characters: readRuleOverlap(
+      subchunkSegmentation,
+      settings.child_overlap_characters
+    ),
+    settings_revision: settings.revision
+  };
+}
+
+function buildProcessingSnapshot(
+  settings: {
+    doc_form?: string;
+    indexing_technique?: string;
+    process_rule_mode?: string;
+    process_rule?: Prisma.JsonValue;
+    retrieval_model?: Prisma.JsonValue;
+    summary_index_setting?: Prisma.JsonValue;
+    parent_mode: string;
+    revision: number;
+    mode?: string;
+  },
+  document?: { process_rule_snapshot?: Prisma.JsonValue | null },
+  version?: { id: string; markdown_hash: string }
+): Prisma.InputJsonValue {
+  const override = getDocumentProcessingOverride(document?.process_rule_snapshot ?? null);
+  const processRule = toRecord(override?.process_rule ?? settings.process_rule);
+  const parentMode =
+    override?.parent_mode ??
+    (processRule.parent_mode === "full-doc" || processRule.parent_mode === "full_doc"
+      ? "full_doc"
+      : settings.parent_mode === "full_doc"
+        ? "full_doc"
+        : "paragraph");
+  return {
+    doc_form: normalizeDocForm(settings.doc_form, settings.mode),
+    indexing_technique: settings.indexing_technique === "economy" ? "economy" : "high_quality",
+    process_rule_mode: normalizeProcessRuleMode(settings.process_rule_mode),
+    process_rule: {
+      ...(processRule as Record<string, unknown>),
+      parent_mode: parentMode === "full_doc" ? "full-doc" : "paragraph"
+    },
+    retrieval_model: settings.retrieval_model ?? {},
+    summary_index_setting: settings.summary_index_setting ?? { enable: false },
+    settings_revision: settings.revision,
+    content_version_id: version?.id ?? null,
+    content_markdown_hash: version?.markdown_hash ?? null,
+    document_override: Boolean(override?.parent_mode || override?.process_rule !== undefined)
+  };
+}
+
+function summaryIndexEnabled(value: unknown): boolean {
+  return toRecord(value).enable === true;
+}
+
+function getDocumentProcessingOverride(
+  snapshot: Prisma.JsonValue | null
+): { parent_mode?: "paragraph" | "full_doc"; process_rule?: unknown } | undefined {
+  const record = toRecord(snapshot);
+  if (record.document_override !== true) {
+    return undefined;
+  }
+  const parentMode = readSnapshotParentMode(record);
+  const processRule = record.process_rule;
+  if (!parentMode && processRule === undefined) {
+    return undefined;
+  }
+  return {
+    ...(parentMode ? { parent_mode: parentMode } : {}),
+    ...(processRule !== undefined ? { process_rule: processRule } : {})
+  };
+}
+
+function readSnapshotParentMode(value: unknown): "paragraph" | "full_doc" | null {
+  const record = toRecord(value);
+  const processRule = toRecord(record.process_rule ?? record);
+  const mode = processRule.parent_mode ?? record.parent_mode;
+  if (mode === "full_doc" || mode === "full-doc") {
+    return "full_doc";
+  }
+  if (mode === "paragraph") {
+    return "paragraph";
+  }
+  return null;
+}
+
+function readRuleSeparator(record: Record<string, unknown>, fallback: string): string {
+  const value = record.separator ?? record.delimiter;
+  return typeof value === "string" ? value : fallback;
+}
+
+function readRuleMaxTokens(record: Record<string, unknown>, fallback: number): number {
+  return Number.isInteger(record.max_tokens) && Number(record.max_tokens) > 0
+    ? Number(record.max_tokens)
+    : fallback;
+}
+
+function readRuleOverlap(record: Record<string, unknown>, fallback: number): number {
+  return Number.isInteger(record.chunk_overlap) && Number(record.chunk_overlap) >= 0
+    ? Number(record.chunk_overlap)
+    : fallback;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function sleep(ms: number): Promise<void> {

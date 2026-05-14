@@ -97,6 +97,10 @@ system_admin / tenant_admin 可以：
 
 但 admin 不因此自动拥有所有私有文档的阅读权限。搜索、MCP、Dify、附件、导出都不能因为 admin 身份绕过内容权限。
 
+system_admin 默认可以发现和管理实例范围内的 workspace / knowledge base 元数据；tenant_admin 默认可以发现和管理本租户范围内的 workspace / knowledge base 元数据。这种“管理可见”不等于内容可读。私有知识库或私有文档正文仍必须通过 `PermissionService.canRead` 判断。
+
+如果管理员确实需要读取私有内容，必须执行显式的审计接管：写入 `audit_logs`，并把管理员作为普通 `collaborators` 授予 `viewer/manager/editor` 等内容角色。接管后，后续读取仍走普通协作者权限；禁止用 admin 身份直接绕过 PostgreSQL 权限终检。
+
 ## 5. Workspace / 空间权限
 
 空间是成员协作和安全策略边界。

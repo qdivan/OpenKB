@@ -67,8 +67,15 @@ type ChunkRow = {
   content_markdown: string;
   token_count: number | null;
   metadata: unknown;
+  index_role: string;
+  source_chunk_id: string | null;
+  status: string;
   created_at: Date;
   title: string;
+  doc_form: string | null;
+  processing_status: string;
+  indexing_technique: string | null;
+  retrieval_model: unknown;
   doc_status: string;
   document_updated_at: Date;
 };
@@ -316,21 +323,30 @@ async function readCurrentChunks(
       c.parent_ordinal,
       c.child_ordinal,
       c.heading_path,
-      c.content_text,
-      c.content_markdown,
+      COALESCE(c.override_content_text, c.content_text) AS content_text,
+      COALESCE(c.override_content_markdown, c.content_markdown) AS content_markdown,
       c.token_count,
       c.metadata,
+      c.index_role,
+      c.source_chunk_id::text,
+      c.status,
       c.created_at,
       d.title,
+      d.doc_form,
+      d.processing_status,
+      s.indexing_technique,
+      s.retrieval_model,
       d.status AS doc_status,
       d.updated_at AS document_updated_at
     FROM document_chunks c
     JOIN documents d ON d.id = c.document_id
     JOIN knowledge_bases kb ON kb.id = c.knowledge_base_id
+    LEFT JOIN knowledge_base_chunk_settings s ON s.knowledge_base_id = c.knowledge_base_id
     WHERE d.status = 'published'
       AND kb.status = 'active'
       AND d.current_version_id = c.version_id
       AND c.chunk_type IN ('general', 'child')
+      AND c.status = 'active'
       ${tenantFilter}
     ORDER BY c.created_at ASC, c.id ASC
     LIMIT ${limit}
@@ -384,10 +400,25 @@ function toMilvusChunkRecord(
 }
 
 function normalizeMetadata(row: ChunkRow): Record<string, unknown> {
-  return {
-    ...(typeof row.metadata === "object" && row.metadata !== null
+  const sourceMetadata =
+    typeof row.metadata === "object" && row.metadata !== null
       ? (row.metadata as Record<string, unknown>)
-      : {}),
+      : {};
+  const hitType =
+    typeof sourceMetadata.hit_type === "string"
+      ? sourceMetadata.hit_type
+      : row.index_role === "summary"
+        ? "summary"
+        : sourceMetadata.qa_pair_id
+          ? "qa"
+          : "content";
+  const originalChunkId =
+    typeof sourceMetadata.original_chunk_id === "string"
+      ? sourceMetadata.original_chunk_id
+      : (row.source_chunk_id ?? row.id);
+
+  return {
+    ...sourceMetadata,
     ordinal: row.ordinal,
     token_count: row.token_count,
     chunk_type: row.chunk_type,
@@ -398,8 +429,24 @@ function normalizeMetadata(row: ChunkRow): Record<string, unknown> {
     start_char: row.start_char,
     end_char: row.end_char,
     parent_ordinal: row.parent_ordinal,
-    child_ordinal: row.child_ordinal
+    child_ordinal: row.child_ordinal,
+    segment_status: row.status,
+    doc_form: row.doc_form,
+    document_processing_status: row.processing_status,
+    indexing_technique: row.indexing_technique,
+    retrieval_model: toSafeRecord(row.retrieval_model),
+    index_role: row.index_role,
+    source_chunk_id: row.source_chunk_id,
+    hit_type: hitType,
+    summary_hit: sourceMetadata.summary_hit === true || row.index_role === "summary",
+    original_chunk_id: originalChunkId
   };
+}
+
+function toSafeRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function toStableErrorCode(error: unknown): string {

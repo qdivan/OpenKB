@@ -45,25 +45,42 @@ export type MarkdownChunk = {
   content_markdown: string;
   token_count: number;
   metadata: {
-    start_line: number;
-    end_line: number;
+    start_line: number | null;
+    end_line: number | null;
     [key: string]: unknown;
   };
 };
 
 export type MarkdownChunkType = "general" | "parent" | "child";
 export type MarkdownChunkingMode = "general" | "parent_child";
+export type DifyDocForm = "text_model" | "hierarchical_model" | "qa_model";
+export type DifyIndexingTechnique = "economy" | "high_quality";
+export type DifyProcessRuleMode = "automatic" | "custom" | "hierarchical";
 export type MarkdownParentChunkMode = "paragraph" | "full_doc";
+
+export type MarkdownQaPair = {
+  id?: string;
+  question: string;
+  answer: string;
+  source?: "manual" | "csv" | "llm";
+  source_chunk_id?: string | null;
+};
 
 export type MarkdownChunkingSettings = {
   mode?: MarkdownChunkingMode;
+  doc_form?: DifyDocForm;
+  indexing_technique?: DifyIndexingTechnique;
+  process_rule_mode?: DifyProcessRuleMode;
+  process_rule?: unknown;
   parent_mode?: MarkdownParentChunkMode;
   parent_delimiter?: string;
   child_delimiter?: string;
   parent_max_characters?: number;
+  chunk_overlap_characters?: number;
   child_max_characters?: number;
   child_overlap_characters?: number;
   settings_revision?: number;
+  qa_pairs?: MarkdownQaPair[];
 };
 
 export type HierarchicalMarkdownChunk = MarkdownChunk & {
@@ -262,12 +279,39 @@ export function chunkMarkdownForIndex(
   markdownInput: string,
   settings: MarkdownChunkingSettings = {}
 ): HierarchicalMarkdownChunk[] {
-  const mode = settings.mode ?? "parent_child";
+  const docForm =
+    settings.doc_form ?? (settings.mode === "general" ? "text_model" : "hierarchical_model");
+  if (docForm === "qa_model") {
+    return chunkQaPairsForIndex(settings.qa_pairs ?? [], settings.settings_revision);
+  }
+
+  const rule = resolveDifyProcessRule(settings, docForm);
+  const markdown = applyDifyPreProcessing(markdownInput, rule.preProcessingRules);
+  const mode = docForm === "text_model" ? "general" : (settings.mode ?? "parent_child");
   const settingsRevision = positiveInt(settings.settings_revision, 1);
+  const metadataBase = {
+    doc_form: docForm,
+    indexing_technique: settings.indexing_technique ?? "high_quality",
+    process_rule_mode:
+      settings.process_rule_mode ?? (docForm === "text_model" ? "custom" : "hierarchical"),
+    parent_mode: rule.parentMode === "full_doc" ? "full_doc" : "paragraph",
+    settings_revision: settingsRevision
+  };
 
   if (mode === "general") {
-    return chunkMarkdown(markdownInput, {
-      maxCharacters: positiveInt(settings.child_max_characters, DEFAULT_CHUNK_MAX_CHARACTERS)
+    return chunkMarkdownByDelimiterWithOverlap(markdown, {
+      delimiter: normalizeChunkDelimiter(settings.parent_delimiter ?? rule.segmentation.separator),
+      maxCharacters: positiveInt(
+        settings.parent_max_characters ?? rule.segmentation.maxTokens,
+        DEFAULT_CHUNK_MAX_CHARACTERS
+      ),
+      overlapCharacters: boundedOverlap(
+        settings.chunk_overlap_characters ?? rule.segmentation.chunkOverlap,
+        positiveInt(
+          settings.parent_max_characters ?? rule.segmentation.maxTokens,
+          DEFAULT_CHUNK_MAX_CHARACTERS
+        )
+      )
     }).map((chunk) => ({
       ...chunk,
       chunk_type: "general",
@@ -276,33 +320,230 @@ export function chunkMarkdownForIndex(
       settings_revision: settingsRevision,
       start_line: chunk.metadata.start_line,
       end_line: chunk.metadata.end_line,
-      start_char: null,
-      end_char: null,
-      parent_local_id: null
+      start_char: typeof chunk.metadata.start_char === "number" ? chunk.metadata.start_char : null,
+      end_char: typeof chunk.metadata.end_char === "number" ? chunk.metadata.end_char : null,
+      parent_local_id: null,
+      metadata: {
+        ...chunk.metadata,
+        ...metadataBase,
+        chunk_type: "general"
+      }
     }));
   }
 
-  return chunkMarkdownParentChild(markdownInput, {
-    parentMode: settings.parent_mode ?? "paragraph",
-    parentDelimiter: normalizeChunkDelimiter(settings.parent_delimiter),
-    childDelimiter: normalizeChunkDelimiter(settings.child_delimiter),
+  return chunkMarkdownParentChild(markdown, {
+    parentMode: settings.parent_mode ?? rule.parentMode,
+    parentDelimiter: normalizeChunkDelimiter(
+      settings.parent_delimiter ?? rule.segmentation.separator
+    ),
+    childDelimiter: normalizeChunkDelimiter(
+      settings.child_delimiter ?? rule.subchunkSegmentation.separator
+    ),
     parentMaxCharacters: positiveInt(
-      settings.parent_max_characters,
+      settings.parent_max_characters ?? rule.segmentation.maxTokens,
       DEFAULT_PARENT_CHUNK_MAX_CHARACTERS
     ),
     childMaxCharacters: positiveInt(
-      settings.child_max_characters,
+      settings.child_max_characters ?? rule.subchunkSegmentation.maxTokens,
       DEFAULT_CHILD_CHUNK_MAX_CHARACTERS
     ),
-    childOverlapCharacters: Math.max(
-      0,
-      Math.min(
-        positiveInt(settings.child_overlap_characters, DEFAULT_CHILD_CHUNK_OVERLAP_CHARACTERS),
-        positiveInt(settings.child_max_characters, DEFAULT_CHILD_CHUNK_MAX_CHARACTERS) - 1
+    childOverlapCharacters: boundedOverlap(
+      settings.child_overlap_characters ?? rule.subchunkSegmentation.chunkOverlap,
+      positiveInt(
+        settings.child_max_characters ?? rule.subchunkSegmentation.maxTokens,
+        DEFAULT_CHILD_CHUNK_MAX_CHARACTERS
       )
     ),
-    settingsRevision
+    settingsRevision,
+    metadataBase
   });
+}
+
+export function chunkQaPairsForIndex(
+  pairs: MarkdownQaPair[],
+  settingsRevision = 1
+): HierarchicalMarkdownChunk[] {
+  const revision = positiveInt(settingsRevision, 1);
+  return pairs
+    .map((pair) => ({
+      ...pair,
+      question: String(pair.question ?? "").trim(),
+      answer: String(pair.answer ?? "").trim()
+    }))
+    .filter((pair) => pair.question && pair.answer)
+    .map((pair, index) => {
+      const contentMarkdown = `**Q:** ${pair.question}\n\n**A:** ${pair.answer}`;
+      const contentText = `${pair.question}\n${pair.answer}`;
+      return {
+        ordinal: index,
+        heading_path: [],
+        content_text: pair.question,
+        content_markdown: contentMarkdown,
+        token_count: estimateTokenCount(contentText),
+        metadata: {
+          start_line: null,
+          end_line: null,
+          chunk_type: "general",
+          hit_type: "qa",
+          qa_pair_id: pair.id ?? null,
+          qa_question: pair.question,
+          qa_answer: pair.answer,
+          qa_source: pair.source ?? "manual",
+          original_chunk_id: pair.source_chunk_id ?? null,
+          source_chunk_id: pair.source_chunk_id ?? null,
+          doc_form: "qa_model",
+          settings_revision: revision
+        },
+        chunk_type: "general" as const,
+        parent_ordinal: null,
+        child_ordinal: null,
+        settings_revision: revision,
+        start_line: null,
+        end_line: null,
+        start_char: null,
+        end_char: null,
+        parent_local_id: null
+      };
+    });
+}
+
+type ResolvedDifyProcessRule = {
+  preProcessingRules: Array<{ id: string; enabled: boolean }>;
+  segmentation: { separator: string; maxTokens: number; chunkOverlap: number };
+  subchunkSegmentation: { separator: string; maxTokens: number; chunkOverlap: number };
+  parentMode: MarkdownParentChunkMode;
+};
+
+function resolveDifyProcessRule(
+  settings: MarkdownChunkingSettings,
+  docForm: DifyDocForm
+): ResolvedDifyProcessRule {
+  const mode =
+    settings.process_rule_mode ?? (docForm === "hierarchical_model" ? "hierarchical" : "custom");
+  const rule =
+    mode === "automatic"
+      ? defaultDifyProcessRule(docForm)
+      : toRecord(settings.process_rule ?? defaultDifyProcessRule(docForm));
+  const parentMode =
+    settings.parent_mode ??
+    (rule.parent_mode === "full_doc" || rule.parent_mode === "full-doc" ? "full_doc" : "paragraph");
+  return {
+    preProcessingRules: normalizePreProcessingRules(rule.pre_processing_rules),
+    segmentation: normalizeDifySegmentation(rule.segmentation, {
+      separator: "\n\n",
+      maxTokens:
+        docForm === "hierarchical_model"
+          ? DEFAULT_PARENT_CHUNK_MAX_CHARACTERS
+          : DEFAULT_CHUNK_MAX_CHARACTERS,
+      chunkOverlap: docForm === "hierarchical_model" ? 0 : 50
+    }),
+    subchunkSegmentation: normalizeDifySegmentation(rule.subchunk_segmentation, {
+      separator: "\n",
+      maxTokens: DEFAULT_CHILD_CHUNK_MAX_CHARACTERS,
+      chunkOverlap: DEFAULT_CHILD_CHUNK_OVERLAP_CHARACTERS
+    }),
+    parentMode
+  };
+}
+
+function defaultDifyProcessRule(docForm: DifyDocForm): Record<string, unknown> {
+  if (docForm === "hierarchical_model") {
+    return {
+      pre_processing_rules: [
+        { id: "remove_extra_spaces", enabled: true },
+        { id: "remove_urls_emails", enabled: false }
+      ],
+      segmentation: {
+        separator: "\n\n",
+        max_tokens: DEFAULT_PARENT_CHUNK_MAX_CHARACTERS,
+        chunk_overlap: 0
+      },
+      parent_mode: "paragraph",
+      subchunk_segmentation: {
+        separator: "\n",
+        max_tokens: DEFAULT_CHILD_CHUNK_MAX_CHARACTERS,
+        chunk_overlap: DEFAULT_CHILD_CHUNK_OVERLAP_CHARACTERS
+      }
+    };
+  }
+  return {
+    pre_processing_rules: [
+      { id: "remove_extra_spaces", enabled: true },
+      { id: "remove_urls_emails", enabled: false }
+    ],
+    segmentation: {
+      separator: "\n\n",
+      max_tokens: DEFAULT_CHUNK_MAX_CHARACTERS,
+      chunk_overlap: 50
+    },
+    parent_mode: "paragraph",
+    subchunk_segmentation: {
+      separator: "\n",
+      max_tokens: DEFAULT_CHILD_CHUNK_MAX_CHARACTERS,
+      chunk_overlap: DEFAULT_CHILD_CHUNK_OVERLAP_CHARACTERS
+    }
+  };
+}
+
+function normalizePreProcessingRules(value: unknown): Array<{ id: string; enabled: boolean }> {
+  if (!Array.isArray(value)) {
+    return [
+      { id: "remove_extra_spaces", enabled: true },
+      { id: "remove_urls_emails", enabled: false }
+    ];
+  }
+  return value
+    .map((item) => toRecord(item))
+    .flatMap((item) => {
+      const id = typeof item.id === "string" ? item.id : "";
+      if (id !== "remove_extra_spaces" && id !== "remove_urls_emails") {
+        return [];
+      }
+      return [{ id, enabled: item.enabled === true }];
+    });
+}
+
+function normalizeDifySegmentation(
+  value: unknown,
+  fallback: { separator: string; maxTokens: number; chunkOverlap: number }
+) {
+  const record = toRecord(value);
+  const separator =
+    typeof record.separator === "string"
+      ? record.separator
+      : typeof record.delimiter === "string"
+        ? record.delimiter
+        : fallback.separator;
+  return {
+    separator,
+    maxTokens: positiveInt(
+      typeof record.max_tokens === "number" ? record.max_tokens : null,
+      fallback.maxTokens
+    ),
+    chunkOverlap:
+      typeof record.chunk_overlap === "number" && Number.isFinite(record.chunk_overlap)
+        ? Math.max(0, Math.floor(record.chunk_overlap))
+        : fallback.chunkOverlap
+  };
+}
+
+function applyDifyPreProcessing(
+  markdownInput: string,
+  rules: Array<{ id: string; enabled: boolean }>
+): string {
+  let markdown = normalizeMarkdownSource(markdownInput);
+  if (rules.some((rule) => rule.id === "remove_urls_emails" && rule.enabled)) {
+    markdown = markdown
+      .replace(/https?:\/\/[^\s)>\]]+/gi, "")
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "");
+  }
+  if (rules.some((rule) => rule.id === "remove_extra_spaces" && rule.enabled)) {
+    markdown = markdown
+      .split("\n")
+      .map((line) => line.replace(/[ \t]{2,}/g, " ").trimEnd())
+      .join("\n");
+  }
+  return normalizeMarkdownSource(markdown);
 }
 
 function chunkMarkdownParentChild(
@@ -315,6 +556,7 @@ function chunkMarkdownParentChild(
     childMaxCharacters: number;
     childOverlapCharacters: number;
     settingsRevision: number;
+    metadataBase: Record<string, unknown>;
   }
 ): HierarchicalMarkdownChunk[] {
   const markdown = normalizeMarkdownSource(markdownInput);
@@ -366,6 +608,7 @@ function chunkMarkdownParentChild(
       parent_local_id: parentLocalId,
       metadata: {
         ...parent.metadata,
+        ...options.metadataBase,
         chunk_type: "parent",
         parent_ordinal: parentOrdinal,
         settings_revision: options.settingsRevision
@@ -396,6 +639,7 @@ function chunkMarkdownParentChild(
         metadata: {
           start_line: parent.metadata.start_line,
           end_line: parent.metadata.end_line,
+          ...options.metadataBase,
           chunk_type: "child",
           parent_ordinal: parentOrdinal,
           child_ordinal: childOrdinal,
@@ -416,6 +660,48 @@ function chunkMarkdownParentChild(
   }
 
   return chunks.length > 0 ? chunks : chunkMarkdownForIndex("", { mode: "general" });
+}
+
+function chunkMarkdownByDelimiterWithOverlap(
+  markdown: string,
+  options: {
+    delimiter: string;
+    maxCharacters: number;
+    overlapCharacters: number;
+  }
+): MarkdownChunk[] {
+  const outline = extractMarkdownOutline(markdown);
+  const chunks = splitChildMarkdown(
+    markdown,
+    options.delimiter,
+    options.maxCharacters,
+    options.overlapCharacters
+  );
+  let cursor = 0;
+  return chunks.map((contentMarkdown, ordinal) => {
+    const range = findMarkdownRange(markdown, contentMarkdown, cursor);
+    cursor = Math.max(cursor, range.endChar ?? cursor);
+    const startLine =
+      typeof range.startChar === "number" ? lineNumberAtChar(markdown, range.startChar) : 1;
+    const endLine =
+      typeof range.endChar === "number"
+        ? lineNumberAtChar(markdown, Math.max(range.endChar - 1, range.startChar ?? 0))
+        : startLine;
+    const contentText = extractMarkdownPlainText(contentMarkdown);
+    return {
+      ordinal,
+      heading_path: headingPathAtLine(outline, startLine),
+      content_text: contentText,
+      content_markdown: contentMarkdown,
+      token_count: estimateTokenCount(contentText),
+      metadata: {
+        start_line: startLine,
+        end_line: endLine,
+        start_char: range.startChar,
+        end_char: range.endChar
+      }
+    };
+  });
 }
 
 type MarkdownSegment = {
@@ -634,6 +920,19 @@ function findMarkdownRange(
 
 function positiveInt(value: number | null | undefined, fallback: number): number {
   return Number.isInteger(value) && Number(value) > 0 ? Number(value) : fallback;
+}
+
+function boundedOverlap(value: number | null | undefined, maxCharacters: number): number {
+  if (!Number.isInteger(value) || Number(value) <= 0) {
+    return 0;
+  }
+  return Math.min(Number(value), Math.max(0, maxCharacters - 1));
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function normalizeChunkDelimiter(value: string | undefined): string {

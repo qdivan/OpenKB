@@ -33,6 +33,9 @@ const allTables = [
   "import_tool_settings",
   "document_metadata_values",
   "knowledge_base_metadata_fields",
+  "document_summaries",
+  "document_segment_summaries",
+  "document_qa_pairs",
   "document_chunks",
   "import_jobs",
   "share_links",
@@ -55,6 +58,15 @@ const allTables = [
 const prisma = createDatabaseClient();
 const auth = new AuthService({ prisma });
 const permissions = new PermissionService({ prisma });
+
+function tokenFromLink(link: string): string {
+  const parsed = new URL(link);
+  const token = parsed.searchParams.get("token");
+  if (!token) {
+    throw new Error(`Missing token in link: ${link}`);
+  }
+  return token;
+}
 
 describe("ContentService integration", () => {
   beforeEach(async () => {
@@ -102,6 +114,93 @@ describe("ContentService integration", () => {
         seed.knowledgeBaseId
       );
       expect(seededOverview.chunks.total).toBeGreaterThan(0);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("lets system admins discover private workspaces without reading content until audited takeover", async () => {
+    await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const rootLogin = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const second = await auth.createAdminUser(rootLogin.sessionToken, {
+        email: "second-admin@example.com",
+        tenant_role: "system_admin"
+      });
+      await auth.confirmPasswordReset({
+        token: tokenFromLink(second.setup_link),
+        password: "second-password"
+      });
+      const secondLogin = await auth.login({
+        email: "second-admin@example.com",
+        password: "second-password"
+      });
+      const workspace = await content.createWorkspace(secondLogin.sessionToken, {
+        name: "Second Admin Space",
+        slug: "second-admin-space"
+      });
+      const knowledgeBase = await content.createKnowledgeBase(secondLogin.sessionToken, {
+        workspace_id: workspace.id,
+        title: "Private Admin KB",
+        slug: "private-admin-kb",
+        visibility: "private"
+      });
+      const document = await content.createDocument(secondLogin.sessionToken, {
+        knowledge_base_id: knowledgeBase.id,
+        title: "Private Note",
+        slug: "private-note",
+        markdown: "# Private Note"
+      });
+
+      const visibleWorkspaces = await content.listWorkspaces(rootLogin.sessionToken);
+      expect(visibleWorkspaces.find((item) => item.id === workspace.id)).toMatchObject({
+        admin_visible: true,
+        can_read_content: false
+      });
+      const visibleKnowledgeBases = await content.listKnowledgeBases(
+        rootLogin.sessionToken,
+        workspace.id
+      );
+      expect(visibleKnowledgeBases).toContainEqual(
+        expect.objectContaining({
+          id: knowledgeBase.id,
+          admin_visible: true,
+          can_read_content: false,
+          requires_takeover: true
+        })
+      );
+      await expect(
+        content.getKnowledgeBaseTree(rootLogin.sessionToken, knowledgeBase.id)
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(content.getDocument(rootLogin.sessionToken, document.id)).rejects.toMatchObject({
+        code: "FORBIDDEN"
+      });
+
+      await content.takeoverContentAccess(
+        rootLogin.sessionToken,
+        "knowledge_base",
+        knowledgeBase.id,
+        {
+          reason: "integration test"
+        }
+      );
+      await expect(
+        content.getKnowledgeBaseTree(rootLogin.sessionToken, knowledgeBase.id)
+      ).resolves.toHaveLength(1);
+      await expect(content.getDocument(rootLogin.sessionToken, document.id)).resolves.toMatchObject(
+        {
+          id: document.id
+        }
+      );
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { action: "admin.content_access.takeover" }
+      });
+      expect(audit.metadata).toMatchObject({ reason: "integration test" });
     } finally {
       await content.disconnect();
     }
@@ -345,6 +444,7 @@ describe("ContentService integration", () => {
       expect(restored.currentVersion?.version_no).toBe(3);
       expect(restored.currentVersion?.markdown).toBe(firstVersion.markdown);
       expect(restored.currentVersion?.is_current).toBe(true);
+      expect(restored.processing_status).toBe("needs_reprocess");
 
       const afterRestore = await content.listDocumentVersions(login.sessionToken, seed.documentId);
       expect(afterRestore).toHaveLength(3);
@@ -356,6 +456,446 @@ describe("ContentService integration", () => {
         restored_from_version_id: firstVersionId,
         new_version_id: restored.currentVersion?.id
       });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("requires explicit document reprocess before new chunks replace current content", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const initial = await content.getDocument(login.sessionToken, seed.documentId);
+      const nextMarkdown = `# Explicit Reprocess
+
+First paragraph about Liu Bei and Zhuge Liang. ${"OpenKB ".repeat(30)}
+
+Second paragraph about Cao Cao at Guandu. ${"Retrieval ".repeat(30)}
+
+Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
+      const updated = await content.updateDocument(login.sessionToken, seed.documentId, {
+        base_version_id: initial.currentVersion?.id ?? null,
+        markdown: nextMarkdown,
+        markdown_hash: markdownHash(nextMarkdown)
+      });
+
+      expect(updated.processing_status).toBe("needs_reprocess");
+      await expect(
+        prisma.documentChunk.count({ where: { version_id: updated.currentVersion?.id } })
+      ).resolves.toBe(0);
+
+      const published = await content.publishDocument(login.sessionToken, seed.documentId);
+      expect(published.status).toBe("published");
+      expect(published.processing_status).toBe("needs_reprocess");
+      await expect(
+        prisma.documentChunk.count({ where: { version_id: updated.currentVersion?.id } })
+      ).resolves.toBe(0);
+
+      const indexJobsBefore = await prisma.indexRebuildJob.count();
+      const reprocessed = await content.reprocessDocument(login.sessionToken, seed.documentId);
+      expect(reprocessed.processing_status).toBe("current");
+      const chunks = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        {
+          document_id: seed.documentId
+        }
+      );
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(chunks.every((chunk) => chunk.version_id === reprocessed.currentVersion?.id)).toBe(
+        true
+      );
+      await expect(prisma.indexRebuildJob.count()).resolves.toBe(indexJobsBefore);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("requires current-version segments before QA or summary generation", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const current = await content.getDocument(login.sessionToken, seed.documentId);
+      const nextMarkdown = `# Needs Reprocess
+
+This new version should not use stale chunks for derived QA or summary generation.`;
+      await content.updateDocument(login.sessionToken, seed.documentId, {
+        base_version_id: current.currentVersion?.id ?? null,
+        markdown: nextMarkdown,
+        markdown_hash: markdownHash(nextMarkdown)
+      });
+
+      await expect(
+        content.generateQaPairs(login.sessionToken, seed.documentId, {
+          mode: "mock",
+          scope: "document"
+        })
+      ).rejects.toMatchObject({ code: "REPROCESS_REQUIRED" });
+
+      await expect(
+        content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+          scope: "document",
+          mode: "mock"
+        })
+      ).rejects.toMatchObject({ code: "REPROCESS_REQUIRED" });
+
+      await expect(
+        content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+          scope: "all_segments",
+          mode: "mock"
+        })
+      ).rejects.toMatchObject({ code: "REPROCESS_REQUIRED" });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("manages document segments without mutating Markdown versions", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const document = await content.getDocument(login.sessionToken, seed.documentId);
+      const originalMarkdown = document.currentVersion?.markdown ?? "";
+      const chunks = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        { document_id: seed.documentId }
+      );
+      const chunk = chunks.find((item) => item.chunk_type !== "parent") ?? chunks[0];
+      if (!chunk) {
+        throw new Error("Expected seeded document chunks.");
+      }
+
+      const overridden = await content.updateDocumentSegment(
+        login.sessionToken,
+        seed.documentId,
+        chunk.id,
+        {
+          override_content_text: "Override retrieval text",
+          override_content_markdown: "Override retrieval text",
+          status: "disabled"
+        }
+      );
+      expect(overridden).toMatchObject({
+        content_text: "Override retrieval text",
+        has_override: true,
+        needs_chunk_rebuild: false,
+        needs_index_rebuild: true,
+        status: "disabled"
+      });
+
+      const defaultChunks = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        { document_id: seed.documentId }
+      );
+      expect(defaultChunks.some((item) => item.id === chunk.id && item.status === "disabled")).toBe(
+        true
+      );
+
+      await content.updateDocumentSegment(login.sessionToken, seed.documentId, chunk.id, {
+        status: "deleted"
+      });
+      const hiddenDeleted = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        { document_id: seed.documentId }
+      );
+      expect(hiddenDeleted.some((item) => item.id === chunk.id)).toBe(false);
+      const deletedOnly = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        { document_id: seed.documentId, status: "deleted" }
+      );
+      expect(deletedOnly.map((item) => item.id)).toContain(chunk.id);
+
+      const restored = await content.updateDocumentSegment(
+        login.sessionToken,
+        seed.documentId,
+        chunk.id,
+        {
+          reset_override: true,
+          status: "active"
+        }
+      );
+      expect(restored.has_override).toBe(false);
+      expect(restored.content_text).toBe(restored.source_content_text);
+
+      const afterSegmentEdit = await content.getDocument(login.sessionToken, seed.documentId);
+      expect(afterSegmentEdit.currentVersion?.markdown).toBe(originalMarkdown);
+
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      await expect(
+        prisma.documentChunk.findUnique({ where: { id: chunk.id } })
+      ).resolves.toBeNull();
+      const reprocessedChunks = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        { document_id: seed.documentId, status: "all" }
+      );
+      expect(reprocessedChunks.length).toBeGreaterThan(0);
+      expect(
+        reprocessedChunks.every((item) => item.status === "active" && !item.has_override)
+      ).toBe(true);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("imports and indexes QA pairs only after explicit reprocess", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+        doc_form: "qa_model",
+        process_rule_mode: "automatic"
+      });
+      const imported = await content.importQaPairs(login.sessionToken, seed.documentId, {
+        csv: "question,answer\nWho swore brotherhood?,Liu Bei Guan Yu and Zhang Fei."
+      });
+      expect(imported).toMatchObject({ created: 1, skipped: 0 });
+      await expect(
+        prisma.documentChunk.count({
+          where: { document_id: seed.documentId, metadata: { path: ["qa_pair_id"], not: null } }
+        })
+      ).resolves.toBe(0);
+
+      const reprocessed = await content.reprocessDocument(login.sessionToken, seed.documentId);
+      expect(reprocessed.processing_status).toBe("current");
+      const chunks = await prisma.documentChunk.findMany({
+        where: { document_id: seed.documentId, status: "active" },
+        select: { content_text: true, metadata: true, index_role: true }
+      });
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]).toMatchObject({
+        content_text: "Who swore brotherhood?",
+        index_role: "content"
+      });
+      expect(chunks[0]?.metadata).toMatchObject({
+        hit_type: "qa",
+        qa_answer: "Liu Bei Guan Yu and Zhang Fei."
+      });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("generates document and segment summaries as derived index rows without changing markdown", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const before = await content.getDocument(login.sessionToken, seed.documentId);
+      const originalMarkdown = before.currentVersion?.markdown ?? "";
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+
+      const documentSummary = await content.generateSegmentSummary(
+        login.sessionToken,
+        seed.documentId,
+        {
+          scope: "document",
+          mode: "manual",
+          summary: "This document introduces the OpenKB seed content."
+        }
+      );
+      expect(documentSummary).toMatchObject({
+        summary: "This document introduces the OpenKB seed content.",
+        needs_index_rebuild: true
+      });
+
+      const generated = await content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+        scope: "all_segments",
+        mode: "mock"
+      });
+      expect(generated).toMatchObject({
+        needs_index_rebuild: true,
+        needs_chunk_rebuild: false
+      });
+
+      const summaries = await content.listDocumentSummaries(login.sessionToken, seed.documentId);
+      expect(summaries.document_summary?.summary).toContain("OpenKB seed content");
+      expect(summaries.segment_summaries.length).toBeGreaterThan(0);
+      await expect(
+        prisma.documentChunk.count({
+          where: { document_id: seed.documentId, index_role: "summary", status: "active" }
+        })
+      ).resolves.toBeGreaterThanOrEqual(2);
+
+      const after = await content.getDocument(login.sessionToken, seed.documentId);
+      expect(after.currentVersion?.markdown).toBe(originalMarkdown);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("rejects ambiguous segment summary chunk_id usage", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const chunk = await prisma.documentChunk.findFirstOrThrow({
+        where: { document_id: seed.documentId, status: "active", index_role: "content" },
+        orderBy: { ordinal: "asc" }
+      });
+
+      await expect(
+        content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+          scope: "segment",
+          mode: "mock"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+      await expect(
+        content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+          scope: "document",
+          chunk_id: chunk.id,
+          mode: "manual",
+          summary: "Document summary should not target one segment."
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+      await expect(
+        content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+          scope: "all_segments",
+          chunk_id: chunk.id,
+          mode: "mock"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("rejects segment summary generation for stale chunk ids from old versions", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const staleChunk = await prisma.documentChunk.findFirstOrThrow({
+        where: { document_id: seed.documentId, status: "active", index_role: "content" },
+        orderBy: { ordinal: "asc" }
+      });
+
+      const current = await content.getDocument(login.sessionToken, seed.documentId);
+      const nextMarkdown = `# Fresh Current Version
+
+Only chunks from this version may be used for segment summaries.`;
+      await content.updateDocument(login.sessionToken, seed.documentId, {
+        base_version_id: current.currentVersion?.id ?? null,
+        markdown: nextMarkdown,
+        markdown_hash: markdownHash(nextMarkdown)
+      });
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+
+      await expect(
+        content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+          scope: "segment",
+          chunk_id: staleChunk.id,
+          mode: "mock"
+        })
+      ).rejects.toMatchObject({ code: "OBJECT_NOT_FOUND" });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("reprocesses Dify hierarchical paragraph and full document parent chunks", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const markdown = `# Parent Child
+
+Paragraph one. ${"Shu Han ".repeat(50)}
+
+Paragraph two. ${"Wei kingdom ".repeat(50)}
+
+Paragraph three. ${"Wu fleet ".repeat(50)}`;
+      const current = await content.getDocument(login.sessionToken, seed.documentId);
+      await content.updateDocument(login.sessionToken, seed.documentId, {
+        base_version_id: current.currentVersion?.id ?? null,
+        markdown,
+        markdown_hash: markdownHash(markdown)
+      });
+      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+        doc_form: "hierarchical_model",
+        parent_mode: "paragraph",
+        process_rule: {
+          parent_mode: "paragraph",
+          segmentation: { separator: "\n\n", max_tokens: 180, chunk_overlap: 0 },
+          subchunk_segmentation: { separator: " ", max_tokens: 120, chunk_overlap: 20 }
+        }
+      });
+
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const paragraphChunks = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        { document_id: seed.documentId, limit: 500 }
+      );
+      const paragraphParents = paragraphChunks.filter((chunk) => chunk.chunk_type === "parent");
+      const paragraphChildren = paragraphChunks.filter((chunk) => chunk.chunk_type === "child");
+      expect(paragraphParents.length).toBeGreaterThan(1);
+      expect(paragraphChildren.length).toBeGreaterThanOrEqual(paragraphParents.length);
+      expect(paragraphChildren.every((chunk) => Boolean(chunk.parent_chunk_id))).toBe(true);
+      expect(paragraphChunks[0]?.metadata).toMatchObject({
+        doc_form: "hierarchical_model",
+        process_rule_mode: "hierarchical",
+        parent_mode: "paragraph"
+      });
+
+      await content.updateDocumentProcessing(login.sessionToken, seed.documentId, {
+        parent_mode: "full_doc"
+      });
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const fullDocChunks = await content.listKnowledgeBaseChunks(
+        login.sessionToken,
+        seed.knowledgeBaseId,
+        { document_id: seed.documentId, limit: 500 }
+      );
+      const fullDocParents = fullDocChunks.filter((chunk) => chunk.chunk_type === "parent");
+      const fullDocChildren = fullDocChunks.filter((chunk) => chunk.chunk_type === "child");
+      expect(fullDocParents).toHaveLength(1);
+      expect(fullDocChildren.length).toBeGreaterThan(1);
+      expect(fullDocChunks[0]?.metadata).toMatchObject({ parent_mode: "full_doc" });
     } finally {
       await content.disconnect();
     }

@@ -10,6 +10,7 @@ import { AuthController } from "./auth/auth.controller";
 import { AssetController } from "./content/asset.controller";
 import { ChunkRebuildJobController } from "./content/chunk-rebuild-job.controller";
 import { CollaborationController } from "./content/collaboration.controller";
+import { ContentAdminController } from "./content/content-admin.controller";
 import { ContentService } from "./content/content.service";
 import { DocumentController } from "./content/document.controller";
 import { ImportJobController } from "./content/import-job.controller";
@@ -43,6 +44,7 @@ import { SearchController } from "./search/search.controller";
     AssetController,
     ChunkRebuildJobController,
     ImportJobController,
+    ContentAdminController,
     CollaborationController,
     ShareController,
     ImportToolsAdminController,

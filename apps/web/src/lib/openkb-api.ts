@@ -333,6 +333,9 @@ export type Workspace = {
   name: string;
   slug: string;
   role?: string | null;
+  admin_visible?: boolean;
+  can_read_content?: boolean;
+  requires_takeover?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -428,6 +431,9 @@ export type KnowledgeBase = {
   visibility: "private" | "workspace" | "public";
   status: string;
   role?: string | null;
+  admin_visible?: boolean;
+  can_read_content?: boolean;
+  requires_takeover?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -466,6 +472,12 @@ export type DocumentSummary = {
   visibility: string | null;
   current_version_id: string | null;
   sort_order: number;
+  doc_form?: "text_model" | "hierarchical_model" | "qa_model" | null;
+  process_rule_snapshot?: unknown;
+  processing_status?: "current" | "needs_reprocess" | "processing" | "failed";
+  processing_revision?: number;
+  doc_language?: string | null;
+  need_summary?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -574,6 +586,19 @@ export type SearchResponse = {
   query: string;
   top_k: number;
   context_mode?: RetrievalContextMode;
+  metadata?: {
+    effective_retrieval_model?: Record<string, unknown>;
+    retrieval_mode?: RetrievalMode;
+    requested_retrieval_mode?: RetrievalMode;
+    score_source?: "retrieval" | "rerank";
+    score_threshold_applied?: number | null;
+    mixed_retrieval_model?: boolean;
+    hybrid_weights?: {
+      keywordWeight: number;
+      vectorWeight: number;
+    };
+    rebuild_required_reason?: string;
+  };
   results: SearchResult[];
 };
 
@@ -860,6 +885,21 @@ export type ChunkSettings = {
   workspace_id: string;
   knowledge_base_id: string;
   mode: "general" | "parent_child";
+  doc_form: "text_model" | "hierarchical_model" | "qa_model";
+  indexing_technique: "economy" | "high_quality";
+  process_rule_mode: "automatic" | "custom" | "hierarchical";
+  process_rule: unknown;
+  retrieval_model: {
+    search_method?: "semantic_search" | "full_text_search" | "hybrid_search" | "keyword_search";
+    top_k?: number;
+    score_threshold_enabled?: boolean;
+    score_threshold?: number;
+    reranking_enable?: boolean;
+    reranking_mode?: "weighted_score" | "reranking_model";
+    weights?: unknown;
+    metadata_filtering_conditions?: unknown;
+  };
+  summary_index_setting: { enable?: boolean; summary_prompt?: string | null };
   parent_mode: "paragraph" | "full_doc";
   parent_delimiter: string;
   child_delimiter: string;
@@ -877,6 +917,8 @@ export type DocumentChunk = {
   document_id: string;
   version_id: string;
   ordinal: number;
+  index_role?: "content" | "summary";
+  source_chunk_id?: string | null;
   chunk_type: "general" | "parent" | "child";
   parent_chunk_id: string | null;
   settings_revision: number;
@@ -889,9 +931,74 @@ export type DocumentChunk = {
   heading_path: string[];
   content_text: string;
   content_markdown: string;
+  source_content_text?: string;
+  source_content_markdown?: string;
   token_count: number | null;
   metadata: unknown;
+  status: "active" | "disabled" | "deleted";
+  has_override?: boolean;
+  overridden_by?: string | null;
+  overridden_at?: string | null;
+  disabled_at?: string | null;
   created_at: string;
+};
+
+export type DocumentSegmentUpdateResponse = DocumentChunk & {
+  needs_index_rebuild: boolean;
+  needs_chunk_rebuild: boolean;
+  rebuild_hint: string;
+};
+
+export type DocumentProcessing = {
+  document_id: string;
+  knowledge_base_id: string;
+  doc_form: "text_model" | "hierarchical_model" | "qa_model";
+  parent_mode: "paragraph" | "full_doc" | null;
+  process_rule_snapshot: unknown;
+  processing_status: "current" | "needs_reprocess" | "processing" | "failed";
+  processing_revision: number;
+  doc_language: string | null;
+  need_summary: boolean;
+  knowledge_base_settings: ChunkSettings | null;
+};
+
+export type DocumentQaPair = {
+  id: string;
+  document_id: string;
+  question: string;
+  answer: string;
+  source: "manual" | "csv" | "llm";
+  source_chunk_id: string | null;
+  status: "active" | "disabled" | "deleted";
+  metadata: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DocumentSummaryItem = {
+  id: string;
+  document_id: string;
+  summary: string;
+  status: "active" | "disabled" | "deleted";
+  metadata: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DocumentSegmentSummary = {
+  id: string;
+  document_id: string;
+  chunk_id: string;
+  summary: string;
+  status: "active" | "disabled" | "deleted";
+  metadata: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DocumentSummariesResponse = {
+  document_summary: DocumentSummaryItem | null;
+  segment_summaries: DocumentSegmentSummary[];
 };
 
 export type ChunkRebuildJob = {
@@ -1092,6 +1199,23 @@ export function getKnowledgeBase(id: string) {
   return apiFetch<KnowledgeBase>(`/api/knowledge-bases/${id}`);
 }
 
+export function takeoverContentAccess(
+  objectType: "knowledge_base" | "document",
+  id: string,
+  input: { reason: string; role?: Exclude<CollaboratorRole, "owner"> }
+) {
+  return apiFetch<{
+    ok: true;
+    collaborator_id: string;
+    object_type: string;
+    object_id: string;
+    role: string;
+  }>(`/api/admin/content-access/${objectType}/${id}/takeover`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function getKnowledgeBaseTree(id: string) {
   return apiFetch<DocumentSummary[]>(`/api/knowledge-bases/${id}/tree`);
 }
@@ -1222,6 +1346,8 @@ export function searchKnowledge(input: {
   query: string;
   knowledge_base_ids?: string[];
   top_k?: number;
+  score_threshold?: number;
+  retrieval_model?: Partial<ChunkSettings["retrieval_model"]>;
   filters?: Record<string, unknown>;
   context_mode?: RetrievalContextMode;
 }) {
@@ -1245,6 +1371,12 @@ export function updateChunkSettings(
     Pick<
       ChunkSettings,
       | "mode"
+      | "doc_form"
+      | "indexing_technique"
+      | "process_rule_mode"
+      | "process_rule"
+      | "retrieval_model"
+      | "summary_index_setting"
       | "parent_mode"
       | "parent_delimiter"
       | "child_delimiter"
@@ -1260,14 +1392,176 @@ export function updateChunkSettings(
   });
 }
 
+export function getDocumentProcessing(id: string) {
+  return apiFetch<DocumentProcessing>(`/api/documents/${id}/processing`);
+}
+
+export function updateDocumentProcessing(
+  id: string,
+  input: {
+    parent_mode?: "paragraph" | "full_doc";
+    process_rule?: unknown;
+    doc_language?: string | null;
+    need_summary?: boolean;
+  }
+) {
+  return apiFetch<DocumentProcessing>(`/api/documents/${id}/processing`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function reprocessDocument(id: string) {
+  return apiFetch<DocumentDetail>(`/api/documents/${id}/reprocess`, { method: "POST" });
+}
+
+export function updateDocumentSegment(
+  documentId: string,
+  chunkId: string,
+  input: {
+    status?: "active" | "disabled" | "deleted";
+    override_content_text?: string | null;
+    override_content_markdown?: string | null;
+    reset_override?: boolean;
+  }
+) {
+  return apiFetch<DocumentSegmentUpdateResponse>(`/api/documents/${documentId}/chunks/${chunkId}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listDocumentQaPairs(documentId: string) {
+  return apiFetch<DocumentQaPair[]>(`/api/documents/${documentId}/qa`);
+}
+
+export function createDocumentQaPair(
+  documentId: string,
+  input: {
+    question: string;
+    answer: string;
+    source?: "manual" | "csv" | "llm";
+    source_chunk_id?: string | null;
+    metadata?: unknown;
+  }
+) {
+  return apiFetch<DocumentQaPair>(`/api/documents/${documentId}/qa`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateDocumentQaPair(
+  documentId: string,
+  qaId: string,
+  input: {
+    question?: string;
+    answer?: string;
+    status?: "active" | "disabled" | "deleted";
+    source_chunk_id?: string | null;
+    metadata?: unknown;
+  }
+) {
+  return apiFetch<DocumentQaPair>(`/api/documents/${documentId}/qa/${qaId}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function importDocumentQaPairs(
+  documentId: string,
+  input: {
+    csv?: string;
+    rows?: Array<{
+      question: string;
+      answer: string;
+      source_chunk_id?: string | null;
+      metadata?: unknown;
+    }>;
+  }
+) {
+  return apiFetch<{
+    created: number;
+    skipped: number;
+    errors: Array<{ row: number; error: string }>;
+    items: DocumentQaPair[];
+  }>(`/api/documents/${documentId}/qa/import`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function generateDocumentQaPairs(
+  documentId: string,
+  input: {
+    mode: "llm" | "mock";
+    scope: "document" | "segments";
+    count?: number;
+    overwrite?: boolean;
+  }
+) {
+  return apiFetch<{
+    created: number;
+    skipped: number;
+    items: DocumentQaPair[];
+    warnings: string[];
+  }>(`/api/documents/${documentId}/qa/generate`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listDocumentSummaries(documentId: string) {
+  return apiFetch<DocumentSummariesResponse>(`/api/documents/${documentId}/summaries`);
+}
+
+export function generateDocumentSummary(
+  documentId: string,
+  input: {
+    scope?: "document" | "segment" | "all_segments";
+    mode?: "manual" | "llm" | "mock";
+    chunk_id?: string;
+    summary?: string;
+  } = {}
+) {
+  return apiFetch<
+    | (DocumentSummaryItem & {
+        needs_index_rebuild?: boolean;
+        needs_chunk_rebuild?: boolean;
+        rebuild_hint?: string;
+      })
+    | (DocumentSegmentSummary & {
+        needs_index_rebuild?: boolean;
+        needs_chunk_rebuild?: boolean;
+        rebuild_hint?: string;
+      })
+    | {
+        created: number;
+        items: DocumentSegmentSummary[];
+        needs_index_rebuild: boolean;
+        needs_chunk_rebuild: boolean;
+        rebuild_hint: string;
+      }
+  >(`/api/documents/${documentId}/summaries`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function listKnowledgeBaseChunks(
   id: string,
-  input: { document_id?: string; type?: string; limit?: number } = {}
+  input: {
+    document_id?: string;
+    type?: string;
+    limit?: number;
+    status?: "active" | "disabled" | "deleted" | "all";
+  } = {}
 ) {
   const params = new URLSearchParams();
   if (input.document_id) params.set("document_id", input.document_id);
   if (input.type) params.set("type", input.type);
   if (input.limit) params.set("limit", String(input.limit));
+  if (input.status) params.set("status", input.status);
   const query = params.toString();
   return apiFetch<DocumentChunk[]>(`/api/knowledge-bases/${id}/chunks${query ? `?${query}` : ""}`);
 }
@@ -1780,10 +2074,13 @@ export function createAdminUser(input: {
   display_name?: string;
   tenant_role?: TenantRole;
 }) {
-  return apiFetch<{ user: AdminUser; reset_link: string }>("/api/admin/users", {
-    method: "POST",
-    body: JSON.stringify(input)
-  });
+  return apiFetch<{ user: AdminUser; reset_link: string; setup_link?: string }>(
+    "/api/admin/users",
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
 }
 
 export function updateAdminUser(

@@ -260,17 +260,26 @@ class SmtpConversation {
   }
 
   private shiftResponse(): string | null {
-    const marker = "\r\n";
-    const end = this.buffer.indexOf(marker);
+    const result = shiftSmtpResponse(this.buffer);
+    this.buffer = result.buffer;
+    return result.line;
+  }
+}
+
+export function shiftSmtpResponse(buffer: string): { line: string | null; buffer: string } {
+  const marker = "\r\n";
+  let remaining = buffer;
+  while (true) {
+    const end = remaining.indexOf(marker);
     if (end === -1) {
-      return null;
+      return { line: null, buffer: remaining };
     }
-    const line = this.buffer.slice(0, end);
-    this.buffer = this.buffer.slice(end + marker.length);
+    const line = remaining.slice(0, end);
+    remaining = remaining.slice(end + marker.length);
     if (/^\d{3}-/.test(line)) {
-      return null;
+      continue;
     }
-    return line;
+    return { line, buffer: remaining };
   }
 }
 

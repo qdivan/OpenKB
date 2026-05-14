@@ -12,20 +12,19 @@ import {
   Save,
   Search,
   Settings2,
-  Tags,
   Trash2
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useI18n } from "@/lib/i18n-provider";
 import {
-  createChunkRebuildJob,
   createKnowledgeBaseMetadataField,
   deleteKnowledgeBaseMetadataField,
   getChunkSettings,
   getKnowledgeBaseOverview,
   listKnowledgeBaseMetadataFields,
   listKnowledgeBaseChunks,
+  reprocessDocument,
   searchKnowledge,
   updateChunkSettings,
   type ChunkSettings,
@@ -39,7 +38,8 @@ import {
   type SearchResponse
 } from "@/lib/openkb-api";
 
-type DashboardTab = "overview" | "chunks" | "lab" | "metadata" | "settings";
+type DashboardTab = "overview" | "segments" | "lab" | "settings";
+type SettingsTab = "processing" | "chunking" | "retrieval" | "metadata" | "summary" | "reprocess";
 const formControlClass =
   "h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-500";
 
@@ -58,6 +58,7 @@ export function KnowledgeBaseDashboard({
 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<DashboardTab>("overview");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("processing");
   const [overview, setOverview] = useState<KnowledgeBaseOverview | null>(null);
   const [chunks, setChunks] = useState<DocumentChunk[]>([]);
   const [selectedChunkDocumentId, setSelectedChunkDocumentId] = useState<string | null>(null);
@@ -71,12 +72,12 @@ export function KnowledgeBaseDashboard({
   }>({ name: "", type: "string" });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isRebuilding, setIsRebuilding] = useState(false);
   const [labQuery, setLabQuery] = useState("");
   const [labTopK, setLabTopK] = useState(5);
   const [labContextMode, setLabContextMode] = useState<RetrievalContextMode>("parent_child");
   const [labResponse, setLabResponse] = useState<SearchResponse | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [reprocessingDocumentId, setReprocessingDocumentId] = useState<string | null>(null);
 
   const pageDocuments = useMemo(
     () => documents.filter((document) => document.type === "page"),
@@ -95,10 +96,28 @@ export function KnowledgeBaseDashboard({
     () => chunks.filter((chunk) => chunk.document_id === selectedChunkDocumentId),
     [chunks, selectedChunkDocumentId]
   );
+  const needsReprocessDocuments = useMemo(
+    () => pageDocuments.filter((document) => document.processing_status === "needs_reprocess"),
+    [pageDocuments]
+  );
+  const retrievalWeights = useMemo(
+    () => parseHybridWeights(settings?.retrieval_model?.weights),
+    [settings?.retrieval_model?.weights]
+  );
+  const processRulePreview = useMemo(
+    () => formatJsonPreview(settings?.process_rule),
+    [settings?.process_rule]
+  );
 
   useEffect(() => {
     void load();
   }, [knowledgeBaseId]);
+
+  useEffect(() => {
+    if (settings?.retrieval_model?.top_k) {
+      setLabTopK(settings.retrieval_model.top_k);
+    }
+  }, [settings?.retrieval_model?.top_k]);
 
   useEffect(() => {
     if (pageDocuments.length === 0) {
@@ -191,6 +210,11 @@ export function KnowledgeBaseDashboard({
     try {
       const updated = await updateChunkSettings(knowledgeBaseId, {
         mode: settings.mode,
+        doc_form: settings.doc_form,
+        indexing_technique: settings.indexing_technique,
+        process_rule_mode: settings.process_rule_mode,
+        retrieval_model: settings.retrieval_model,
+        summary_index_setting: settings.summary_index_setting,
         parent_mode: settings.parent_mode,
         parent_delimiter: settings.parent_delimiter,
         child_delimiter: settings.child_delimiter,
@@ -207,15 +231,15 @@ export function KnowledgeBaseDashboard({
     }
   }
 
-  async function queueRebuild() {
-    setIsRebuilding(true);
+  async function reprocessPageDocument(documentId: string) {
+    setReprocessingDocumentId(documentId);
     try {
-      await createChunkRebuildJob(knowledgeBaseId);
+      await reprocessDocument(documentId);
       await load();
     } catch (error) {
       onError(error);
     } finally {
-      setIsRebuilding(false);
+      setReprocessingDocumentId(null);
     }
   }
 
@@ -266,7 +290,9 @@ export function KnowledgeBaseDashboard({
             <Badge tone="emerald">
               {t("status: {value}", { value: t(overview?.knowledge_base.status ?? "") })}
             </Badge>
-            {overview?.needs_chunk_rebuild ? <Badge tone="amber">{t("chunks stale")}</Badge> : null}
+            {overview?.needs_chunk_rebuild ? (
+              <Badge tone="amber">{t("segments stale")}</Badge>
+            ) : null}
             {overview?.needs_index_rebuild ? (
               <Badge tone="sky">{t("index rebuild needed")}</Badge>
             ) : null}
@@ -300,26 +326,23 @@ export function KnowledgeBaseDashboard({
         >
           {t("Overview")}
         </TabButton>
-        <TabButton active={tab === "chunks"} icon={<Layers3 />} onClick={() => setTab("chunks")}>
-          {t("Chunks")}
+        <TabButton
+          active={tab === "segments"}
+          icon={<Layers3 />}
+          onClick={() => setTab("segments")}
+        >
+          {t("Segments")}
         </TabButton>
         <TabButton active={tab === "lab"} icon={<Search />} onClick={() => setTab("lab")}>
           {t("Retrieval Lab")}
         </TabButton>
         <TabButton
-          active={tab === "metadata"}
-          icon={<Tags />}
-          onClick={() => {
-            setTab("metadata");
-            if (!metadataFields) void loadMetadataFields();
-          }}
-        >
-          {t("Metadata")}
-        </TabButton>
-        <TabButton
           active={tab === "settings"}
           icon={<Settings2 />}
-          onClick={() => setTab("settings")}
+          onClick={() => {
+            setTab("settings");
+            if (settingsTab === "metadata" && !metadataFields) void loadMetadataFields();
+          }}
         >
           {t("Settings")}
         </TabButton>
@@ -333,8 +356,8 @@ export function KnowledgeBaseDashboard({
             label={t("Published")}
             value={overview.documents.published}
           />
-          <Metric icon={<Layers3 />} label={t("Chunks")} value={overview.chunks.total} />
-          <Metric icon={<Database />} label={t("Child chunks")} value={overview.chunks.child} />
+          <Metric icon={<Layers3 />} label={t("Segments")} value={overview.chunks.total} />
+          <Metric icon={<Database />} label={t("Child segments")} value={overview.chunks.child} />
         </section>
       ) : null}
 
@@ -367,9 +390,9 @@ export function KnowledgeBaseDashboard({
         </section>
       ) : null}
 
-      {tab === "chunks" ? (
+      {tab === "segments" ? (
         <section className="mt-5">
-          <Panel title={t("Chunk map")}>
+          <Panel title={t("Segment map")}>
             <div className="grid min-h-[260px] gap-3 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)]">
               <div className="max-h-[620px] overflow-y-auto rounded-md border border-zinc-200 bg-white p-2">
                 <div className="mb-2 flex items-center justify-between gap-2 px-2 text-xs font-medium text-zinc-500">
@@ -411,7 +434,7 @@ export function KnowledgeBaseDashboard({
                         {selectedChunkDocument.title}
                       </h3>
                       <p className="mt-1 text-xs text-zinc-500">
-                        {t("{count} chunks", { count: selectedDocumentChunks.length })}
+                        {t("{count} segments", { count: selectedDocumentChunks.length })}
                       </p>
                     </div>
                     <button
@@ -437,19 +460,31 @@ export function KnowledgeBaseDashboard({
                           <Badge tone={chunk.chunk_type === "parent" ? "emerald" : "zinc"}>
                             {t(chunk.chunk_type)}
                           </Badge>
+                          <Badge tone={chunk.status === "active" ? "emerald" : "amber"}>
+                            {t(chunk.status)}
+                          </Badge>
+                          {chunk.has_override ? <Badge tone="sky">{t("override")}</Badge> : null}
+                          {chunk.index_role === "summary" ? (
+                            <Badge tone="sky">{t("summary hit")}</Badge>
+                          ) : null}
                           <span>#{chunk.ordinal}</span>
                           <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
                         </div>
                         <p className="mt-1 line-clamp-2 text-sm text-zinc-700">
                           {chunk.content_text}
                         </p>
+                        <p className="mt-2 text-xs text-zinc-500">
+                          {t(
+                            "Open the document Segments panel to manage segment status or overrides."
+                          )}
+                        </p>
                       </button>
                     ))
                   ) : (
                     <EmptyLine>
                       {selectedChunkDocument
-                        ? t("No chunks for this document")
-                        : t("Select a document to inspect chunks")}
+                        ? t("No segments for this document")
+                        : t("Select a document to inspect segments")}
                     </EmptyLine>
                   )}
                 </div>
@@ -533,152 +568,489 @@ export function KnowledgeBaseDashboard({
         </section>
       ) : null}
 
-      {tab === "metadata" ? (
-        <section className="mt-5">
-          <Panel title={t("Dify metadata schema")}>
-            <p className="text-sm text-zinc-600">
-              {t(
-                "These fields become document metadata and can be used by Dify metadata_condition."
-              )}
-            </p>
-            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="space-y-3">
-                <div className="rounded-md border border-zinc-200 bg-white p-3">
-                  <h3 className="text-sm font-semibold">{t("Built-in fields")}</h3>
-                  <div className="mt-2 grid gap-2 md:grid-cols-2">
-                    {(metadataFields?.built_in ?? []).map((field) => (
-                      <MetadataFieldCard field={field} key={field.name} />
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded-md border border-zinc-200 bg-white p-3">
-                  <h3 className="text-sm font-semibold">{t("Custom fields")}</h3>
-                  <div className="mt-2 space-y-2">
-                    {(metadataFields?.custom ?? []).map((field) => (
-                      <div
-                        className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 px-3 py-2"
-                        key={field.id ?? field.name}
-                      >
-                        <MetadataFieldCard field={field} compact />
-                        <button
-                          className="icon-button text-red-600"
-                          onClick={() => void archiveMetadataField(field)}
-                          title={t("Archive field")}
-                          type="button"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                    {metadataFields && metadataFields.custom.length === 0 ? (
-                      <EmptyLine>{t("No custom metadata fields")}</EmptyLine>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-
-              <form
-                className="rounded-md border border-zinc-200 bg-white p-3"
-                onSubmit={createMetadataField}
-              >
-                <h3 className="text-sm font-semibold">{t("Add metadata field")}</h3>
-                <div className="mt-3 space-y-3">
-                  <TextField
-                    label={t("Field name")}
-                    onChange={(value) => setMetadataForm({ ...metadataForm, name: value })}
-                    value={metadataForm.name}
-                  />
-                  <Field label={t("Field type")}>
-                    <select
-                      className={formControlClass}
-                      onChange={(event) =>
-                        setMetadataForm({
-                          ...metadataForm,
-                          type: event.target.value as KnowledgeBaseMetadataFieldType
-                        })
-                      }
-                      value={metadataForm.type}
-                    >
-                      <option value="string">{t("String")}</option>
-                      <option value="number">{t("Number")}</option>
-                      <option value="time">{t("Time")}</option>
-                    </select>
-                  </Field>
-                  <button
-                    className="inline-flex h-9 items-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"
-                    type="submit"
-                  >
-                    {t("Add field")}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </Panel>
-        </section>
-      ) : null}
-
       {tab === "settings" && settings ? (
-        <section className="mt-5">
-          <Panel title={t("Chunk settings")}>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label={t("Mode")}>
-                <select
-                  className={formControlClass}
-                  onChange={(event) =>
-                    setSettings({ ...settings, mode: event.target.value as ChunkSettings["mode"] })
+        <section className="mt-5 space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["processing", "Processing mode"],
+                ["chunking", "Chunk rules"],
+                ["retrieval", "Retrieval policy"],
+                ["metadata", "Metadata"],
+                ["summary", "Summary"],
+                ["reprocess", "Reprocess"]
+              ] as const
+            ).map(([item, label]) => (
+              <SettingsTabButton
+                active={settingsTab === item}
+                key={item}
+                onClick={() => {
+                  setSettingsTab(item);
+                  if (item === "metadata" && !metadataFields) void loadMetadataFields();
+                }}
+              >
+                {t(label)}
+              </SettingsTabButton>
+            ))}
+          </div>
+
+          {settingsTab === "processing" ? (
+            <Panel title={t("Processing mode")}>
+              <p className="mb-4 text-sm text-zinc-600">
+                {t(
+                  "These Dify-like settings decide how documents are processed into derived segments. They do not configure model secrets."
+                )}
+              </p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label={t("Mode")}>
+                  <select
+                    className={formControlClass}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        mode: event.target.value as ChunkSettings["mode"]
+                      })
+                    }
+                    value={settings.mode}
+                  >
+                    <option value="parent_child">{t("Parent child")}</option>
+                    <option value="general">{t("General")}</option>
+                  </select>
+                </Field>
+                <Field label={t("Dify doc form")}>
+                  <select
+                    className={formControlClass}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        doc_form: event.target.value as ChunkSettings["doc_form"],
+                        mode: event.target.value === "text_model" ? "general" : "parent_child",
+                        process_rule_mode:
+                          event.target.value === "hierarchical_model" ? "hierarchical" : "custom"
+                      })
+                    }
+                    value={settings.doc_form}
+                  >
+                    <option value="text_model">{t("General document")}</option>
+                    <option value="hierarchical_model">{t("Parent-child document")}</option>
+                    <option value="qa_model">{t("QA document")}</option>
+                  </select>
+                </Field>
+                <Field label={t("Indexing technique")}>
+                  <select
+                    className={formControlClass}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        indexing_technique: event.target
+                          .value as ChunkSettings["indexing_technique"]
+                      })
+                    }
+                    value={settings.indexing_technique}
+                  >
+                    <option value="economy">{t("Economy keyword/BM25")}</option>
+                    <option value="high_quality">{t("High quality Embedding/Hybrid")}</option>
+                  </select>
+                </Field>
+                <Field label={t("Process rule mode")}>
+                  <select
+                    className={formControlClass}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        process_rule_mode: event.target.value as ChunkSettings["process_rule_mode"]
+                      })
+                    }
+                    value={settings.process_rule_mode}
+                  >
+                    <option value="automatic">{t("Automatic segmentation")}</option>
+                    <option value="custom">{t("Custom segmentation")}</option>
+                    <option value="hierarchical">{t("Hierarchical segmentation")}</option>
+                  </select>
+                </Field>
+                <Field label={t("Parent mode")}>
+                  <select
+                    className={formControlClass}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        parent_mode: event.target.value as ChunkSettings["parent_mode"]
+                      })
+                    }
+                    value={settings.parent_mode}
+                  >
+                    <option value="paragraph">{t("Paragraph")}</option>
+                    <option value="full_doc">{t("Full doc")}</option>
+                  </select>
+                </Field>
+                <ReadOnlyField label={t("Settings revision")} value={String(settings.revision)} />
+              </div>
+            </Panel>
+          ) : null}
+
+          {settingsTab === "chunking" ? (
+            <Panel title={t("Chunk rules")}>
+              <p className="mb-4 text-sm text-zinc-600">
+                {t(
+                  "Parent segmentation creates retrieval context. Subchunk segmentation creates matchable child segments."
+                )}
+              </p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <NumberField
+                  label={t("Parent chars")}
+                  onChange={(value) => setSettings({ ...settings, parent_max_characters: value })}
+                  value={settings.parent_max_characters}
+                />
+                <TextField
+                  label={t("Parent delimiter")}
+                  onChange={(value) =>
+                    setSettings({ ...settings, parent_delimiter: decodeDelimiter(value) })
                   }
-                  value={settings.mode}
-                >
-                  <option value="parent_child">{t("Parent child")}</option>
-                  <option value="general">{t("General")}</option>
-                </select>
-              </Field>
-              <Field label={t("Parent mode")}>
-                <select
-                  className={formControlClass}
-                  onChange={(event) =>
+                  value={encodeDelimiter(settings.parent_delimiter)}
+                />
+                <NumberField
+                  label={t("Child chars")}
+                  onChange={(value) => setSettings({ ...settings, child_max_characters: value })}
+                  value={settings.child_max_characters}
+                />
+                <NumberField
+                  label={t("Child overlap")}
+                  onChange={(value) =>
+                    setSettings({ ...settings, child_overlap_characters: value })
+                  }
+                  value={settings.child_overlap_characters}
+                />
+                <TextField
+                  label={t("Child delimiter")}
+                  onChange={(value) =>
+                    setSettings({ ...settings, child_delimiter: decodeDelimiter(value) })
+                  }
+                  value={encodeDelimiter(settings.child_delimiter)}
+                />
+              </div>
+              <div className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
+                <h3 className="text-xs font-semibold text-zinc-700">{t("Process rule preview")}</h3>
+                <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-950 p-3 text-xs leading-5 text-zinc-50">
+                  {processRulePreview}
+                </pre>
+              </div>
+            </Panel>
+          ) : null}
+
+          {settingsTab === "retrieval" ? (
+            <Panel title={t("Retrieval policy")}>
+              <p className="mb-4 text-sm text-zinc-600">
+                {t(
+                  "This is the knowledge base default retrieval policy. Requests may override top K and filters, but model endpoints stay system-admin only."
+                )}
+              </p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label={t("Search method")}>
+                  <select
+                    className={formControlClass}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        retrieval_model: {
+                          ...(settings.retrieval_model ?? {}),
+                          search_method: event.target.value as NonNullable<
+                            ChunkSettings["retrieval_model"]["search_method"]
+                          >
+                        }
+                      })
+                    }
+                    value={settings.retrieval_model?.search_method ?? "hybrid_search"}
+                  >
+                    <option value="semantic_search">{t("Semantic search")}</option>
+                    <option value="full_text_search">{t("Full text search")}</option>
+                    <option value="hybrid_search">{t("Hybrid search")}</option>
+                    <option value="keyword_search">{t("Keyword search")}</option>
+                  </select>
+                </Field>
+                <NumberField
+                  label={t("Default top K")}
+                  onChange={(value) =>
                     setSettings({
                       ...settings,
-                      parent_mode: event.target.value as ChunkSettings["parent_mode"]
+                      retrieval_model: { ...(settings.retrieval_model ?? {}), top_k: value }
                     })
                   }
-                  value={settings.parent_mode}
+                  value={settings.retrieval_model?.top_k ?? 10}
+                />
+                <NumberField
+                  label={t("Score threshold")}
+                  onChange={(value) =>
+                    setSettings({
+                      ...settings,
+                      retrieval_model: {
+                        ...(settings.retrieval_model ?? {}),
+                        score_threshold: value / 100
+                      }
+                    })
+                  }
+                  value={Math.round((settings.retrieval_model?.score_threshold ?? 0) * 100)}
+                />
+                <Field label={t("Enable score threshold")}>
+                  <ToggleLine
+                    checked={settings.retrieval_model?.score_threshold_enabled === true}
+                    label={t("Apply threshold after permission final check")}
+                    onChange={(checked) =>
+                      setSettings({
+                        ...settings,
+                        retrieval_model: {
+                          ...(settings.retrieval_model ?? {}),
+                          score_threshold_enabled: checked
+                        }
+                      })
+                    }
+                  />
+                </Field>
+                <NumberField
+                  label={t("Keyword weight")}
+                  onChange={(value) =>
+                    setSettings({
+                      ...settings,
+                      retrieval_model: {
+                        ...(settings.retrieval_model ?? {}),
+                        weights: buildHybridWeights(value / 100, retrievalWeights.vector)
+                      }
+                    })
+                  }
+                  value={Math.round(retrievalWeights.keyword * 100)}
+                />
+                <NumberField
+                  label={t("Vector weight")}
+                  onChange={(value) =>
+                    setSettings({
+                      ...settings,
+                      retrieval_model: {
+                        ...(settings.retrieval_model ?? {}),
+                        weights: buildHybridWeights(retrievalWeights.keyword, value / 100)
+                      }
+                    })
+                  }
+                  value={Math.round(retrievalWeights.vector * 100)}
+                />
+                <Field label={t("Rerank")}>
+                  <ToggleLine
+                    checked={settings.retrieval_model?.reranking_enable === true}
+                    label={t("Enable rerank after candidate retrieval")}
+                    onChange={(checked) =>
+                      setSettings({
+                        ...settings,
+                        retrieval_model: {
+                          ...(settings.retrieval_model ?? {}),
+                          reranking_enable: checked
+                        }
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+            </Panel>
+          ) : null}
+
+          {settingsTab === "metadata" ? (
+            <Panel title={t("Dify metadata schema")}>
+              <p className="text-sm text-zinc-600">
+                {t(
+                  "These fields become document metadata and can be used by Dify metadata_condition."
+                )}
+              </p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="space-y-3">
+                  <div className="rounded-md border border-zinc-200 bg-white p-3">
+                    <h3 className="text-sm font-semibold">{t("Built-in fields")}</h3>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      {(metadataFields?.built_in ?? []).map((field) => (
+                        <MetadataFieldCard field={field} key={field.name} />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-zinc-200 bg-white p-3">
+                    <h3 className="text-sm font-semibold">{t("Custom fields")}</h3>
+                    <div className="mt-2 space-y-2">
+                      {(metadataFields?.custom ?? []).map((field) => (
+                        <div
+                          className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 px-3 py-2"
+                          key={field.id ?? field.name}
+                        >
+                          <MetadataFieldCard field={field} compact />
+                          <button
+                            className="icon-button text-red-600"
+                            onClick={() => void archiveMetadataField(field)}
+                            title={t("Archive field")}
+                            type="button"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                      {metadataFields && metadataFields.custom.length === 0 ? (
+                        <EmptyLine>{t("No custom metadata fields")}</EmptyLine>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+
+                <form
+                  className="rounded-md border border-zinc-200 bg-white p-3"
+                  onSubmit={createMetadataField}
                 >
-                  <option value="paragraph">{t("Paragraph")}</option>
-                  <option value="full_doc">{t("Full doc")}</option>
-                </select>
-              </Field>
-              <NumberField
-                label={t("Parent chars")}
-                onChange={(value) => setSettings({ ...settings, parent_max_characters: value })}
-                value={settings.parent_max_characters}
-              />
-              <TextField
-                label={t("Parent delimiter")}
-                onChange={(value) =>
-                  setSettings({ ...settings, parent_delimiter: decodeDelimiter(value) })
-                }
-                value={encodeDelimiter(settings.parent_delimiter)}
-              />
-              <NumberField
-                label={t("Child chars")}
-                onChange={(value) => setSettings({ ...settings, child_max_characters: value })}
-                value={settings.child_max_characters}
-              />
-              <NumberField
-                label={t("Child overlap")}
-                onChange={(value) => setSettings({ ...settings, child_overlap_characters: value })}
-                value={settings.child_overlap_characters}
-              />
-              <TextField
-                label={t("Child delimiter")}
-                onChange={(value) =>
-                  setSettings({ ...settings, child_delimiter: decodeDelimiter(value) })
-                }
-                value={encodeDelimiter(settings.child_delimiter)}
-              />
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
+                  <h3 className="text-sm font-semibold">{t("Add metadata field")}</h3>
+                  <div className="mt-3 space-y-3">
+                    <TextField
+                      label={t("Field name")}
+                      onChange={(value) => setMetadataForm({ ...metadataForm, name: value })}
+                      value={metadataForm.name}
+                    />
+                    <Field label={t("Field type")}>
+                      <select
+                        className={formControlClass}
+                        onChange={(event) =>
+                          setMetadataForm({
+                            ...metadataForm,
+                            type: event.target.value as KnowledgeBaseMetadataFieldType
+                          })
+                        }
+                        value={metadataForm.type}
+                      >
+                        <option value="string">{t("String")}</option>
+                        <option value="number">{t("Number")}</option>
+                        <option value="time">{t("Time")}</option>
+                      </select>
+                    </Field>
+                    <button
+                      className="inline-flex h-9 items-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"
+                      type="submit"
+                    >
+                      {t("Add field")}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </Panel>
+          ) : null}
+
+          {settingsTab === "summary" ? (
+            <Panel title={t("Summary index")}>
+              <p className="mb-4 text-sm text-zinc-600">
+                {t(
+                  "Summary index settings decide whether generated summaries can participate in retrieval. They never trigger LLM generation automatically."
+                )}
+              </p>
+              <div className="space-y-3">
+                <Field label={t("Summary index")}>
+                  <ToggleLine
+                    checked={settings.summary_index_setting?.enable === true}
+                    label={t("Allow manually generated summaries to be indexed")}
+                    onChange={(checked) =>
+                      setSettings({
+                        ...settings,
+                        summary_index_setting: {
+                          ...(settings.summary_index_setting ?? {}),
+                          enable: checked
+                        }
+                      })
+                    }
+                  />
+                </Field>
+                <label className="block text-sm">
+                  <span className="mb-1 block font-medium text-zinc-600">
+                    {t("Summary prompt")}
+                  </span>
+                  <textarea
+                    className="min-h-28 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        summary_index_setting: {
+                          ...(settings.summary_index_setting ?? {}),
+                          summary_prompt: event.target.value
+                        }
+                      })
+                    }
+                    placeholder={t("Optional system prompt for explicit summary generation")}
+                    value={settings.summary_index_setting?.summary_prompt ?? ""}
+                  />
+                </label>
+              </div>
+            </Panel>
+          ) : null}
+
+          {settingsTab === "reprocess" ? (
+            <Panel title={t("Reprocess documents")}>
+              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+                {t(
+                  "Reprocess rebuilds PostgreSQL segments from Markdown. Search, MCP, and Dify still need a Milvus index rebuild before they use the new segments."
+                )}
+              </div>
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Badge tone={needsReprocessDocuments.length > 0 ? "amber" : "emerald"}>
+                  {t("{count} documents need reprocess", {
+                    count: needsReprocessDocuments.length
+                  })}
+                </Badge>
+                <Badge tone="zinc">
+                  {t("{count} page documents", { count: pageDocuments.length })}
+                </Badge>
+              </div>
+              <div className="space-y-2">
+                {pageDocuments.map((document) => (
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2"
+                    key={document.id}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-zinc-900">{document.title}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                        <Badge
+                          tone={
+                            document.processing_status === "needs_reprocess" ? "amber" : "emerald"
+                          }
+                        >
+                          {t(document.processing_status ?? "current")}
+                        </Badge>
+                        {document.processing_revision ? (
+                          <span>
+                            {t("Processing revision")}: {document.processing_revision}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                        onClick={() => onOpenDocument(document.id)}
+                        type="button"
+                      >
+                        {t("Open document")}
+                      </button>
+                      <button
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md bg-zinc-950 px-2.5 text-xs font-medium text-white disabled:bg-zinc-300"
+                        disabled={reprocessingDocumentId === document.id}
+                        onClick={() => void reprocessPageDocument(document.id)}
+                        type="button"
+                      >
+                        {reprocessingDocumentId === document.id ? (
+                          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        {t("Reprocess")}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {pageDocuments.length === 0 ? (
+                  <EmptyLine>{t("No page documents")}</EmptyLine>
+                ) : null}
+              </div>
+            </Panel>
+          ) : null}
+
+          {settingsTab !== "metadata" && settingsTab !== "reprocess" ? (
+            <div className="flex flex-wrap gap-2">
               <button
                 className="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"
                 disabled={isSaving}
@@ -692,21 +1064,8 @@ export function KnowledgeBaseDashboard({
                 )}
                 {t("Save settings")}
               </button>
-              <button
-                className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-800"
-                disabled={isRebuilding}
-                onClick={() => void queueRebuild()}
-                type="button"
-              >
-                {isRebuilding ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                {t("Rebuild chunks")}
-              </button>
             </div>
-          </Panel>
+          ) : null}
         </section>
       ) : null}
     </div>
@@ -735,6 +1094,30 @@ function TabButton({
       <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center [&>svg]:h-4 [&>svg]:w-4">
         {icon}
       </span>
+      {children}
+    </button>
+  );
+}
+
+function SettingsTabButton({
+  active,
+  children,
+  onClick
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`inline-flex h-8 items-center rounded-md px-3 text-xs font-medium ${
+        active
+          ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100"
+          : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
       {children}
     </button>
   );
@@ -795,6 +1178,38 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
     <label className="grid gap-1 text-sm">
       <span className="text-xs font-medium text-zinc-500">{label}</span>
       {children}
+    </label>
+  );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <Field label={label}>
+      <div className="flex h-10 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-600">
+        {value}
+      </div>
+    </Field>
+  );
+}
+
+function ToggleLine({
+  checked,
+  label,
+  onChange
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex h-10 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-700">
+      <input
+        checked={checked}
+        className="h-4 w-4 rounded border-zinc-300"
+        onChange={(event) => onChange(event.target.checked)}
+        type="checkbox"
+      />
+      {label}
     </label>
   );
 }
@@ -869,4 +1284,47 @@ function encodeDelimiter(value: string): string {
 
 function decodeDelimiter(value: string): string {
   return value.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+}
+
+function formatJsonPreview(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return "{}";
+  }
+}
+
+function parseHybridWeights(value: unknown): { keyword: number; vector: number } {
+  if (!value || typeof value !== "object") {
+    return { keyword: 0.5, vector: 0.5 };
+  }
+  const record = value as Record<string, unknown>;
+  const keywordSetting = toRecord(record.keyword_setting);
+  const vectorSetting = toRecord(record.vector_setting);
+  return {
+    keyword: normalizeWeight(keywordSetting.keyword_weight, 0.5),
+    vector: normalizeWeight(vectorSetting.vector_weight, 0.5)
+  };
+}
+
+function buildHybridWeights(keyword: number, vector: number) {
+  return {
+    keyword_setting: { keyword_weight: clampWeight(keyword) },
+    vector_setting: { vector_weight: clampWeight(vector) }
+  };
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function normalizeWeight(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? clampWeight(value) : fallback;
+}
+
+function clampWeight(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0.5;
+  }
+  return Math.min(1, Math.max(0.01, value));
 }

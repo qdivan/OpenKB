@@ -294,3 +294,26 @@ Phase 20 实现落点：
 - Dify key 仍是 app-key-bound，只能访问 allowed KB。
 - OpenKB 不写 Dify 数据库；所有对齐通过 External Knowledge API contract 和 OpenKB Admin 配置完成。
 - `openkb_*`、chunk、retrieval explain 字段是技术诊断 metadata，不应替代 Dify 风格业务 metadata schema。
+## Phase 22 - Dify 1.14.1 知识库处理与检索逻辑对齐
+
+当前状态：Phase 22 已进入“升级 + 差异审计 + 分步实现”阶段。Dify 1.14.1 原地升级、本地 sandbox Python execution 修复、三方对照矩阵和后续拆分计划记录在 `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`。
+
+输出：
+- Dify `doc_form` 对齐：`text_model`、`hierarchical_model`、`qa_model`。
+- Dify `process_rule` 对齐：automatic/custom/hierarchical、paragraph parent、full-doc parent、文档处理快照和显式 reprocess。
+- Dify `retrieval_model` 对齐：semantic/full_text/hybrid/keyword、economy/high_quality、rerank 开关、metadata filters。
+- Segment 管理：Phase 22.4 已支持 active/disabled/deleted、override content、reset override、soft delete/restore；override 不反写 Markdown 正文。
+- QA 与摘要索引：手动 QA pair、summary schema、后续 LLM 批量生成。
+- Dify Adapter metadata 增加 `doc_form`、`indexing_technique`、`retrieval_model`、`segment_status`、`summary_hit`、`qa_question`、`qa_answer`。
+
+边界：
+- 不做知识库级模型 secret；模型仍由 system_admin 在实例级配置。
+- 不让 Dify key 模拟用户；仍按 app-key-bound allowed KB scope 检索。
+- Milvus 仍是派生索引；PostgreSQL + PermissionService 仍是最终权限真相。
+
+后续拆分：
+- Phase 22.2：Dify 风格分块与显式 reprocess。
+- Phase 22.3：KB 级 retrieval_model 完整注入 Web/MCP/Dify/Search。
+- Phase 22.4：文档级 segment 管理与索引重建提示已完成基础闭环。
+- Phase 22.5：QA/summary 生成闭环，先 mock/手动，后接实例级 LLM。
+- Phase 22.6：KB Settings 与文档右侧 Dify-like 处理面板。

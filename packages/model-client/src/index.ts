@@ -41,6 +41,7 @@ export type ModelCapabilities = {
 };
 
 export type ModelClientErrorCode =
+  | "INVALID_INPUT"
   | "MODEL_NOT_CONFIGURED"
   | "MODEL_REQUEST_FAILED"
   | "MODEL_RESPONSE_INVALID"
@@ -328,6 +329,18 @@ export class OpenKBModelClient {
         error: error instanceof Error ? error.message : "Language model probe failed."
       };
     }
+  }
+
+  async generateLanguageText(prompt: string): Promise<string> {
+    if (!isLanguageConfigured(this.config)) {
+      throw new ModelClientError("MODEL_NOT_CONFIGURED", "Language model is not configured.");
+    }
+    const normalizedPrompt = prompt.trim();
+    if (!normalizedPrompt) {
+      throw new ModelClientError("INVALID_INPUT", "Language prompt is required.", 400);
+    }
+    const body = await this.requestLanguageProbe(normalizedPrompt);
+    return parseLanguageTextResponse(body);
   }
 
   private async requestEmbeddingBatch(texts: string[]): Promise<number[][]> {
@@ -949,6 +962,58 @@ function assertRecord(value: unknown, label: string): Record<string, unknown> {
     throw new ModelClientError("MODEL_RESPONSE_INVALID", `${label} is not an object.`);
   }
   return value as Record<string, unknown>;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function parseLanguageTextResponse(value: unknown): string {
+  const payload = assertRecord(value, "Language model response");
+  const outputText = firstString(payload.output_text, payload.text, payload.content);
+  if (outputText) {
+    return outputText;
+  }
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  for (const choice of choices) {
+    const record = toRecord(choice);
+    const message = toRecord(record.message);
+    const content = firstString(message.content, record.text);
+    if (content) {
+      return content;
+    }
+    const parts = Array.isArray(message.content) ? message.content : [];
+    const text = parts
+      .map((part) => firstString(toRecord(part).text))
+      .filter(Boolean)
+      .join("\n");
+    if (text.trim()) {
+      return text.trim();
+    }
+  }
+
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const outputParts: string[] = [];
+  for (const item of output) {
+    const content = toRecord(item).content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const part of content) {
+      const text = firstString(toRecord(part).text);
+      if (text) {
+        outputParts.push(text);
+      }
+    }
+  }
+  if (outputParts.join("\n").trim()) {
+    return outputParts.join("\n").trim();
+  }
+
+  throw new ModelClientError("MODEL_RESPONSE_INVALID", "Language model response has no text.");
 }
 
 function chunk<T>(values: T[], size: number): T[][] {

@@ -39,6 +39,8 @@ Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；�
 
 当前已实现 `/app/admin`、`/app/admin/users`、`/app/admin/auth-settings`、`/app/admin/retrieval`、`/app/admin/models`、`/app/admin/import-tools`、`/app/admin/indexing`、`/app/admin/dify`、`/app/admin/mcp` 和 `/app/admin/audit` 页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Models 页面是实例级 `system_admin` 配置中心，Import Tools 页面是实例级 `system_admin` 导入工具配置中心；Admin 页面不显示“给某个知识库单独配置模型或导入工具”的入口。Phase 17 起，Admin 运维页提供 Auth Settings、Audit Logs、Indexing、Dify key/mapping 和 MCP PAT/OAuth client/grant 管理入口。
 
+管理员创建账号时，用户管理页展示的是“欢迎设置密码”链接或邮件投递状态，而不是临时密码。系统管理员在工作台可看到实例范围内的 workspace / knowledge base 元数据；若某个私有知识库仅为“管理可见”，工作台必须显示内容未授权提示和“审计接管”入口，不能直接显示文档树或正文。
+
 ## 3. 文档页面布局
 
 ```text

@@ -77,9 +77,12 @@ import {
   ApiRequestError,
   createDocument,
   createImportJob,
+  createDocumentQaPair,
   createKnowledgeBase,
   createWorkspace,
   deleteDocument,
+  generateDocumentQaPairs,
+  generateDocumentSummary,
   getDocument,
   getDocumentMetadata,
   getImportJob,
@@ -87,7 +90,10 @@ import {
   getKnowledgeBaseTree,
   getDocumentVersion,
   getMe,
+  importDocumentQaPairs,
   isUnauthorized,
+  listDocumentQaPairs,
+  listDocumentSummaries,
   listDocumentVersions,
   listKnowledgeBaseChunks,
   listKnowledgeBases,
@@ -95,8 +101,12 @@ import {
   listWorkspaces,
   logout,
   publishDocument,
+  reprocessDocument,
   restoreDocumentVersion,
+  takeoverContentAccess,
   updateDocument,
+  updateDocumentQaPair,
+  updateDocumentSegment,
   updateDocumentMetadata,
   updateWorkspace,
   unpublishDocument,
@@ -106,6 +116,8 @@ import {
   type DocumentDetail,
   type DocumentChunk,
   type DocumentSummary,
+  type DocumentQaPair,
+  type DocumentSummariesResponse,
   type DocumentMetadataResponse,
   type DocumentVersion,
   type DocumentVersionSummary,
@@ -122,7 +134,14 @@ export type WorkbenchClientProps = {
 
 type EditorMode = "read" | "edit" | "source";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
-type DocumentSideTab = "outline" | "chunks" | "versions" | "metadata";
+type DocumentSideTab =
+  | "outline"
+  | "processing"
+  | "chunks"
+  | "qa"
+  | "summary"
+  | "versions"
+  | "metadata";
 type TreeNode = DocumentSummary & { children: TreeNode[] };
 type TreeDropPosition = "before" | "inside" | "after";
 type DocumentMoveUpdate = {
@@ -199,6 +218,13 @@ export function WorkbenchClient({
   const [documentSideTab, setDocumentSideTab] = useState<DocumentSideTab>("outline");
   const [documentChunks, setDocumentChunks] = useState<DocumentChunk[]>([]);
   const [documentChunksLoading, setDocumentChunksLoading] = useState(false);
+  const [showDeletedSegments, setShowDeletedSegments] = useState(false);
+  const [documentQaPairs, setDocumentQaPairs] = useState<DocumentQaPair[]>([]);
+  const [documentQaLoading, setDocumentQaLoading] = useState(false);
+  const [documentSummaries, setDocumentSummaries] = useState<DocumentSummariesResponse | null>(
+    null
+  );
+  const [documentSummariesLoading, setDocumentSummariesLoading] = useState(false);
   const [documentVersions, setDocumentVersions] = useState<DocumentVersionSummary[]>([]);
   const [documentVersionsLoading, setDocumentVersionsLoading] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
@@ -213,6 +239,9 @@ export function WorkbenchClient({
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const selectedKnowledgeBase = knowledgeBases.find(
     (knowledgeBase) => knowledgeBase.id === selectedKnowledgeBaseId
+  );
+  const selectedKnowledgeBaseContentLocked = Boolean(
+    selectedKnowledgeBase?.requires_takeover || selectedKnowledgeBase?.can_read_content === false
   );
   const tree = useMemo(() => buildDocumentTree(documents), [documents]);
   const hasActiveImportJobs = importJobs.some(
@@ -279,6 +308,9 @@ export function WorkbenchClient({
     setSelectedVersionId(null);
     setDocumentMetadata(null);
     setDocumentMetadataDraft({});
+    setDocumentQaPairs([]);
+    setDocumentSummaries(null);
+    setShowDeletedSegments(false);
   }, [currentDocument?.id]);
 
   useEffect(() => {
@@ -290,7 +322,8 @@ export function WorkbenchClient({
     setDocumentChunksLoading(true);
     listKnowledgeBaseChunks(selectedKnowledgeBaseId, {
       document_id: currentDocument.id,
-      limit: 200
+      limit: 200,
+      status: showDeletedSegments ? "all" : undefined
     })
       .then((chunks) => {
         if (!cancelled) {
@@ -311,7 +344,71 @@ export function WorkbenchClient({
     return () => {
       cancelled = true;
     };
-  }, [currentDocument, documentSideRefreshKey, documentSideTab, selectedKnowledgeBaseId]);
+  }, [
+    currentDocument,
+    documentSideRefreshKey,
+    documentSideTab,
+    selectedKnowledgeBaseId,
+    showDeletedSegments
+  ]);
+
+  useEffect(() => {
+    if (documentSideTab !== "qa" || !currentDocument) {
+      return;
+    }
+
+    let cancelled = false;
+    setDocumentQaLoading(true);
+    listDocumentQaPairs(currentDocument.id)
+      .then((pairs) => {
+        if (!cancelled) {
+          setDocumentQaPairs(pairs);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          handleApiError(error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDocumentQaLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDocument, documentSideRefreshKey, documentSideTab]);
+
+  useEffect(() => {
+    if (documentSideTab !== "summary" || !currentDocument) {
+      return;
+    }
+
+    let cancelled = false;
+    setDocumentSummariesLoading(true);
+    listDocumentSummaries(currentDocument.id)
+      .then((summaries) => {
+        if (!cancelled) {
+          setDocumentSummaries(summaries);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          handleApiError(error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDocumentSummariesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDocument, documentSideRefreshKey, documentSideTab]);
 
   useEffect(() => {
     if (documentSideTab !== "versions" || !currentDocument) {
@@ -525,15 +622,22 @@ export function WorkbenchClient({
 
   const loadKnowledgeBase = useCallback(
     async (knowledgeBaseId: string, preferredDocumentId?: string) => {
-      const [knowledgeBase, treeDocuments, jobs] = await Promise.all([
-        getKnowledgeBase(knowledgeBaseId),
-        getKnowledgeBaseTree(knowledgeBaseId),
-        listImportJobs(knowledgeBaseId)
-      ]);
+      const knowledgeBase = await getKnowledgeBase(knowledgeBaseId);
       setSelectedKnowledgeBaseId(knowledgeBase.id);
       setKnowledgeBases((items) =>
         items.some((item) => item.id === knowledgeBase.id) ? items : [knowledgeBase, ...items]
       );
+      if (knowledgeBase.requires_takeover || knowledgeBase.can_read_content === false) {
+        setDocuments([]);
+        setImportJobs([]);
+        clearDocumentState();
+        setMessage(t("Admin visible knowledge base requires audited takeover before reading."));
+        return;
+      }
+      const [treeDocuments, jobs] = await Promise.all([
+        getKnowledgeBaseTree(knowledgeBaseId),
+        listImportJobs(knowledgeBaseId)
+      ]);
       setDocuments(treeDocuments);
       setImportJobs(jobs);
 
@@ -547,7 +651,7 @@ export function WorkbenchClient({
         clearDocumentState();
       }
     },
-    [clearDocumentState, openDocument]
+    [clearDocumentState, openDocument, t]
   );
 
   const boot = useCallback(async () => {
@@ -858,6 +962,35 @@ export function WorkbenchClient({
     try {
       await loadKnowledgeBase(knowledgeBaseId);
       pushWorkbenchUrl(`/app/kb/${knowledgeBaseId}`);
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleTakeoverKnowledgeBase() {
+    if (!selectedKnowledgeBaseId || !selectedKnowledgeBase?.requires_takeover) {
+      return;
+    }
+    const confirmed = await dialog.requestConfirmation({
+      title: t("Audited content access takeover"),
+      description: t(
+        "This will add you as a viewer collaborator and write an audit log before private content is readable."
+      ),
+      confirmLabel: t("Take over access")
+    });
+    if (!confirmed) {
+      return;
+    }
+    setIsBusy(true);
+    setMessage("");
+    try {
+      await takeoverContentAccess("knowledge_base", selectedKnowledgeBaseId, {
+        reason: "System admin audited content access takeover",
+        role: "viewer"
+      });
+      await loadKnowledgeBase(selectedKnowledgeBaseId);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -1363,9 +1496,7 @@ export function WorkbenchClient({
       setDocumentSideRefreshKey((value) => value + 1);
       setMessage(
         updated.status === "published"
-          ? t(
-              "Document published. PostgreSQL chunks are ready; rebuild the Milvus index when retrieval needs to reflect this change."
-            )
+          ? t("Document published. Reprocess segments before rebuilding the Milvus index.")
           : t("Document unpublished. Rebuild the search index to remove stale retrieval results.")
       );
     } catch (error) {
@@ -1447,13 +1578,160 @@ export function WorkbenchClient({
       setDocuments((items) => updateDocumentInList(items, restored));
       setSelectedVersionId(restored.currentVersion?.id ?? null);
       setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(t("Version restored. Reprocess segments before rebuilding the search index."));
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleReprocessDocument() {
+    if (!currentDocument || currentDocument.type !== "page") {
+      return;
+    }
+    if (hasUnsavedChanges || saveState === "saving") {
+      setMessage(t("Save the document before reprocessing segments."));
+      return;
+    }
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const updated = await reprocessDocument(currentDocument.id);
+      setCurrentDocument(updated);
+      setDocuments((items) => updateDocumentInList(items, updated));
+      setDocumentSideRefreshKey((value) => value + 1);
       setMessage(
-        t("Version restored. Rebuild chunks and search index if this document is published.")
+        t("Document segments reprocessed. Rebuild Milvus index when retrieval should update.")
       );
     } catch (error) {
       handleApiError(error);
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function handleUpdateDocumentSegment(
+    chunk: DocumentChunk,
+    patch: Parameters<typeof updateDocumentSegment>[2]
+  ) {
+    if (!currentDocument) {
+      return;
+    }
+    setMessage("");
+    try {
+      const updated = await updateDocumentSegment(currentDocument.id, chunk.id, patch);
+      setDocumentChunks((items) => {
+        const nextItems = items.map((item) => (item.id === updated.id ? updated : item));
+        return showDeletedSegments
+          ? nextItems
+          : nextItems.filter((item) => item.status !== "deleted");
+      });
+      setMessage(t(updated.rebuild_hint));
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+
+  async function handleCreateQaPair(input: {
+    question: string;
+    answer: string;
+    source_chunk_id?: string | null;
+  }) {
+    if (!currentDocument) {
+      return;
+    }
+    setMessage("");
+    try {
+      const created = await createDocumentQaPair(currentDocument.id, input);
+      setDocumentQaPairs((items) => [created, ...items]);
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(
+        t("QA updated. Reprocess segments, then rebuild Milvus index before retrieval updates.")
+      );
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+
+  async function handleUpdateQaPair(
+    qaPair: DocumentQaPair,
+    patch: Parameters<typeof updateDocumentQaPair>[2]
+  ) {
+    if (!currentDocument) {
+      return;
+    }
+    setMessage("");
+    try {
+      const updated = await updateDocumentQaPair(currentDocument.id, qaPair.id, patch);
+      setDocumentQaPairs((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setMessage(
+        t("QA updated. Reprocess segments, then rebuild Milvus index before retrieval updates.")
+      );
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+
+  async function handleImportQaPairs(csv: string) {
+    if (!currentDocument) {
+      return;
+    }
+    setMessage("");
+    try {
+      const result = await importDocumentQaPairs(currentDocument.id, { csv });
+      setDocumentQaPairs((items) => [...result.items, ...items]);
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(
+        result.errors.length > 0
+          ? t("Imported {created} QA pairs with {errors} errors.", {
+              created: result.created,
+              errors: result.errors.length
+            })
+          : t("Imported {count} QA pairs.", { count: result.created })
+      );
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+
+  async function handleGenerateQaPairs(input: {
+    mode: "llm" | "mock";
+    scope: "document" | "segments";
+    count?: number;
+    overwrite?: boolean;
+  }) {
+    if (!currentDocument) {
+      return;
+    }
+    setMessage("");
+    try {
+      const result = await generateDocumentQaPairs(currentDocument.id, input);
+      setDocumentQaPairs((items) => (input.overwrite ? result.items : [...result.items, ...items]));
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(
+        result.warnings.length > 0
+          ? t("Generated {count} QA pairs with warnings.", { count: result.created })
+          : t("Generated {count} QA pairs.", { count: result.created })
+      );
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+
+  async function handleGenerateSummary(input: Parameters<typeof generateDocumentSummary>[1]) {
+    if (!currentDocument) {
+      return;
+    }
+    setMessage("");
+    try {
+      await generateDocumentSummary(currentDocument.id, input);
+      const summaries = await listDocumentSummaries(currentDocument.id);
+      setDocumentSummaries(summaries);
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(t("Summary updated. Rebuild Milvus index before retrieval updates."));
+    } catch (error) {
+      handleApiError(error);
     }
   }
 
@@ -1614,6 +1892,11 @@ export function WorkbenchClient({
                 >
                   <Sparkles className="h-4 w-4" />
                   <span className="truncate">{knowledgeBase.title}</span>
+                  {knowledgeBase.requires_takeover ? (
+                    <span className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                      {t("Admin visible")}
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -1700,7 +1983,12 @@ export function WorkbenchClient({
                 <div className="flex gap-1">
                   <button
                     className="icon-button"
-                    disabled={!selectedKnowledgeBaseId || isBusy || isImporting}
+                    disabled={
+                      !selectedKnowledgeBaseId ||
+                      selectedKnowledgeBaseContentLocked ||
+                      isBusy ||
+                      isImporting
+                    }
                     onClick={() => void handleImportClick()}
                     title={t("Import file")}
                     type="button"
@@ -1713,7 +2001,9 @@ export function WorkbenchClient({
                   </button>
                   <button
                     className="icon-button"
-                    disabled={!selectedKnowledgeBaseId || isBusy}
+                    disabled={
+                      !selectedKnowledgeBaseId || selectedKnowledgeBaseContentLocked || isBusy
+                    }
                     onClick={() => void handleCreateDocument("folder")}
                     title={t("New folder")}
                     type="button"
@@ -1722,7 +2012,9 @@ export function WorkbenchClient({
                   </button>
                   <button
                     className="icon-button"
-                    disabled={!selectedKnowledgeBaseId || isBusy}
+                    disabled={
+                      !selectedKnowledgeBaseId || selectedKnowledgeBaseContentLocked || isBusy
+                    }
                     onClick={() => void handleCreateDocument("page")}
                     title={t("New document")}
                     type="button"
@@ -1968,6 +2260,11 @@ export function WorkbenchClient({
                     )}
                   </div>
                 </div>
+              ) : selectedKnowledgeBase?.requires_takeover ? (
+                <AdminVisibleKnowledgeBasePanel
+                  isBusy={isBusy}
+                  onTakeover={() => void handleTakeoverKnowledgeBase()}
+                />
               ) : selectedKnowledgeBaseId ? (
                 <KnowledgeBaseDashboard
                   documents={documents}
@@ -1991,10 +2288,15 @@ export function WorkbenchClient({
                 chunksLoading={documentChunksLoading}
                 currentDocument={currentDocument}
                 currentMarkdown={savedMarkdown}
+                documentQaPairs={documentQaPairs}
+                documentQaLoading={documentQaLoading}
+                documentSummaries={documentSummaries}
+                documentSummariesLoading={documentSummariesLoading}
                 metadata={documentMetadata}
                 metadataDraft={documentMetadataDraft}
                 metadataLoading={documentMetadataLoading}
                 metadataSaving={documentMetadataSaving}
+                onIncludeDeletedSegmentsChange={setShowDeletedSegments}
                 onOpenDashboard={() => {
                   if (selectedKnowledgeBaseId) {
                     void selectKnowledgeBase(selectedKnowledgeBaseId);
@@ -2003,16 +2305,24 @@ export function WorkbenchClient({
                 onMetadataDraftChange={(name, value) =>
                   setDocumentMetadataDraft((current) => ({ ...current, [name]: value }))
                 }
+                onCreateQaPair={(input) => void handleCreateQaPair(input)}
+                onGenerateQaPairs={(input) => void handleGenerateQaPairs(input)}
+                onGenerateSummary={(input) => void handleGenerateSummary(input)}
+                onImportQaPairs={(csv) => void handleImportQaPairs(csv)}
+                onReprocessDocument={() => void handleReprocessDocument()}
                 onRestoreVersion={(versionId) => void handleRestoreVersion(versionId)}
                 onSaveMetadata={() => void handleSaveDocumentMetadata()}
                 onSelectOutline={jumpToOutlineItem}
                 onSelectTab={setDocumentSideTab}
                 onSelectVersion={setSelectedVersionId}
+                onUpdateQaPair={(qaPair, patch) => void handleUpdateQaPair(qaPair, patch)}
+                onUpdateSegment={(chunk, patch) => void handleUpdateDocumentSegment(chunk, patch)}
                 outline={outline}
                 references={markdownReferences}
                 selectedVersion={selectedVersion}
                 selectedVersionId={selectedVersionId}
                 selectedVersionLoading={selectedVersionLoading}
+                showDeletedSegments={showDeletedSegments}
                 tab={documentSideTab}
                 versions={documentVersions}
                 versionsLoading={documentVersionsLoading}
@@ -2229,23 +2539,36 @@ function DocumentSidePanel({
   chunksLoading,
   currentDocument,
   currentMarkdown,
+  documentQaLoading,
+  documentQaPairs,
+  documentSummaries,
+  documentSummariesLoading,
   metadata,
   metadataDraft,
   metadataLoading,
   metadataSaving,
+  onIncludeDeletedSegmentsChange,
+  onCreateQaPair,
+  onGenerateQaPairs,
+  onGenerateSummary,
+  onImportQaPairs,
   onMetadataDraftChange,
   onOpenDashboard,
   onOpenDocument,
+  onReprocessDocument,
   onRestoreVersion,
   onSaveMetadata,
   onSelectOutline,
   onSelectTab,
   onSelectVersion,
+  onUpdateQaPair,
+  onUpdateSegment,
   outline,
   references,
   selectedVersion,
   selectedVersionId,
   selectedVersionLoading,
+  showDeletedSegments,
   tab,
   versions,
   versionsLoading
@@ -2255,39 +2578,97 @@ function DocumentSidePanel({
   chunksLoading: boolean;
   currentDocument: DocumentDetail | null;
   currentMarkdown: string;
+  documentQaLoading: boolean;
+  documentQaPairs: DocumentQaPair[];
+  documentSummaries: DocumentSummariesResponse | null;
+  documentSummariesLoading: boolean;
   metadata: DocumentMetadataResponse | null;
   metadataDraft: Record<string, string>;
   metadataLoading: boolean;
   metadataSaving: boolean;
+  onIncludeDeletedSegmentsChange: (value: boolean) => void;
+  onCreateQaPair: (input: {
+    question: string;
+    answer: string;
+    source_chunk_id?: string | null;
+  }) => void;
+  onGenerateQaPairs: (input: {
+    mode: "llm" | "mock";
+    scope: "document" | "segments";
+    count?: number;
+    overwrite?: boolean;
+  }) => void;
+  onGenerateSummary: (input: Parameters<typeof generateDocumentSummary>[1]) => void;
+  onImportQaPairs: (csv: string) => void;
   onMetadataDraftChange: (name: string, value: string) => void;
   onOpenDashboard: () => void;
   onOpenDocument: (documentId: string) => void;
+  onReprocessDocument: () => void;
   onRestoreVersion: (versionId: string) => void;
   onSaveMetadata: () => void;
   onSelectOutline: (item: MarkdownOutlineItem) => void;
   onSelectTab: (tab: DocumentSideTab) => void;
   onSelectVersion: (versionId: string) => void;
+  onUpdateQaPair: (
+    qaPair: DocumentQaPair,
+    patch: Parameters<typeof updateDocumentQaPair>[2]
+  ) => void;
+  onUpdateSegment: (
+    chunk: DocumentChunk,
+    patch: Parameters<typeof updateDocumentSegment>[2]
+  ) => void;
   outline: MarkdownOutlineItem[];
   references: MarkdownReferenceExtraction;
   selectedVersion: DocumentVersion | null;
   selectedVersionId: string | null;
   selectedVersionLoading: boolean;
+  showDeletedSegments: boolean;
   tab: DocumentSideTab;
   versions: DocumentVersionSummary[];
   versionsLoading: boolean;
 }) {
   const { t } = useI18n();
+  const dialog = useDialog();
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
+  const [segmentOverrideDraft, setSegmentOverrideDraft] = useState("");
+  const [qaQuestionDraft, setQaQuestionDraft] = useState("");
+  const [qaAnswerDraft, setQaAnswerDraft] = useState("");
+  const [qaCsvDraft, setQaCsvDraft] = useState("");
+  const [summaryDraft, setSummaryDraft] = useState("");
   const canRestore = currentDocument ? canEditDocumentRole(currentDocument.role) : false;
+  const canManageSegments = currentDocument ? canEditDocumentRole(currentDocument.role) : false;
+  const canManageDerivedContent = currentDocument
+    ? canEditDocumentRole(currentDocument.role)
+    : false;
   const selectedVersionSummary = versions.find((version) => version.id === selectedVersionId);
   const diff = selectedVersion
     ? summarizeMarkdownDiff(currentMarkdown, selectedVersion.markdown)
     : null;
+  const hasManagedSegments = chunks.some(
+    (chunk) => chunk.status !== "active" || chunk.has_override
+  );
+
+  async function confirmSegmentAction(
+    title: string,
+    description: string,
+    confirmLabel: string,
+    tone: "default" | "danger" = "default"
+  ) {
+    return dialog.requestConfirmation({
+      title: t(title),
+      description: t(description),
+      confirmLabel: t(confirmLabel),
+      tone
+    });
+  }
 
   return (
     <div className="min-h-0">
       <div className="border-b border-zinc-200 px-3 py-3">
-        <div className="grid grid-cols-4 gap-1 rounded-md bg-zinc-100 p-1">
-          {(["outline", "chunks", "metadata", "versions"] as const).map((item) => (
+        <div className="grid grid-cols-3 gap-1 rounded-md bg-zinc-100 p-1 xl:grid-cols-4 2xl:grid-cols-7">
+          {(
+            ["outline", "processing", "chunks", "qa", "summary", "metadata", "versions"] as const
+          ).map((item) => (
             <button
               className={`rounded px-2 py-1.5 text-xs font-medium ${
                 tab === item
@@ -2317,49 +2698,313 @@ function DocumentSidePanel({
         </>
       ) : null}
 
+      {tab === "processing" ? (
+        <div className="space-y-3 px-4 py-4">
+          <div>
+            <p className="text-sm font-semibold">{t("Processing snapshot")}</p>
+            <p className="text-xs text-zinc-500">
+              {t(
+                "Dify-like document processing is snapshotted per document version and reprocessed explicitly."
+              )}
+            </p>
+          </div>
+          {currentDocument ? (
+            <div className="space-y-3">
+              <div
+                className={`rounded-md border p-3 text-xs leading-5 ${
+                  currentDocument.processing_status === "needs_reprocess"
+                    ? "border-amber-200 bg-amber-50 text-amber-900"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-900"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{t("Processing status")}</span>
+                  <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium">
+                    {t(currentDocument.processing_status ?? "current")}
+                  </span>
+                </div>
+                <p className="mt-2">
+                  {t(
+                    "Publishing, reprocessing, and Milvus index rebuild are separate steps. Reprocess updates PostgreSQL segments; index rebuild updates search, MCP, and Dify."
+                  )}
+                </p>
+              </div>
+
+              <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+                <div className="grid gap-2">
+                  <SnapshotRow
+                    label={t("Document form")}
+                    value={t(currentDocument.doc_form ?? "-")}
+                  />
+                  <SnapshotRow
+                    label={t("Processing revision")}
+                    value={String(currentDocument.processing_revision ?? "-")}
+                  />
+                  <SnapshotRow
+                    label={t("Current version id")}
+                    value={shortId(currentDocument.currentVersion?.id)}
+                  />
+                  <SnapshotRow
+                    label={t("Current version hash")}
+                    value={shortId(currentDocument.currentVersion?.markdown_hash)}
+                  />
+                </div>
+              </div>
+
+              <details className="rounded-md border border-zinc-200 bg-white p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
+                  {t("Process rule snapshot")}
+                </summary>
+                <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-950 p-3 text-[11px] leading-5 text-zinc-50">
+                  {formatJsonForPanel(currentDocument.process_rule_snapshot)}
+                </pre>
+              </details>
+
+              <button
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+                disabled={!canManageSegments || currentDocument.type !== "page"}
+                onClick={onReprocessDocument}
+                type="button"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                {t("Reprocess document segments")}
+              </button>
+            </div>
+          ) : (
+            <EmptyPanel
+              title={t("No document selected")}
+              action={t("Select a page document first.")}
+            />
+          )}
+        </div>
+      ) : null}
+
       {tab === "chunks" ? (
         <div className="space-y-3 px-4 py-4">
           <div>
-            <p className="text-sm font-semibold">{t("Document chunks")}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold">{t("Document segments")}</p>
+              {currentDocument?.processing_status === "needs_reprocess" ? (
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  {t("Needs reprocess")}
+                </span>
+              ) : currentDocument ? (
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                  {t(currentDocument.processing_status ?? "current")}
+                </span>
+              ) : null}
+            </div>
             <p className="text-xs text-zinc-500">
               {currentDocument
-                ? t("{count} chunks", { count: chunks.length })
+                ? t("{count} segments", { count: chunks.length })
                 : t("No document selected")}
             </p>
           </div>
+          {currentDocument?.processing_status === "needs_reprocess" ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p>{t("This document changed after its segments were generated.")}</p>
+              <button
+                className="mt-2 inline-flex h-8 items-center rounded-md bg-amber-600 px-3 text-xs font-medium text-white hover:bg-amber-700"
+                onClick={onReprocessDocument}
+                type="button"
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                {t("Reprocess document segments")}
+              </button>
+            </div>
+          ) : null}
+          {hasManagedSegments ? (
+            <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
+              {t(
+                "Segment changes are stored in PostgreSQL. Rebuild the Milvus index before search, MCP, or Dify use them."
+              )}
+            </div>
+          ) : null}
+          <label className="flex items-center gap-2 text-xs text-zinc-600">
+            <input
+              checked={showDeletedSegments}
+              className="h-4 w-4 rounded border-zinc-300"
+              onChange={(event) => onIncludeDeletedSegmentsChange(event.target.checked)}
+              type="checkbox"
+            />
+            {t("Show deleted segments")}
+          </label>
           {chunksLoading ? (
-            <EmptyPanel title={t("Loading chunks")} action={t("Reading PostgreSQL chunks.")} />
+            <EmptyPanel title={t("Loading segments")} action={t("Reading PostgreSQL segments.")} />
           ) : chunks.length > 0 ? (
             <div className="space-y-2">
-              {chunks.map((chunk) => (
-                <div
-                  className="rounded-md border border-zinc-200 bg-white p-2 text-xs"
-                  key={chunk.id}
-                >
-                  <div className="flex flex-wrap items-center gap-1.5 text-zinc-500">
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
-                      {t(chunk.chunk_type)}
-                    </span>
-                    <span>#{chunk.ordinal}</span>
-                    <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
-                  </div>
-                  <p className="mt-1 line-clamp-4 text-zinc-700">{chunk.content_text}</p>
-                  <p className="mt-1 truncate text-[11px] text-zinc-400" title={chunk.version_id}>
-                    {t("Version id")}: {chunk.version_id}
-                  </p>
-                  {chunk.heading_path.length > 0 ? (
-                    <p className="mt-1 truncate text-[11px] text-sky-700">
-                      {chunk.heading_path.join(" / ")}
+              {chunks.map((chunk) => {
+                const isEditing = editingSegmentId === chunk.id;
+                const sourceText = chunk.source_content_text ?? chunk.content_text;
+                return (
+                  <div
+                    className={`rounded-md border bg-white p-2 text-xs ${
+                      chunk.status === "deleted" ? "border-red-200" : "border-zinc-200"
+                    }`}
+                    key={chunk.id}
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5 text-zinc-500">
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+                        {t(chunk.chunk_type)}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-medium ${
+                          chunk.status === "active"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : chunk.status === "deleted"
+                              ? "bg-red-50 text-red-700"
+                              : "bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        {t(chunk.status)}
+                      </span>
+                      {chunk.has_override ? (
+                        <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
+                          {t("override")}
+                        </span>
+                      ) : null}
+                      <span>#{chunk.ordinal}</span>
+                      <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      <div>
+                        <p className="text-[11px] font-medium text-zinc-500">
+                          {t("Effective retrieval content")}
+                        </p>
+                        <p className="mt-1 line-clamp-4 text-zinc-700">{chunk.content_text}</p>
+                      </div>
+                      {chunk.has_override ? (
+                        <details className="rounded-md bg-zinc-50 p-2">
+                          <summary className="cursor-pointer text-[11px] font-medium text-zinc-500">
+                            {t("Source content")}
+                          </summary>
+                          <p className="mt-1 line-clamp-4 text-zinc-600">{sourceText}</p>
+                        </details>
+                      ) : null}
+                    </div>
+                    {isEditing ? (
+                      <div className="mt-2 space-y-2">
+                        <textarea
+                          className="min-h-28 w-full rounded-md border border-zinc-300 px-2 py-2 text-xs outline-none focus:border-emerald-500"
+                          onChange={(event) => setSegmentOverrideDraft(event.target.value)}
+                          value={segmentOverrideDraft}
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="inline-flex h-8 items-center rounded-md bg-zinc-950 px-2.5 text-xs font-medium text-white"
+                            disabled={!canManageSegments}
+                            onClick={() => {
+                              onUpdateSegment(chunk, {
+                                override_content_markdown: segmentOverrideDraft,
+                                override_content_text: segmentOverrideDraft
+                              });
+                              setEditingSegmentId(null);
+                            }}
+                            type="button"
+                          >
+                            {t("Save")}
+                          </button>
+                          <button
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700"
+                            onClick={() => setEditingSegmentId(null)}
+                            type="button"
+                          >
+                            {t("Cancel")}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                    <p className="mt-2 truncate text-[11px] text-zinc-400" title={chunk.version_id}>
+                      {t("Version id")}: {chunk.version_id} · {t("Settings revision")}{" "}
+                      {chunk.settings_revision}
                     </p>
-                  ) : null}
-                </div>
-              ))}
+                    {chunk.heading_path.length > 0 ? (
+                      <p className="mt-1 truncate text-[11px] text-sky-700">
+                        {chunk.heading_path.join(" / ")}
+                      </p>
+                    ) : null}
+                    {canManageSegments ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {chunk.status === "active" ? (
+                          <button
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                            onClick={async () => {
+                              const confirmed = await confirmSegmentAction(
+                                "Disable segment",
+                                "Disabled segments stay in PostgreSQL but are excluded from retrieval after the next Milvus rebuild.",
+                                "Disable segment"
+                              );
+                              if (confirmed) onUpdateSegment(chunk, { status: "disabled" });
+                            }}
+                            type="button"
+                          >
+                            {t("Disable segment")}
+                          </button>
+                        ) : (
+                          <button
+                            className="inline-flex h-8 items-center rounded-md border border-emerald-200 px-2.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                            onClick={() => onUpdateSegment(chunk, { status: "active" })}
+                            type="button"
+                          >
+                            {chunk.status === "deleted"
+                              ? t("Restore segment")
+                              : t("Enable segment")}
+                          </button>
+                        )}
+                        <button
+                          className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                          onClick={() => {
+                            setEditingSegmentId(chunk.id);
+                            setSegmentOverrideDraft(chunk.content_text);
+                          }}
+                          type="button"
+                        >
+                          {t("Edit retrieval content")}
+                        </button>
+                        {chunk.has_override ? (
+                          <button
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                            onClick={async () => {
+                              const confirmed = await confirmSegmentAction(
+                                "Reset override",
+                                "Reset this segment override and return retrieval content to the source chunk?",
+                                "Reset override"
+                              );
+                              if (confirmed) onUpdateSegment(chunk, { reset_override: true });
+                            }}
+                            type="button"
+                          >
+                            {t("Reset override")}
+                          </button>
+                        ) : null}
+                        {chunk.status !== "deleted" ? (
+                          <button
+                            className="inline-flex h-8 items-center rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                            onClick={async () => {
+                              const confirmed = await confirmSegmentAction(
+                                "Soft delete segment",
+                                "Soft-deleted segments are hidden by default and excluded from retrieval after the next Milvus rebuild.",
+                                "Soft delete segment",
+                                "danger"
+                              );
+                              if (confirmed) onUpdateSegment(chunk, { status: "deleted" });
+                            }}
+                            type="button"
+                          >
+                            {t("Soft delete segment")}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="space-y-3">
               <EmptyPanel
-                title={t("No chunks for this document")}
-                action={t("Publish or rebuild chunks before this document can be searched.")}
+                title={t("No segments for this document")}
+                action={t("Reprocess segments before this document can be searched.")}
               />
               <button
                 className="inline-flex w-full items-center justify-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
@@ -2369,6 +3014,277 @@ function DocumentSidePanel({
                 {t("Open KB dashboard")}
               </button>
             </div>
+          )}
+        </div>
+      ) : null}
+
+      {tab === "qa" ? (
+        <div className="space-y-3 px-4 py-4">
+          <div>
+            <p className="text-sm font-semibold">{t("QA pairs")}</p>
+            <p className="text-xs text-zinc-500">
+              {t("Questions are indexed; answers are returned to search, MCP, and Dify.")}
+            </p>
+          </div>
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+            {t(
+              "QA changes require reprocess and then Milvus index rebuild before retrieval updates."
+            )}
+          </div>
+          {canManageDerivedContent ? (
+            <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+              <label className="block text-xs">
+                <span className="mb-1 block font-medium text-zinc-600">{t("Question")}</span>
+                <input
+                  className="h-8 w-full rounded-md border border-zinc-200 px-2 outline-none focus:border-emerald-500"
+                  onChange={(event) => setQaQuestionDraft(event.target.value)}
+                  value={qaQuestionDraft}
+                />
+              </label>
+              <label className="block text-xs">
+                <span className="mb-1 block font-medium text-zinc-600">{t("Answer")}</span>
+                <textarea
+                  className="min-h-20 w-full rounded-md border border-zinc-200 px-2 py-2 outline-none focus:border-emerald-500"
+                  onChange={(event) => setQaAnswerDraft(event.target.value)}
+                  value={qaAnswerDraft}
+                />
+              </label>
+              <button
+                className="inline-flex h-8 w-full items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+                disabled={!qaQuestionDraft.trim() || !qaAnswerDraft.trim()}
+                onClick={() => {
+                  onCreateQaPair({
+                    question: qaQuestionDraft,
+                    answer: qaAnswerDraft
+                  });
+                  setQaQuestionDraft("");
+                  setQaAnswerDraft("");
+                }}
+                type="button"
+              >
+                {t("Add QA pair")}
+              </button>
+            </div>
+          ) : null}
+          {canManageDerivedContent ? (
+            <details className="rounded-md border border-zinc-200 bg-white p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
+                {t("CSV import and generation")}
+              </summary>
+              <div className="mt-3 space-y-3">
+                <textarea
+                  className="min-h-24 w-full rounded-md border border-zinc-200 px-2 py-2 font-mono text-xs outline-none focus:border-emerald-500"
+                  onChange={(event) => setQaCsvDraft(event.target.value)}
+                  placeholder="question,answer"
+                  value={qaCsvDraft}
+                />
+                <button
+                  className="inline-flex h-8 w-full items-center justify-center rounded-md border border-zinc-200 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:text-zinc-300"
+                  disabled={!qaCsvDraft.trim()}
+                  onClick={() => {
+                    onImportQaPairs(qaCsvDraft);
+                    setQaCsvDraft("");
+                  }}
+                  type="button"
+                >
+                  {t("Import CSV")}
+                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    onClick={() => onGenerateQaPairs({ mode: "mock", scope: "segments", count: 6 })}
+                    type="button"
+                  >
+                    {t("Generate mock QA")}
+                  </button>
+                  <button
+                    className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    onClick={() => onGenerateQaPairs({ mode: "llm", scope: "document", count: 6 })}
+                    type="button"
+                  >
+                    {t("Generate LLM QA")}
+                  </button>
+                </div>
+              </div>
+            </details>
+          ) : null}
+          {documentQaLoading ? (
+            <EmptyPanel title={t("Loading QA")} action={t("Reading QA pairs.")} />
+          ) : documentQaPairs.length > 0 ? (
+            <div className="space-y-2">
+              {documentQaPairs.map((pair) => (
+                <div
+                  className="rounded-md border border-zinc-200 bg-white p-3 text-xs"
+                  key={pair.id}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
+                      {t(pair.source)}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 font-medium ${
+                        pair.status === "active"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : pair.status === "deleted"
+                            ? "bg-red-50 text-red-700"
+                            : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
+                      {t(pair.status)}
+                    </span>
+                  </div>
+                  <p className="mt-2 font-semibold text-zinc-900">{pair.question}</p>
+                  <p className="mt-1 whitespace-pre-wrap text-zinc-600">{pair.answer}</p>
+                  {pair.source_chunk_id ? (
+                    <p className="mt-2 truncate text-[11px] text-zinc-400">
+                      {t("Source chunk")}: {pair.source_chunk_id}
+                    </p>
+                  ) : null}
+                  {canManageDerivedContent ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                        onClick={() =>
+                          onUpdateQaPair(pair, {
+                            status: pair.status === "active" ? "disabled" : "active"
+                          })
+                        }
+                        type="button"
+                      >
+                        {pair.status === "active" ? t("Disable") : t("Enable")}
+                      </button>
+                      <button
+                        className="inline-flex h-8 items-center rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                        onClick={() => onUpdateQaPair(pair, { status: "deleted" })}
+                        type="button"
+                      >
+                        {t("Delete")}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyPanel title={t("No QA pairs")} action={t("Add QA manually or import CSV.")} />
+          )}
+        </div>
+      ) : null}
+
+      {tab === "summary" ? (
+        <div className="space-y-3 px-4 py-4">
+          <div>
+            <p className="text-sm font-semibold">{t("Summaries")}</p>
+            <p className="text-xs text-zinc-500">
+              {t("Summaries are derived retrieval indexes and never rewrite Markdown.")}
+            </p>
+          </div>
+          <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
+            {t(
+              "Summary changes require a Milvus index rebuild before search, MCP, or Dify use them."
+            )}
+          </div>
+          {canManageDerivedContent ? (
+            <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+              <label className="block text-xs">
+                <span className="mb-1 block font-medium text-zinc-600">
+                  {t("Document summary")}
+                </span>
+                <textarea
+                  className="min-h-24 w-full rounded-md border border-zinc-200 px-2 py-2 outline-none focus:border-emerald-500"
+                  onChange={(event) => setSummaryDraft(event.target.value)}
+                  value={summaryDraft}
+                />
+              </label>
+              <button
+                className="inline-flex h-8 w-full items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+                disabled={!summaryDraft.trim()}
+                onClick={() => {
+                  onGenerateSummary({
+                    scope: "document",
+                    mode: "manual",
+                    summary: summaryDraft
+                  });
+                  setSummaryDraft("");
+                }}
+                type="button"
+              >
+                {t("Save document summary")}
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                  onClick={() => onGenerateSummary({ scope: "document", mode: "mock" })}
+                  type="button"
+                >
+                  {t("Mock document summary")}
+                </button>
+                <button
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                  onClick={() => onGenerateSummary({ scope: "document", mode: "llm" })}
+                  type="button"
+                >
+                  {t("LLM document summary")}
+                </button>
+              </div>
+              <button
+                className="inline-flex h-8 w-full items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={() => onGenerateSummary({ scope: "all_segments", mode: "mock" })}
+                type="button"
+              >
+                {t("Mock all segment summaries")}
+              </button>
+            </div>
+          ) : null}
+          {documentSummariesLoading ? (
+            <EmptyPanel title={t("Loading summaries")} action={t("Reading summaries.")} />
+          ) : documentSummaries ? (
+            <div className="space-y-3">
+              {documentSummaries.document_summary ? (
+                <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+                  <p className="font-semibold text-zinc-900">{t("Document summary")}</p>
+                  <p className="mt-2 whitespace-pre-wrap text-zinc-600">
+                    {documentSummaries.document_summary.summary}
+                  </p>
+                </div>
+              ) : (
+                <EmptyPanel
+                  title={t("No document summary")}
+                  action={t("Create one manually or generate it explicitly.")}
+                />
+              )}
+              <div>
+                <p className="mb-2 text-xs font-semibold text-zinc-700">
+                  {t("Segment summaries")} ({documentSummaries.segment_summaries.length})
+                </p>
+                <div className="space-y-2">
+                  {documentSummaries.segment_summaries.map((summary) => (
+                    <div
+                      className="rounded-md border border-zinc-200 bg-white p-2 text-xs"
+                      key={summary.id}
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5 text-zinc-500">
+                        <span
+                          className={`rounded-full px-2 py-0.5 font-medium ${
+                            summary.status === "active"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : summary.status === "deleted"
+                                ? "bg-red-50 text-red-700"
+                                : "bg-amber-50 text-amber-700"
+                          }`}
+                        >
+                          {t(summary.status)}
+                        </span>
+                        <span className="truncate">{summary.chunk_id}</span>
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap text-zinc-600">{summary.summary}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <EmptyPanel title={t("No summaries")} action={t("Select a page document first.")} />
           )}
         </div>
       ) : null}
@@ -2532,8 +3448,17 @@ function DocumentSidePanel({
 }
 
 function sideTabLabel(tab: DocumentSideTab): string {
+  if (tab === "processing") {
+    return "Processing";
+  }
   if (tab === "chunks") {
-    return "Chunks";
+    return "Segments";
+  }
+  if (tab === "qa") {
+    return "QA";
+  }
+  if (tab === "summary") {
+    return "Summary";
   }
   if (tab === "versions") {
     return "Versions";
@@ -2542,6 +3467,17 @@ function sideTabLabel(tab: DocumentSideTab): string {
     return "Metadata";
   }
   return "Outline";
+}
+
+function SnapshotRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md bg-zinc-50 px-2 py-1.5">
+      <span className="text-zinc-500">{label}</span>
+      <span className="min-w-0 truncate font-mono text-[11px] text-zinc-800" title={value}>
+        {value}
+      </span>
+    </div>
+  );
 }
 
 function toEditableMetadataValues(metadata: DocumentMetadataResponse): Record<string, string> {
@@ -2565,6 +3501,21 @@ function toDateTimeLocalValue(value: string): string {
     return value;
   }
   return date.toISOString().slice(0, 16);
+}
+
+function shortId(value: string | null | undefined): string {
+  if (!value) {
+    return "-";
+  }
+  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
+}
+
+function formatJsonForPanel(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return "{}";
+  }
 }
 
 function summarizeMarkdownDiff(currentMarkdown: string, versionMarkdown: string) {
@@ -2855,6 +3806,42 @@ function EmptyMain({
             {t("New document")}
           </button>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function AdminVisibleKnowledgeBasePanel({
+  isBusy,
+  onTakeover
+}: {
+  isBusy: boolean;
+  onTakeover: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex min-h-[680px] items-center justify-center px-6">
+      <div className="max-w-md rounded-md border border-amber-200 bg-amber-50 p-5 text-center">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-white text-amber-700">
+          <AlertTriangle className="h-6 w-6" />
+        </div>
+        <h1 className="mt-4 text-xl font-semibold text-amber-950">
+          {t("Admin visible, content locked")}
+        </h1>
+        <p className="mt-2 text-sm text-amber-900">
+          {t(
+            "You can manage this knowledge base metadata, but private documents require an audited takeover before reading."
+          )}
+        </p>
+        <button
+          className="mt-5 inline-flex items-center gap-2 rounded-md bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:bg-amber-300"
+          disabled={isBusy}
+          onClick={onTakeover}
+          type="button"
+        >
+          <Users className="h-4 w-4" />
+          {t("Take over access")}
+        </button>
       </div>
     </div>
   );

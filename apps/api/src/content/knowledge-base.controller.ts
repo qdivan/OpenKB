@@ -30,7 +30,7 @@ export class KnowledgeBaseController {
     @Query("workspace_id") workspaceId: string | undefined,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.listKnowledgeBases(
         getSessionToken(request, this.auth),
@@ -46,7 +46,7 @@ export class KnowledgeBaseController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.createKnowledgeBase(
         getSessionToken(request, this.auth),
@@ -62,7 +62,7 @@ export class KnowledgeBaseController {
     @Param("id") id: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.getKnowledgeBase(getSessionToken(request, this.auth), id);
     } catch (error) {
@@ -88,7 +88,7 @@ export class KnowledgeBaseController {
     @Param("id") id: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.getChunkSettings(getSessionToken(request, this.auth), id);
     } catch (error) {
@@ -101,7 +101,7 @@ export class KnowledgeBaseController {
     @Param("id") id: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.listKnowledgeBaseMetadataFields(
         getSessionToken(request, this.auth),
@@ -118,7 +118,7 @@ export class KnowledgeBaseController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.createKnowledgeBaseMetadataField(
         getSessionToken(request, this.auth),
@@ -137,7 +137,7 @@ export class KnowledgeBaseController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.updateKnowledgeBaseMetadataField(
         getSessionToken(request, this.auth),
@@ -156,7 +156,7 @@ export class KnowledgeBaseController {
     @Param("fieldId") fieldId: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.deleteKnowledgeBaseMetadataField(
         getSessionToken(request, this.auth),
@@ -174,7 +174,7 @@ export class KnowledgeBaseController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.updateChunkSettings(
         getSessionToken(request, this.auth),
@@ -192,7 +192,7 @@ export class KnowledgeBaseController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.previewChunks(
         getSessionToken(request, this.auth),
@@ -210,6 +210,7 @@ export class KnowledgeBaseController {
     @Query("document_id") documentId: string | undefined,
     @Query("type") type: string | undefined,
     @Query("limit") limit: string | undefined,
+    @Query("status") status: string | undefined,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<unknown> {
@@ -217,7 +218,8 @@ export class KnowledgeBaseController {
       return await this.content.listKnowledgeBaseChunks(getSessionToken(request, this.auth), id, {
         document_id: documentId,
         type,
-        limit
+        limit,
+        status
       });
     } catch (error) {
       return sendJsonError(error, reply);
@@ -243,7 +245,7 @@ export class KnowledgeBaseController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.updateKnowledgeBase(
         getSessionToken(request, this.auth),
@@ -260,7 +262,7 @@ export class KnowledgeBaseController {
     @Param("id") id: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.getKnowledgeBaseTree(getSessionToken(request, this.auth), id);
     } catch (error) {

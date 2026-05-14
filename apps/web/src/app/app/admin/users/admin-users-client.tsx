@@ -131,12 +131,12 @@ export function AdminUsersClient() {
         display_name: newDisplayName.trim() || undefined,
         tenant_role: newRole
       });
-      setResetLink(result.reset_link);
+      setResetLink(result.setup_link ?? result.reset_link);
       setNewEmail("");
       setNewDisplayName("");
       setNewRole("member");
       setIsCreateOpen(false);
-      setMessage(t("User created. Send the reset link to let them set a password."));
+      setMessage(t("User created. A welcome setup email was queued or sent."));
       await load("");
     } catch (error) {
       handleError(error);
@@ -425,7 +425,7 @@ export function AdminUsersClient() {
           ) : null}
 
           {resetLink ? (
-            <Panel title={t("Password Reset")} icon={<RotateCcw className="h-4 w-4" />}>
+            <Panel title={t("Password setup / reset")} icon={<RotateCcw className="h-4 w-4" />}>
               <p className="break-all rounded-md bg-zinc-100 p-2 font-mono text-xs text-zinc-700">
                 {resetLink}
               </p>

@@ -1,27 +1,45 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { authApiUrl } from "@/lib/auth-api";
 import { useI18n } from "@/lib/i18n-provider";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginShell />}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"info" | "error">("error");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     router.prefetch("/app");
   }, [router]);
 
+  useEffect(() => {
+    if (searchParams.get("reset") === "success") {
+      setMessageTone("info");
+      setMessage(t("Password updated. Please log in."));
+    }
+  }, [searchParams, t]);
+
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSubmitting(true);
+    setMessageTone("error");
     setMessage("");
 
     try {
@@ -49,10 +67,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-6 py-10">
-      <div className="absolute right-6 top-6">
-        <LanguageSwitcher />
-      </div>
+    <LoginShell>
       <form
         onSubmit={onSubmit}
         className="w-full max-w-sm rounded-md border border-zinc-200 bg-white p-6 shadow-sm"
@@ -87,8 +102,34 @@ export default function LoginPage() {
         >
           {isSubmitting ? t("Signing in...") : t("Log in")}
         </button>
-        {message ? <p className="mt-4 text-sm text-red-600">{message}</p> : null}
+        {message ? (
+          <p
+            className={`mt-4 text-sm ${
+              messageTone === "info" ? "text-emerald-700" : "text-red-600"
+            }`}
+          >
+            {message}
+          </p>
+        ) : null}
       </form>
+    </LoginShell>
+  );
+}
+
+function LoginShell({ children }: { children?: ReactNode }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-6 py-10">
+      <div className="absolute right-6 top-6">
+        <LanguageSwitcher />
+      </div>
+      {children ?? (
+        <div className="h-72 w-full max-w-sm rounded-md border border-zinc-200 bg-white p-6 shadow-sm">
+          <div className="h-7 w-28 animate-pulse rounded bg-zinc-100" />
+          <div className="mt-8 h-10 animate-pulse rounded bg-zinc-100" />
+          <div className="mt-4 h-10 animate-pulse rounded bg-zinc-100" />
+          <div className="mt-6 h-10 animate-pulse rounded bg-zinc-900/20" />
+        </div>
+      )}
     </main>
   );
 }

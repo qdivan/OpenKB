@@ -231,6 +231,55 @@ describe("@openkb/model-client", () => {
     });
   });
 
+  it("generates language text from OpenAI-compatible responses", async () => {
+    const client = new OpenKBModelClient(
+      {
+        embedding: {
+          provider: "openai_compatible",
+          source: "none",
+          dim: 1536,
+          batchSize: 16,
+          timeoutMs: 1000
+        },
+        rerank: {
+          provider: "openai_compatible",
+          source: "none",
+          timeoutMs: 1000
+        },
+        language: {
+          provider: "openai_chat_completions",
+          endpoint: "http://model/v1/chat/completions",
+          model: "chat-model",
+          source: "env",
+          timeoutMs: 1000,
+          maxOutputTokens: 32,
+          temperature: 0.1,
+          apiKey: "secret"
+        }
+      },
+      async (url, init) => {
+        expect(url).toBe("http://model/v1/chat/completions");
+        expect(init.headers.authorization).toBe("Bearer secret");
+        expect(JSON.parse(init.body ?? "{}")).toMatchObject({
+          model: "chat-model",
+          messages: [{ role: "user", content: "Summarize this." }],
+          max_tokens: 32,
+          temperature: 0.1
+        });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            choices: [{ message: { content: "A short summary." } }]
+          }),
+          text: async () => ""
+        };
+      }
+    );
+
+    await expect(client.generateLanguageText("Summarize this.")).resolves.toBe("A short summary.");
+  });
+
   it("reads endpoint/model settings from environment without secrets", () => {
     const config = getOpenKBModelClientConfig({
       OPENKB_EMBEDDING_ENDPOINT: "http://model/v1/embeddings",

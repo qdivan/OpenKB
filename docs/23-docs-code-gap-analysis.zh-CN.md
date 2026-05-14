@@ -1,10 +1,12 @@
 # 23 本机开发移交与缺口记录
 
-本文记录当前 OpenKB 本机开发状态，便于在不同机器或不同 agent 之间继续接手。
+> 历史快照：本文最初用于 Phase 17/19 期间的本机开发移交，部分 phase/status 表述已经过期。当前状态请优先阅读 README、`docs/15-roadmap-and-codex-tasks.zh-CN.md`、`docs/27-dify-knowledge-alignment.zh-CN.md` 和 `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`。
+
+本文记录曾经的 OpenKB 本机开发状态，便于在不同机器或不同 agent 之间追溯上下文。
 
 ## 当前状态
 
-截至 2026-05-09，本机代码已经推进到 `v0.3.x / Phase 17` Admin 运维管理 UI。
+截至 2026-05-13，主线已经推进到 `v0.3.x / Phase 22` Dify 1.14.1 知识库处理与检索逻辑对齐审计阶段。下面保留较早阶段的交接记录；如有冲突，以当前规范和审计文档为准。
 
 已完成的主线：
 
@@ -22,7 +24,8 @@
 后续建议优先级：
 
 - Phase 19：已完成最小复杂导入 adapter 闭环；后续可继续增强真实工具 smoke、批量导入管理后台和更细的转换质量报告。
-- Phase 20：生产 SMTP、CSRF 防护、备份/恢复、监控、TLS/Ingress、完整 MCP OAuth 授权码流程和密钥轮换策略。
+- Phase 20：生产 SMTP、CSRF 防护、备份/恢复、监控、TLS/Ingress、完整 MCP OAuth 授权码流程和密钥轮换策略已进入主线；后续继续按安全运维环境做实战演练。
+- Phase 21/22：Dify External Knowledge 原生体验、metadata schema、Dify 1.14.1 知识库处理/检索/segment 对齐审计见 `docs/26`、`docs/27`、`docs/28`。
 
 ## 工作树关键内容
 

@@ -91,6 +91,8 @@ export class McpContentService {
       query: unknown;
       knowledge_base_ids?: unknown;
       top_k?: unknown;
+      score_threshold?: unknown;
+      retrieval_model?: unknown;
       filters?: unknown;
       context_mode?: unknown;
     },
@@ -98,12 +100,17 @@ export class McpContentService {
   ) {
     this.auth.requireScope(context, "kb:search");
     const config = getMcpServerConfig(this.env);
-    const topK = normalizeTopK(input.top_k, config.maxTopK);
+    const topK =
+      input.top_k === undefined || input.top_k === null
+        ? undefined
+        : normalizeTopK(input.top_k, config.maxTopK);
     const response = await this.retrieval.search({
       user: toRetrievalUserContext(context),
       query: input.query,
       knowledge_base_ids: input.knowledge_base_ids,
       top_k: topK,
+      score_threshold: input.score_threshold,
+      retrieval_model: input.retrieval_model,
       filters: input.filters,
       context_mode: input.context_mode
     });

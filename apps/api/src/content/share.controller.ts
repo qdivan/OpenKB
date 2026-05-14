@@ -19,7 +19,7 @@ export class ShareController {
     @Param("objectId") objectId: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.listShareLinks(
         getSessionToken(request, this.auth),
@@ -38,7 +38,7 @@ export class ShareController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.createShareLink(
         getSessionToken(request, this.auth),
@@ -57,7 +57,7 @@ export class ShareController {
     @Query("document_id") documentId: string | undefined,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.getShare(
         token,
@@ -75,7 +75,7 @@ export class ShareController {
     @Param("token") token: string,
     @Body() body: unknown,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       const result = await this.content.verifySharePassword(
         token,
@@ -93,7 +93,7 @@ export class ShareController {
     @Param("id") id: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.revokeShareLink(getSessionToken(request, this.auth), id);
     } catch (error) {
@@ -106,7 +106,7 @@ export class ShareController {
     @Param("id") id: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply
-  ) {
+  ): Promise<unknown> {
     try {
       return await this.content.resetShareLink(getSessionToken(request, this.auth), id);
     } catch (error) {

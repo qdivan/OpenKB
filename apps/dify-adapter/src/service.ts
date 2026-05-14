@@ -108,7 +108,10 @@ export class DifyAdapterService {
         },
         query: request.query,
         top_k: request.topK,
-        filters: {}
+        score_threshold: request.scoreThreshold,
+        filters: {
+          metadata_condition: request.rawMetadataCondition
+        }
       });
     } catch (error) {
       if (error instanceof RetrievalError && error.code === "SEARCH_INDEX_NOT_READY") {
@@ -311,6 +314,21 @@ export class DifyAdapterService {
         retrieval_mode: String(
           result.context_mode ?? retrievalMetadata.context_mode ?? retrievalMetadata.mode ?? "chunk"
         ),
+        doc_form: stringOrNull(result.metadata.doc_form),
+        indexing_technique: stringOrNull(result.metadata.indexing_technique),
+        retrieval_model: toRecord(result.metadata.retrieval_model),
+        segment_status: stringOrNull(result.metadata.segment_status) ?? "active",
+        hit_type: stringOrNull(result.metadata.hit_type) ?? "content",
+        summary_hit: result.metadata.summary_hit === true,
+        summary_id: stringOrNull(result.metadata.summary_id),
+        summary_chunk_id: stringOrNull(result.metadata.summary_chunk_id),
+        summary_scope: stringOrNull(result.metadata.summary_scope),
+        summary_text: stringOrNull(result.metadata.summary_text),
+        original_chunk_id: stringOrNull(result.metadata.original_chunk_id) ?? result.chunk_id,
+        qa_pair_id: stringOrNull(result.metadata.qa_pair_id),
+        qa_question: stringOrNull(result.metadata.qa_question),
+        qa_answer: stringOrNull(result.metadata.qa_answer),
+        qa_source: stringOrNull(result.metadata.qa_source),
         score,
         score_source: scoreSource,
         raw_score:
@@ -441,6 +459,10 @@ function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
 }
 
 function normalizeJsonValue(value: Prisma.JsonValue): unknown {

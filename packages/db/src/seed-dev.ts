@@ -496,6 +496,19 @@ async function ensureSeedChunkSettings(
       parent_max_characters: 4000,
       child_max_characters: 900,
       child_overlap_characters: 120,
+      retrieval_model: {
+        search_method: "full_text_search",
+        top_k: 10,
+        score_threshold_enabled: false,
+        score_threshold: 0,
+        reranking_enable: false,
+        reranking_mode: "weighted_score",
+        weights: {
+          vector_setting: { vector_weight: 0.5 },
+          keyword_setting: { keyword_weight: 0.5 }
+        },
+        metadata_filtering_conditions: null
+      },
       revision: 1,
       updated_by: input.userId,
       created_at: input.now,

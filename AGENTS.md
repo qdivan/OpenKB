@@ -26,7 +26,8 @@ OpenKB is a Markdown-first, Yuque-like, self-hostable knowledge base system. It 
 
 4. **Admin configuration is not content permission.**
    - `system_admin` / `tenant_admin` can access admin configuration pages.
-   - Admin status does not automatically grant read access to all private documents.
+   - Admin status can grant metadata visibility and management over workspaces/knowledge bases in scope, but does not automatically grant read access to private document bodies.
+   - Private content access by an admin must be an explicit audited takeover action that grants a normal collaborator role before content is read.
    - Any emergency content access must be an explicit audited action, not default behavior.
 
 5. **Knowledge base owners cannot configure models.**
@@ -122,6 +123,7 @@ prompts/
 - Treat share links as read-only only in v0.x; do not add link-edit capabilities.
 - Treat folders as `documents.type = folder`; do not create a separate folders table unless the spec is explicitly changed.
 - Do not use browser-native `window.prompt`, `window.confirm`, or `window.alert` for app interactions. Use OpenKB Web dialog components instead; `beforeunload` is the only allowed native prompt for browser tab close/refresh with unsaved drafts.
+- Admin-created accounts use a welcome setup-password email (`account_setup`) rather than a temporary password or generic reset message. Setup and reset links are one-time tokens; issuing a new setup/reset link invalidates older unused setup/reset links.
 
 ## v0.3.3 clarifications
 

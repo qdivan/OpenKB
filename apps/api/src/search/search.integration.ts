@@ -158,6 +158,13 @@ async function createChunkForSeedDocument(
     throw new Error("Seed document is missing current_version_id.");
   }
 
+  await prismaClient.documentChunk.deleteMany({
+    where: {
+      document_id: seed.documentId,
+      version_id: versionId
+    }
+  });
+
   await prismaClient.documentChunk.create({
     data: {
       tenant_id: seed.tenantId,

@@ -29,6 +29,8 @@ export class SearchController {
         query: input.query,
         knowledge_base_ids: input.knowledge_base_ids,
         top_k: input.top_k,
+        score_threshold: input.score_threshold,
+        retrieval_model: input.retrieval_model,
         filters: input.filters,
         context_mode: input.context_mode
       });

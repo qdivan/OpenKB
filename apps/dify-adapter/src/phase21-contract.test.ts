@@ -19,6 +19,14 @@ const difyMetadata = {
   path_parts: ["三国演义", "战争", "赤壁之战"],
   absolute_url: "http://localhost:3100/app/kb/kb_1/docs/doc_1",
   parent_chunk_id: null,
+  doc_form: "hierarchical_model",
+  indexing_technique: "high_quality",
+  retrieval_model: { search_method: "hybrid_search", top_k: 5 },
+  segment_status: "active",
+  summary_hit: false,
+  original_chunk_id: "chunk_1",
+  qa_question: null,
+  qa_answer: null,
   score: 0.76,
   token_count: 128,
   openkb_retrieval: {
@@ -332,6 +340,19 @@ describe("Phase 21 Dify native compatibility contract", () => {
             })!
           )
         ).toBe(true)
+    ],
+    [
+      "41 exposes Dify 1.14.1 processing and segment metadata",
+      () => {
+        expect(difyMetadata).toMatchObject({
+          doc_form: "hierarchical_model",
+          indexing_technique: "high_quality",
+          retrieval_model: { search_method: "hybrid_search" },
+          segment_status: "active",
+          summary_hit: false,
+          original_chunk_id: "chunk_1"
+        });
+      }
     ],
     [
       "40 combines key-level and request-level metadata conditions",

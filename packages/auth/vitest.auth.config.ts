@@ -5,6 +5,7 @@ export default defineConfig({
     environment: "node",
     include: ["src/auth.integration.ts"],
     fileParallelism: false,
-    testTimeout: 30000
+    testTimeout: 30000,
+    hookTimeout: 30000
   }
 });

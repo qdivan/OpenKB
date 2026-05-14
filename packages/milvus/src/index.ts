@@ -5,6 +5,7 @@ import {
   MetricType,
   MilvusClient,
   RRFRanker,
+  WeightedRanker,
   type FieldType,
   type FunctionObject,
   type ResStatus
@@ -93,6 +94,7 @@ export type MilvusSearchChunksInput = {
   query: string;
   mode?: MilvusSearchMode;
   queryVector?: number[];
+  hybridWeights?: MilvusHybridWeights;
   tenantId: string;
   accessPrincipals: string[];
   knowledgeBaseIds?: string[];
@@ -105,6 +107,7 @@ export type MilvusSearchScopedChunksInput = {
   query: string;
   mode?: MilvusSearchMode;
   queryVector?: number[];
+  hybridWeights?: MilvusHybridWeights;
   tenantId: string;
   knowledgeBaseIds: string[];
   filters?: MilvusSearchFilters;
@@ -114,6 +117,11 @@ export type MilvusSearchScopedChunksInput = {
 
 export type MilvusSearchFilters = {
   tags?: string[];
+};
+
+export type MilvusHybridWeights = {
+  keywordWeight: number;
+  vectorWeight: number;
 };
 
 export type MilvusSearchChunkResult = {
@@ -348,6 +356,7 @@ export class OpenKBMilvus {
       alias,
       query: input.query,
       queryVector: input.queryVector,
+      hybridWeights: input.hybridWeights,
       mode: input.mode ?? "bm25",
       limit: input.limit,
       filter: buildChunkSearchFilter({
@@ -374,6 +383,7 @@ export class OpenKBMilvus {
       alias,
       query: input.query,
       queryVector: input.queryVector,
+      hybridWeights: input.hybridWeights,
       mode: input.mode ?? "bm25",
       limit: input.limit,
       filter: buildScopedChunkSearchFilter({
@@ -388,6 +398,7 @@ export class OpenKBMilvus {
     alias: string;
     query: string;
     queryVector?: number[];
+    hybridWeights?: MilvusHybridWeights;
     mode: MilvusSearchMode;
     filter: string;
     limit: number;
@@ -441,7 +452,9 @@ export class OpenKBMilvus {
       ],
       limit: input.limit,
       output_fields: SEARCH_OUTPUT_FIELDS,
-      rerank: RRFRanker(60)
+      rerank: input.hybridWeights
+        ? WeightedRanker([input.hybridWeights.keywordWeight, input.hybridWeights.vectorWeight])
+        : RRFRanker(60)
     });
     assertStatus(response.status);
 

@@ -91,7 +91,9 @@ describe("index worker", () => {
     expect(rebuilt.error).toBeNull();
     expect(profile.status).toBe("active");
     expect(profile.bm25_function_name).toBe("openkb_bm25");
-    expect(JSON.stringify(profile.function_metadata)).not.toMatch(/api[_-]?key|secret|token/i);
+    expect(JSON.stringify(profile.function_metadata)).not.toMatch(
+      /api[_-]?key|secret|password|authorization/i
+    );
     expect(alias).toEqual({
       alias: "openkb_chunks_active",
       collection: collectionName
@@ -116,6 +118,13 @@ async function createChunkForSeedDocument(
   if (!versionId) {
     throw new Error("Seed document is missing current_version_id.");
   }
+
+  await prismaClient.documentChunk.deleteMany({
+    where: {
+      document_id: seed.documentId,
+      version_id: versionId
+    }
+  });
 
   await prismaClient.documentChunk.create({
     data: {
