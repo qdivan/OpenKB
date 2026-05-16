@@ -98,6 +98,7 @@ export type MilvusSearchChunksInput = {
   tenantId: string;
   accessPrincipals: string[];
   knowledgeBaseIds?: string[];
+  documentIds?: string[];
   filters?: MilvusSearchFilters;
   limit: number;
   alias?: string;
@@ -110,6 +111,7 @@ export type MilvusSearchScopedChunksInput = {
   hybridWeights?: MilvusHybridWeights;
   tenantId: string;
   knowledgeBaseIds: string[];
+  documentIds?: string[];
   filters?: MilvusSearchFilters;
   limit: number;
   alias?: string;
@@ -363,6 +365,7 @@ export class OpenKBMilvus {
         tenantId: input.tenantId,
         accessPrincipals: input.accessPrincipals,
         knowledgeBaseIds: input.knowledgeBaseIds,
+        documentIds: input.documentIds,
         filters: input.filters
       })
     });
@@ -389,6 +392,7 @@ export class OpenKBMilvus {
       filter: buildScopedChunkSearchFilter({
         tenantId: input.tenantId,
         knowledgeBaseIds: input.knowledgeBaseIds,
+        documentIds: input.documentIds,
         filters: input.filters
       })
     });
@@ -628,6 +632,7 @@ export function buildChunkSearchFilter(input: {
   tenantId: string;
   accessPrincipals: string[];
   knowledgeBaseIds?: string[];
+  documentIds?: string[];
   filters?: MilvusSearchFilters;
 }): string {
   const principalFilterValues =
@@ -647,6 +652,12 @@ export function buildChunkSearchFilter(input: {
     );
   }
 
+  if (input.documentIds && input.documentIds.length > 0) {
+    clauses.push(
+      `${MILVUS_COLLECTION_FIELDS.documentId} in ${toMilvusStringArray(input.documentIds)}`
+    );
+  }
+
   if (input.filters?.tags && input.filters.tags.length > 0) {
     clauses.push(
       `json_contains_any(${MILVUS_COLLECTION_FIELDS.metadata}["tags"], ${toMilvusStringArray(
@@ -661,6 +672,7 @@ export function buildChunkSearchFilter(input: {
 export function buildScopedChunkSearchFilter(input: {
   tenantId: string;
   knowledgeBaseIds: string[];
+  documentIds?: string[];
   filters?: MilvusSearchFilters;
 }): string {
   const clauses = buildChunkBaseFilterClauses(input.tenantId);
@@ -669,6 +681,11 @@ export function buildScopedChunkSearchFilter(input: {
   clauses.push(
     `${MILVUS_COLLECTION_FIELDS.knowledgeBaseId} in ${toMilvusStringArray(knowledgeBaseIds)}`
   );
+  if (input.documentIds && input.documentIds.length > 0) {
+    clauses.push(
+      `${MILVUS_COLLECTION_FIELDS.documentId} in ${toMilvusStringArray(input.documentIds)}`
+    );
+  }
   appendMetadataFilterClauses(clauses, input.filters);
   return clauses.join(" and ");
 }

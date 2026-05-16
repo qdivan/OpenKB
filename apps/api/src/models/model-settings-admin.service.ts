@@ -8,6 +8,8 @@ import {
   DEFAULT_EMBEDDING_BATCH_SIZE,
   DEFAULT_EMBEDDING_DIM,
   DEFAULT_EMBEDDING_TIMEOUT_MS,
+  DEFAULT_DASHSCOPE_MULTIMODAL_EMBEDDING_ENDPOINT,
+  DEFAULT_DASHSCOPE_TEXT_RERANK_ENDPOINT,
   DEFAULT_LANGUAGE_ENDPOINT,
   DEFAULT_LANGUAGE_MAX_OUTPUT_TOKENS,
   DEFAULT_LANGUAGE_TEMPERATURE,
@@ -282,15 +284,17 @@ export class ModelSettingsAdminService {
 
     return MODEL_KINDS.map((kind) => {
       const setting = settingsByKind.get(kind);
-      const provider = parseProvider(setting?.provider) ?? defaultProvider(kind);
       const envState = getEnvState(kind, envConfig);
       const source = setting?.enabled ? "db" : envState.configured ? "env" : "none";
+      const provider =
+        source === "db"
+          ? (parseProvider(setting?.provider) ?? defaultProvider(kind))
+          : envState.provider;
       const dbSecret = Boolean(setting?.encrypted_api_key);
       const envSecret = getEnvSecretLast4(kind) !== null;
       const endpoint =
         source === "db"
-          ? (normalizeNullableString(setting?.endpoint) ??
-            (kind === "language" ? DEFAULT_LANGUAGE_ENDPOINT : null))
+          ? (normalizeNullableString(setting?.endpoint) ?? defaultEndpoint(kind, provider))
           : envState.endpoint;
       const model = source === "db" ? normalizeNullableString(setting?.model) : envState.model;
       const embeddingDim =
@@ -436,6 +440,19 @@ function parseProvider(value: string | undefined): ModelProvider | null {
 
 function defaultProvider(kind: ModelKind): ModelProvider {
   return kind === "language" ? "openai_responses" : "openai_compatible";
+}
+
+function defaultEndpoint(kind: ModelKind, provider: ModelProvider): string | null {
+  if (kind === "embedding" && provider === "dashscope") {
+    return DEFAULT_DASHSCOPE_MULTIMODAL_EMBEDDING_ENDPOINT;
+  }
+  if (kind === "rerank" && provider === "dashscope") {
+    return DEFAULT_DASHSCOPE_TEXT_RERANK_ENDPOINT;
+  }
+  if (kind === "language") {
+    return DEFAULT_LANGUAGE_ENDPOINT;
+  }
+  return null;
 }
 
 function normalizeUpdateInput(kind: ModelKind, input: UpdateModelSettingInput) {
@@ -643,6 +660,7 @@ function defaultTimeout(kind: ModelKind): number {
 function getEnvState(kind: ModelKind, config: ReturnType<typeof getOpenKBModelClientConfig>) {
   if (kind === "embedding") {
     return {
+      provider: config.embedding.provider,
       configured: isEmbeddingConfigured(config),
       endpoint: config.embedding.endpoint ?? null,
       model: config.embedding.model ?? null,
@@ -651,6 +669,7 @@ function getEnvState(kind: ModelKind, config: ReturnType<typeof getOpenKBModelCl
   }
   if (kind === "rerank") {
     return {
+      provider: config.rerank.provider,
       configured: isRerankConfigured(config),
       endpoint: config.rerank.endpoint ?? null,
       model: config.rerank.model ?? null,
@@ -658,6 +677,7 @@ function getEnvState(kind: ModelKind, config: ReturnType<typeof getOpenKBModelCl
     };
   }
   return {
+    provider: config.language.provider,
     configured: isLanguageConfigured(config),
     endpoint: config.language.endpoint ?? null,
     model: config.language.model ?? null,

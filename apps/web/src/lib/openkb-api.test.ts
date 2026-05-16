@@ -29,6 +29,7 @@ import {
   searchKnowledge,
   setAdminUserTenantRole,
   updateDocumentMetadata,
+  updateChunkSettings,
   updateDocumentSegment,
   updateAdminImportFormatRoute,
   updateAdminImportTool,
@@ -115,6 +116,51 @@ describe("OpenKB API client", () => {
       expect.objectContaining({
         body: JSON.stringify({ reset_override: true, status: "deleted" }),
         method: "PUT"
+      })
+    );
+  });
+
+  it("sends Dify chunk process rules through knowledge base settings", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateChunkSettings("kb_1", {
+      doc_form: "hierarchical_model",
+      process_rule_mode: "hierarchical",
+      parent_mode: "paragraph",
+      parent_delimiter: "\n\n",
+      parent_max_characters: 1024,
+      chunk_overlap_characters: 80,
+      child_delimiter: "\n",
+      child_max_characters: 512,
+      child_overlap_characters: 50,
+      process_rule: {
+        parent_mode: "paragraph",
+        segmentation: { separator: "\n\n", max_tokens: 1024, chunk_overlap: 80 },
+        subchunk_segmentation: { separator: "\n", max_tokens: 512, chunk_overlap: 50 }
+      }
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/knowledge-bases/kb_1/chunk-settings",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          doc_form: "hierarchical_model",
+          process_rule_mode: "hierarchical",
+          parent_mode: "paragraph",
+          parent_delimiter: "\n\n",
+          parent_max_characters: 1024,
+          chunk_overlap_characters: 80,
+          child_delimiter: "\n",
+          child_max_characters: 512,
+          child_overlap_characters: 50,
+          process_rule: {
+            parent_mode: "paragraph",
+            segmentation: { separator: "\n\n", max_tokens: 1024, chunk_overlap: 80 },
+            subchunk_segmentation: { separator: "\n", max_tokens: 512, chunk_overlap: 50 }
+          }
+        })
       })
     );
   });

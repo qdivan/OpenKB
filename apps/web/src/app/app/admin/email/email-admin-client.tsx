@@ -88,7 +88,7 @@ export default function EmailAdminClient() {
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               {t("Admin")}
             </p>
-            <h1 className="mt-1 text-2xl font-semibold">{t("Email")}</h1>
+            <h1 className="mt-1 text-2xl font-semibold">{t("Email delivery")}</h1>
             <p className="text-sm text-zinc-600">
               {t("Configure production SMTP and inspect email outbox.")}
             </p>
@@ -219,7 +219,7 @@ export default function EmailAdminClient() {
                     <td className="px-2 py-2">{item.to_email}</td>
                     <td className="px-2 py-2">{t(item.template)}</td>
                     <td className="px-2 py-2">{item.subject}</td>
-                    <td className="px-2 py-2">{t(`email_outbox_${item.status}`)}</td>
+                    <td className="px-2 py-2">{formatOutboxStatus(item.status, t)}</td>
                     <td className="px-2 py-2">{item.attempts}</td>
                     <td className="px-2 py-2">
                       <button
@@ -279,4 +279,16 @@ function Field({
       />
     </label>
   );
+}
+
+function formatOutboxStatus(
+  status: AdminEmailOutboxItem["status"],
+  t: (key: string, values?: Record<string, string | number | boolean | null | undefined>) => string
+) {
+  const keyByStatus: Record<AdminEmailOutboxItem["status"], string> = {
+    pending: "email_outbox_pending",
+    sent: "email_outbox_sent",
+    failed: "email_outbox_failed"
+  };
+  return t(keyByStatus[status] ?? "Unknown");
 }

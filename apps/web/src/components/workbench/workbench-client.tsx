@@ -2647,6 +2647,10 @@ function DocumentSidePanel({
   const hasManagedSegments = chunks.some(
     (chunk) => chunk.status !== "active" || chunk.has_override
   );
+  const processingSnapshot = toPanelRecord(currentDocument?.process_rule_snapshot);
+  const snapshotRule = toPanelRecord(processingSnapshot.process_rule);
+  const snapshotSegmentation = toPanelRecord(snapshotRule.segmentation);
+  const snapshotSubchunkSegmentation = toPanelRecord(snapshotRule.subchunk_segmentation);
 
   async function confirmSegmentAction(
     title: string,
@@ -2747,6 +2751,24 @@ function DocumentSidePanel({
                   <SnapshotRow
                     label={t("Current version hash")}
                     value={shortId(currentDocument.currentVersion?.markdown_hash)}
+                  />
+                  <SnapshotRow
+                    label={t("Snapshot settings revision")}
+                    value={String(processingSnapshot.settings_revision ?? "-")}
+                  />
+                  <SnapshotRow
+                    label={t("Snapshot parent mode")}
+                    value={String(
+                      processingSnapshot.parent_mode ?? snapshotRule.parent_mode ?? "-"
+                    )}
+                  />
+                  <SnapshotRow
+                    label={t("Snapshot parent overlap")}
+                    value={String(snapshotSegmentation.chunk_overlap ?? "-")}
+                  />
+                  <SnapshotRow
+                    label={t("Snapshot child overlap")}
+                    value={String(snapshotSubchunkSegmentation.chunk_overlap ?? "-")}
                   />
                 </div>
               </div>
@@ -3516,6 +3538,12 @@ function formatJsonForPanel(value: unknown): string {
   } catch {
     return "{}";
   }
+}
+
+function toPanelRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function summarizeMarkdownDiff(currentMarkdown: string, versionMarkdown: string) {

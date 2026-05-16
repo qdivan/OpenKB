@@ -6,6 +6,7 @@ x-openkb-build: &openkb-build
   args:
     NODE_IMAGE: ${OPENKB_NODE_IMAGE:-node:20-bookworm-slim}
     NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
+    NEXT_PUBLIC_OPENKB_CSRF_COOKIE_NAME: ${NEXT_PUBLIC_OPENKB_CSRF_COOKIE_NAME:-openkb_csrf}
 
 x-openkb-env: &openkb-env
   DATABASE_URL: postgresql://openkb:${POSTGRES_PASSWORD:-openkb}@postgres:5432/${POSTGRES_DB:-openkb}?schema=public
@@ -13,13 +14,22 @@ x-openkb-env: &openkb-env
   APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
   WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
   NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
+  NEXT_PUBLIC_OPENKB_CSRF_COOKIE_NAME: ${NEXT_PUBLIC_OPENKB_CSRF_COOKIE_NAME:-openkb_csrf}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
   OPENKB_ALLOW_LOCAL_CORS: ${OPENKB_ALLOW_LOCAL_CORS:-true}
+  OPENKB_CSRF_COOKIE_NAME: ${OPENKB_CSRF_COOKIE_NAME:-openkb_csrf}
   AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-openkb_session}
   AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-auto}
   SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
   EMAIL_VERIFICATION_TTL_HOURS: ${EMAIL_VERIFICATION_TTL_HOURS:-24}
   PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-2}
+  OPENKB_SMTP_HOST: ${OPENKB_SMTP_HOST:-}
+  OPENKB_SMTP_PORT: ${OPENKB_SMTP_PORT:-587}
+  OPENKB_SMTP_SECURE: ${OPENKB_SMTP_SECURE:-false}
+  OPENKB_SMTP_USER: ${OPENKB_SMTP_USER:-}
+  OPENKB_SMTP_PASSWORD: ${OPENKB_SMTP_PASSWORD:-}
+  OPENKB_SMTP_FROM: ${OPENKB_SMTP_FROM:-}
+  OPENKB_SMTP_REPLY_TO: ${OPENKB_SMTP_REPLY_TO:-}
   TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
   API_RATE_LIMIT_MAX: ${API_RATE_LIMIT_MAX:-600}
   API_RATE_LIMIT_WINDOW_SECONDS: ${API_RATE_LIMIT_WINDOW_SECONDS:-60}
@@ -30,6 +40,7 @@ x-openkb-env: &openkb-env
   ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@openkb.local}
   ADMIN_PASSWORD: ${ADMIN_PASSWORD:-OpenKB-dev-123456}
   ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME:-OpenKB Admin}
+  OPENKB_CONFIG_ENCRYPTION_KEY: ${OPENKB_CONFIG_ENCRYPTION_KEY:-}
   S3_ENDPOINT: http://minio-assets:9000
   S3_REGION: ${S3_REGION:-us-east-1}
   S3_BUCKET: ${S3_BUCKET:-openkb-assets}
@@ -47,15 +58,37 @@ x-openkb-env: &openkb-env
   MILVUS_ENABLE_RERANK: ${MILVUS_ENABLE_RERANK:-false}
   MILVUS_VECTOR_DIM: ${MILVUS_VECTOR_DIM:-2048}
   OPENKB_RETRIEVAL_DEFAULT_MODE: ${OPENKB_RETRIEVAL_DEFAULT_MODE:-hybrid}
+  OPENKB_EMBEDDING_REQUEST_FORMAT: ${OPENKB_EMBEDDING_REQUEST_FORMAT:-openai_compatible}
   OPENKB_EMBEDDING_ENDPOINT: ${OPENKB_EMBEDDING_ENDPOINT:-}
   OPENKB_EMBEDDING_MODEL: ${OPENKB_EMBEDDING_MODEL:-}
   OPENKB_EMBEDDING_DIM: ${OPENKB_EMBEDDING_DIM:-2048}
   OPENKB_EMBEDDING_BATCH_SIZE: ${OPENKB_EMBEDDING_BATCH_SIZE:-16}
   OPENKB_EMBEDDING_TIMEOUT_MS: ${OPENKB_EMBEDDING_TIMEOUT_MS:-30000}
+  OPENKB_EMBEDDING_API_KEY: ${OPENKB_EMBEDDING_API_KEY:-}
+  OPENKB_RERANK_REQUEST_FORMAT: ${OPENKB_RERANK_REQUEST_FORMAT:-openai_compatible}
   OPENKB_RERANK_ENDPOINT: ${OPENKB_RERANK_ENDPOINT:-}
   OPENKB_RERANK_MODEL: ${OPENKB_RERANK_MODEL:-}
   OPENKB_RERANK_TIMEOUT_MS: ${OPENKB_RERANK_TIMEOUT_MS:-15000}
+  OPENKB_RERANK_API_KEY: ${OPENKB_RERANK_API_KEY:-}
+  OPENKB_LLM_REQUEST_FORMAT: ${OPENKB_LLM_REQUEST_FORMAT:-openai_responses}
+  OPENKB_LLM_ENDPOINT: ${OPENKB_LLM_ENDPOINT:-https://api.openai.com/v1/responses}
+  OPENKB_LLM_MODEL: ${OPENKB_LLM_MODEL:-}
+  OPENKB_LLM_API_KEY: ${OPENKB_LLM_API_KEY:-}
+  OPENKB_LLM_TIMEOUT_MS: ${OPENKB_LLM_TIMEOUT_MS:-30000}
+  OPENKB_LLM_MAX_OUTPUT_TOKENS: ${OPENKB_LLM_MAX_OUTPUT_TOKENS:-64}
+  OPENKB_LLM_TEMPERATURE: ${OPENKB_LLM_TEMPERATURE:-0}
+  OPENKB_MARKITDOWN_COMMAND: ${OPENKB_MARKITDOWN_COMMAND:-markitdown}
+  OPENKB_MINERU_ENDPOINT: ${OPENKB_MINERU_ENDPOINT:-}
+  OPENKB_MINERU_API_KEY: ${OPENKB_MINERU_API_KEY:-}
+  OPENKB_PANDOC_COMMAND: ${OPENKB_PANDOC_COMMAND:-pandoc}
+  OPENKB_TESSERACT_COMMAND: ${OPENKB_TESSERACT_COMMAND:-tesseract}
+  OPENKB_IMPORT_TOOL_TIMEOUT_MS: ${OPENKB_IMPORT_TOOL_TIMEOUT_MS:-120000}
+  OPENKB_IMPORT_MAX_FILE_MB: ${OPENKB_IMPORT_MAX_FILE_MB:-100}
   MCP_SERVER_BASE_URL: ${MCP_SERVER_BASE_URL:-http://localhost:4100}
+  MCP_OAUTH_ISSUER: ${MCP_OAUTH_ISSUER:-http://localhost:4100}
+  MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
+  MCP_OAUTH_REFRESH_TOKEN_TTL_DAYS: ${MCP_OAUTH_REFRESH_TOKEN_TTL_DAYS:-30}
+  MCP_OAUTH_SIGNING_SECRET: ${MCP_OAUTH_SIGNING_SECRET:-}
   MCP_PAT_PREFIX: ${MCP_PAT_PREFIX:-kbpat_}
   MCP_DEFAULT_SCOPES: ${MCP_DEFAULT_SCOPES:-kb:read,kb:search,doc:read}
   MCP_MAX_TOP_K: ${MCP_MAX_TOP_K:-20}
@@ -74,6 +107,8 @@ x-openkb-env: &openkb-env
   DIFY_MAX_TOP_K: ${DIFY_MAX_TOP_K:-20}
   DIFY_REQUEST_MAX_BYTES: ${DIFY_REQUEST_MAX_BYTES:-1048576}
   DIFY_RESULT_BASE_URL: ${DIFY_RESULT_BASE_URL:-http://localhost:3000}
+  OPENKB_METRICS_ENABLED: ${OPENKB_METRICS_ENABLED:-true}
+  OPENKB_BACKUP_DIR: ${OPENKB_BACKUP_DIR:-./backups}
 
 x-openkb-depends: &openkb-depends
   postgres:
@@ -203,7 +238,7 @@ services:
 
   api:
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm --filter @openkb/api start
     environment:
       <<: *openkb-env
@@ -224,7 +259,7 @@ services:
 
   web:
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm --filter @openkb/web exec next start -p 3000 -H 0.0.0.0
     environment:
       <<: *openkb-env
@@ -247,7 +282,7 @@ services:
 
   mcp-server:
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm --filter @openkb/mcp-server start
     environment:
       <<: *openkb-env
@@ -268,7 +303,7 @@ services:
 
   dify-adapter:
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm --filter @openkb/dify-adapter start
     environment:
       <<: *openkb-env
@@ -289,7 +324,7 @@ services:
 
   import-worker:
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm import:worker
     environment:
       <<: *openkb-env
@@ -299,7 +334,7 @@ services:
 
   index-worker:
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm index:worker
     environment:
       <<: *openkb-env
@@ -311,7 +346,7 @@ services:
   migrate:
     profiles: ["init"]
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm db:migrate
     environment: *openkb-env
     depends_on:
@@ -321,7 +356,7 @@ services:
   seed-dev:
     profiles: ["init"]
     build: *openkb-build
-    image: openkb:phase-11
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
     command: pnpm dev:seed
     environment: *openkb-env
     depends_on:

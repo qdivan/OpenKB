@@ -124,8 +124,9 @@ const DIFY_OPENKB_FILTERABLE_FIELDS = [
   {
     name: "tags",
     type: "string[]",
-    source: "chunk_metadata",
-    description: "Optional tags stored in document_chunks.metadata.tags."
+    source: "document_metadata",
+    description:
+      "Optional Dify-style tags stored as document metadata and mirrored in retrieval metadata."
   },
   {
     name: "openkb_retrieval.context_mode",

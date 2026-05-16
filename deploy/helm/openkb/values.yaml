@@ -1,6 +1,6 @@
 image:
   repository: openkb
-  tag: phase-20
+  tag: phase-22
   pullPolicy: IfNotPresent
 
 web:

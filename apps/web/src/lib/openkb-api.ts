@@ -631,6 +631,7 @@ export type RetrievalModeCapability = {
 export type ModelKind = "embedding" | "rerank" | "language";
 export type ModelProvider =
   | "openai_compatible"
+  | "dashscope"
   | "openai_responses"
   | "openai_chat_completions"
   | "anthropic_messages";
@@ -904,6 +905,7 @@ export type ChunkSettings = {
   parent_delimiter: string;
   child_delimiter: string;
   parent_max_characters: number;
+  chunk_overlap_characters?: number;
   child_max_characters: number;
   child_overlap_characters: number;
   revision: number;
@@ -1381,6 +1383,7 @@ export function updateChunkSettings(
       | "parent_delimiter"
       | "child_delimiter"
       | "parent_max_characters"
+      | "chunk_overlap_characters"
       | "child_max_characters"
       | "child_overlap_characters"
     >

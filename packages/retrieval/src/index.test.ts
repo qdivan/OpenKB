@@ -565,6 +565,147 @@ describe("@openkb/retrieval input helpers", () => {
     ).resolves.toMatchObject({ results: [] });
   });
 
+  it("uses document metadata tags to pre-scope Milvus candidates and post-filter results", async () => {
+    const searchCalls: unknown[] = [];
+    const prisma = {
+      retrievalSetting: { findFirst: async () => ({ mode: "bm25" }) },
+      milvusIndexProfile: { findFirst: async () => null },
+      knowledgeBaseChunkSetting: { findFirst: async () => null },
+      documentQaPair: { findMany: async () => [] },
+      documentChunk: {
+        findMany: async () => [
+          {
+            id: "chunk_1",
+            tenant_id: "tenant_1",
+            workspace_id: "workspace_1",
+            document_id: "doc_1",
+            knowledge_base_id: "kb_1",
+            version_id: "version_1",
+            index_role: "content",
+            source_chunk_id: null,
+            parent_chunk_id: null,
+            chunk_type: "general",
+            heading_path: [],
+            content_text: "Dify tags should come from document metadata.",
+            content_markdown: "Dify tags should come from document metadata.",
+            override_content_text: null,
+            override_content_markdown: null,
+            token_count: 6,
+            start_line: 1,
+            end_line: 1,
+            start_char: 0,
+            end_char: 43,
+            metadata: {}
+          }
+        ]
+      },
+      knowledgeBase: { findMany: async () => [{ id: "kb_1", title: "KB" }] },
+      document: {
+        findMany: async () => [
+          {
+            id: "doc_1",
+            parent_id: null,
+            knowledge_base_id: "kb_1",
+            title: "Tagged document",
+            slug: "tagged-document",
+            current_version_id: "version_1",
+            status: "published",
+            created_at: new Date("2026-05-01T00:00:00.000Z"),
+            updated_at: new Date("2026-05-02T00:00:00.000Z")
+          }
+        ]
+      },
+      knowledgeBaseMetadataField: {
+        findMany: async () => [{ id: "field_tags", name: "tags" }]
+      },
+      documentMetadataValue: {
+        findMany: async () => [
+          { document_id: "doc_1", field_id: "field_tags", value: ["dify", "parity"] }
+        ]
+      },
+      $disconnect: async () => undefined
+    };
+    const service = new RetrievalService({
+      prisma: prisma as never,
+      milvus: {
+        config: { activeAlias: "openkb_chunks_active" },
+        searchChunks: async (input: unknown) => {
+          searchCalls.push(input);
+          return [makeCandidate("chunk_1", "doc_1", "Dify tags should come from metadata.", 0.8)];
+        }
+      } as never,
+      permissions: {
+        requireCanRead: async () => undefined,
+        getAccessPrincipals: async () => ["user:u1"],
+        canRead: async () => true
+      } as never,
+      modelClient: {
+        embeddingConfigured: false,
+        rerankConfigured: false,
+        config: { embedding: { dim: 2048 }, rerank: {} }
+      } as never,
+      env: {}
+    });
+
+    const response = await service.search({
+      user,
+      query: "tags",
+      knowledge_base_ids: ["kb_1"],
+      filters: { tags: ["dify"] }
+    });
+
+    expect(searchCalls[0]).toMatchObject({ documentIds: ["doc_1"], filters: { tags: [] } });
+    expect(response.results).toHaveLength(1);
+    expect(response.results[0]?.metadata).toMatchObject({ tags: ["dify", "parity"] });
+  });
+
+  it("short-circuits tag-filtered search when no document metadata matches", async () => {
+    const searchCalls: unknown[] = [];
+    const prisma = {
+      retrievalSetting: { findFirst: async () => ({ mode: "bm25" }) },
+      milvusIndexProfile: { findFirst: async () => null },
+      knowledgeBaseChunkSetting: { findFirst: async () => null },
+      knowledgeBaseMetadataField: {
+        findMany: async () => [{ id: "field_tags", name: "tags" }]
+      },
+      documentMetadataValue: {
+        findMany: async () => [{ document_id: "doc_1", field_id: "field_tags", value: ["other"] }]
+      },
+      $disconnect: async () => undefined
+    };
+    const service = new RetrievalService({
+      prisma: prisma as never,
+      milvus: {
+        config: { activeAlias: "openkb_chunks_active" },
+        searchChunks: async (input: unknown) => {
+          searchCalls.push(input);
+          return [makeCandidate("chunk_1", "doc_1", "Should not be called.", 0.9)];
+        }
+      } as never,
+      permissions: {
+        requireCanRead: async () => undefined,
+        getAccessPrincipals: async () => ["user:u1"],
+        canRead: async () => true
+      } as never,
+      modelClient: {
+        embeddingConfigured: false,
+        rerankConfigured: false,
+        config: { embedding: { dim: 2048 }, rerank: {} }
+      } as never,
+      env: {}
+    });
+
+    const response = await service.search({
+      user,
+      query: "tags",
+      knowledge_base_ids: ["kb_1"],
+      filters: { tags: ["dify"] }
+    });
+
+    expect(searchCalls).toHaveLength(0);
+    expect(response.results).toEqual([]);
+  });
+
   it("injects a single KB retrieval_model top_k, score threshold and hybrid weights", async () => {
     const searchCalls: unknown[] = [];
     const prisma = {

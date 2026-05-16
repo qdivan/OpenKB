@@ -105,8 +105,8 @@ export function KnowledgeBaseDashboard({
     [settings?.retrieval_model?.weights]
   );
   const processRulePreview = useMemo(
-    () => formatJsonPreview(settings?.process_rule),
-    [settings?.process_rule]
+    () => formatJsonPreview(settings ? buildSettingsProcessRule(settings) : undefined),
+    [settings]
   );
 
   useEffect(() => {
@@ -215,10 +215,12 @@ export function KnowledgeBaseDashboard({
         process_rule_mode: settings.process_rule_mode,
         retrieval_model: settings.retrieval_model,
         summary_index_setting: settings.summary_index_setting,
+        process_rule: buildSettingsProcessRule(settings),
         parent_mode: settings.parent_mode,
         parent_delimiter: settings.parent_delimiter,
         child_delimiter: settings.child_delimiter,
         parent_max_characters: settings.parent_max_characters,
+        chunk_overlap_characters: getParentOverlapCharacters(settings),
         child_max_characters: settings.child_max_characters,
         child_overlap_characters: settings.child_overlap_characters
       });
@@ -621,13 +623,12 @@ export function KnowledgeBaseDashboard({
                   <select
                     className={formControlClass}
                     onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        doc_form: event.target.value as ChunkSettings["doc_form"],
-                        mode: event.target.value === "text_model" ? "general" : "parent_child",
-                        process_rule_mode:
-                          event.target.value === "hierarchical_model" ? "hierarchical" : "custom"
-                      })
+                      setSettings(
+                        applyDocFormDefaults(
+                          settings,
+                          event.target.value as ChunkSettings["doc_form"]
+                        )
+                      )
                     }
                     value={settings.doc_form}
                   >
@@ -656,26 +657,32 @@ export function KnowledgeBaseDashboard({
                   <select
                     className={formControlClass}
                     onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        process_rule_mode: event.target.value as ChunkSettings["process_rule_mode"]
-                      })
+                      setSettings(
+                        updateProcessRuleMode(
+                          settings,
+                          event.target.value as ChunkSettings["process_rule_mode"]
+                        )
+                      )
                     }
                     value={settings.process_rule_mode}
                   >
-                    <option value="automatic">{t("Automatic segmentation")}</option>
-                    <option value="custom">{t("Custom segmentation")}</option>
-                    <option value="hierarchical">{t("Hierarchical segmentation")}</option>
+                    {processRuleModeOptions(settings.doc_form).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.label)}
+                      </option>
+                    ))}
                   </select>
                 </Field>
                 <Field label={t("Parent mode")}>
                   <select
                     className={formControlClass}
                     onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        parent_mode: event.target.value as ChunkSettings["parent_mode"]
-                      })
+                      setSettings(
+                        updateParentMode(
+                          settings,
+                          event.target.value as ChunkSettings["parent_mode"]
+                        )
+                      )
                     }
                     value={settings.parent_mode}
                   >
@@ -698,32 +705,53 @@ export function KnowledgeBaseDashboard({
               <div className="grid gap-3 md:grid-cols-2">
                 <NumberField
                   label={t("Parent chars")}
-                  onChange={(value) => setSettings({ ...settings, parent_max_characters: value })}
+                  onChange={(value) =>
+                    setSettings(updateSegmentationRule(settings, "parent", { max_tokens: value }))
+                  }
                   value={settings.parent_max_characters}
                 />
                 <TextField
                   label={t("Parent delimiter")}
                   onChange={(value) =>
-                    setSettings({ ...settings, parent_delimiter: decodeDelimiter(value) })
+                    setSettings(
+                      updateSegmentationRule(settings, "parent", {
+                        separator: decodeDelimiter(value)
+                      })
+                    )
                   }
                   value={encodeDelimiter(settings.parent_delimiter)}
                 />
                 <NumberField
+                  label={t("Parent/standard overlap")}
+                  onChange={(value) =>
+                    setSettings(
+                      updateSegmentationRule(settings, "parent", { chunk_overlap: value })
+                    )
+                  }
+                  value={getParentOverlapCharacters(settings)}
+                />
+                <NumberField
                   label={t("Child chars")}
-                  onChange={(value) => setSettings({ ...settings, child_max_characters: value })}
+                  onChange={(value) =>
+                    setSettings(updateSegmentationRule(settings, "child", { max_tokens: value }))
+                  }
                   value={settings.child_max_characters}
                 />
                 <NumberField
                   label={t("Child overlap")}
                   onChange={(value) =>
-                    setSettings({ ...settings, child_overlap_characters: value })
+                    setSettings(updateSegmentationRule(settings, "child", { chunk_overlap: value }))
                   }
                   value={settings.child_overlap_characters}
                 />
                 <TextField
                   label={t("Child delimiter")}
                   onChange={(value) =>
-                    setSettings({ ...settings, child_delimiter: decodeDelimiter(value) })
+                    setSettings(
+                      updateSegmentationRule(settings, "child", {
+                        separator: decodeDelimiter(value)
+                      })
+                    )
                   }
                   value={encodeDelimiter(settings.child_delimiter)}
                 />
@@ -1292,6 +1320,172 @@ function formatJsonPreview(value: unknown): string {
   } catch {
     return "{}";
   }
+}
+
+function applyDocFormDefaults(
+  settings: ChunkSettings,
+  docForm: ChunkSettings["doc_form"]
+): ChunkSettings {
+  const nextProcessRule = defaultProcessRuleForDocForm(docForm);
+  const nextMode = docForm === "text_model" ? "general" : "parent_child";
+  const nextRuleMode = docForm === "hierarchical_model" ? "hierarchical" : "custom";
+  const segmentation = toRecord(nextProcessRule.segmentation);
+  const subchunkSegmentation = toRecord(nextProcessRule.subchunk_segmentation);
+  return {
+    ...settings,
+    doc_form: docForm,
+    mode: nextMode,
+    process_rule_mode: nextRuleMode,
+    process_rule: nextProcessRule,
+    parent_mode: docForm === "hierarchical_model" ? "paragraph" : settings.parent_mode,
+    parent_delimiter: stringFrom(segmentation.separator, settings.parent_delimiter),
+    parent_max_characters: numberFrom(segmentation.max_tokens, settings.parent_max_characters),
+    chunk_overlap_characters: numberFrom(
+      segmentation.chunk_overlap,
+      docForm === "hierarchical_model" ? 0 : 50
+    ),
+    child_delimiter: stringFrom(subchunkSegmentation.separator, settings.child_delimiter),
+    child_max_characters: numberFrom(
+      subchunkSegmentation.max_tokens,
+      settings.child_max_characters
+    ),
+    child_overlap_characters: numberFrom(
+      subchunkSegmentation.chunk_overlap,
+      settings.child_overlap_characters
+    )
+  };
+}
+
+function updateProcessRuleMode(
+  settings: ChunkSettings,
+  processRuleMode: ChunkSettings["process_rule_mode"]
+): ChunkSettings {
+  const allowed = processRuleModeOptions(settings.doc_form).some(
+    (option) => option.value === processRuleMode
+  );
+  const nextMode = allowed ? processRuleMode : processRuleModeOptions(settings.doc_form)[0]!.value;
+  return { ...settings, process_rule_mode: nextMode };
+}
+
+function updateParentMode(
+  settings: ChunkSettings,
+  parentMode: ChunkSettings["parent_mode"]
+): ChunkSettings {
+  return {
+    ...settings,
+    parent_mode: parentMode,
+    process_rule: {
+      ...buildSettingsProcessRule(settings),
+      parent_mode: toDifyParentMode(parentMode)
+    }
+  };
+}
+
+function updateSegmentationRule(
+  settings: ChunkSettings,
+  target: "parent" | "child",
+  patch: { separator?: string; max_tokens?: number; chunk_overlap?: number }
+): ChunkSettings {
+  const processRule = buildSettingsProcessRule(settings);
+  const key = target === "parent" ? "segmentation" : "subchunk_segmentation";
+  const previous = toRecord(processRule[key]);
+  const nextProcessRule = {
+    ...processRule,
+    [key]: {
+      ...previous,
+      ...patch
+    }
+  };
+  return {
+    ...settings,
+    ...(target === "parent"
+      ? {
+          parent_delimiter: stringFrom(patch.separator, settings.parent_delimiter),
+          parent_max_characters: numberFrom(patch.max_tokens, settings.parent_max_characters),
+          chunk_overlap_characters: numberFrom(
+            patch.chunk_overlap,
+            getParentOverlapCharacters(settings)
+          )
+        }
+      : {
+          child_delimiter: stringFrom(patch.separator, settings.child_delimiter),
+          child_max_characters: numberFrom(patch.max_tokens, settings.child_max_characters),
+          child_overlap_characters: numberFrom(
+            patch.chunk_overlap,
+            settings.child_overlap_characters
+          )
+        }),
+    process_rule: nextProcessRule
+  };
+}
+
+function buildSettingsProcessRule(settings: ChunkSettings): Record<string, unknown> {
+  const processRule = toRecord(settings.process_rule);
+  const segmentation = toRecord(processRule.segmentation);
+  const subchunkSegmentation = toRecord(processRule.subchunk_segmentation);
+  return {
+    ...processRule,
+    parent_mode: toDifyParentMode(settings.parent_mode),
+    segmentation: {
+      ...segmentation,
+      separator: settings.parent_delimiter,
+      max_tokens: settings.parent_max_characters,
+      chunk_overlap: getParentOverlapCharacters(settings)
+    },
+    subchunk_segmentation: {
+      ...subchunkSegmentation,
+      separator: settings.child_delimiter,
+      max_tokens: settings.child_max_characters,
+      chunk_overlap: settings.child_overlap_characters
+    }
+  };
+}
+
+function defaultProcessRuleForDocForm(docForm: ChunkSettings["doc_form"]) {
+  if (docForm === "hierarchical_model") {
+    return {
+      parent_mode: "paragraph",
+      segmentation: { separator: "\n\n", max_tokens: 1024, chunk_overlap: 0 },
+      subchunk_segmentation: { separator: "\n", max_tokens: 512, chunk_overlap: 50 }
+    };
+  }
+  return {
+    segmentation: { separator: "\n\n", max_tokens: 1024, chunk_overlap: 50 }
+  };
+}
+
+function processRuleModeOptions(docForm: ChunkSettings["doc_form"]) {
+  if (docForm === "hierarchical_model") {
+    return [{ value: "hierarchical", label: "Hierarchical segmentation" }] as const;
+  }
+  return [
+    { value: "automatic", label: "Automatic segmentation" },
+    { value: "custom", label: "Custom segmentation" }
+  ] as const;
+}
+
+function getParentOverlapCharacters(settings: ChunkSettings): number {
+  if (typeof settings.chunk_overlap_characters === "number") {
+    return settings.chunk_overlap_characters;
+  }
+  const processRule = toRecord(settings.process_rule);
+  const segmentation = toRecord(processRule.segmentation);
+  return numberFrom(
+    segmentation.chunk_overlap,
+    settings.doc_form === "hierarchical_model" ? 0 : 50
+  );
+}
+
+function toDifyParentMode(value: ChunkSettings["parent_mode"]) {
+  return value === "full_doc" ? "full-doc" : "paragraph";
+}
+
+function stringFrom(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function numberFrom(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function parseHybridWeights(value: unknown): { keyword: number; vector: number } {

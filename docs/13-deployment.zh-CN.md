@@ -1,18 +1,10 @@
 # 13 — 部署
 
-Phase 11 已完成最小可部署闭环：生产/自托管 Docker Compose、Helm 最小 chart、环境变量整理、健康检查和公网测试安全基线。Phase 12 已在代码中接入真实 embedding、rerank 和 hybrid retrieval。Phase 13 已加入知识库 Dashboard、父子切片、全文上下文、检索测试台和发布闭环。
+本文是当前 OpenKB `v0.3.x / Phase 22.9` 的部署说明。它覆盖 Docker Compose、Helm、环境变量、健康检查和升级验收。历史阶段说明请看 `docs/15-roadmap-and-codex-tasks.zh-CN.md`，不要再把 Phase 11 的最小部署闭环当作当前状态。
 
-部署层负责配置、启动、健康检查和依赖编排；不新增知识库级模型配置。OpenKB 允许 `system_admin` 保存实例级加密模型 secret，但禁止明文保存 embedding/rerank/LLM provider API key。
+## 1. 组件
 
-## 1. Docker Compose
-
-生产/自托管 compose 文件：
-
-```text
-deploy/docker-compose/compose.yml
-```
-
-覆盖服务：
+默认部署包含：
 
 ```text
 web
@@ -42,17 +34,27 @@ minio-assets: 9000 / 9001
 milvus-standalone: 19530 / 9091
 ```
 
+本地源码开发推荐端口仍是 Web `3100`、API `4101`，见 `docs/25-local-quickstart.zh-CN.md`。
+
+## 2. Docker Compose
+
+Compose 文件：
+
+```text
+deploy/docker-compose/compose.yml
+```
+
 启动顺序：
 
 ```bash
-docker compose -f deploy/docker-compose/compose.yml build
-docker compose -f deploy/docker-compose/compose.yml up -d postgres redis minio-assets milvus-etcd milvus-minio milvus-standalone
-docker compose -f deploy/docker-compose/compose.yml run --rm migrate
-docker compose -f deploy/docker-compose/compose.yml run --rm seed-dev
-docker compose -f deploy/docker-compose/compose.yml up -d
+docker compose --env-file .env -f deploy/docker-compose/compose.yml build
+docker compose --env-file .env -f deploy/docker-compose/compose.yml up -d postgres redis minio-assets milvus-etcd milvus-minio milvus-standalone
+docker compose --env-file .env -f deploy/docker-compose/compose.yml run --rm migrate
+docker compose --env-file .env -f deploy/docker-compose/compose.yml run --rm seed-dev
+docker compose --env-file .env -f deploy/docker-compose/compose.yml up -d
 ```
 
-迁移和 seed 是显式一次性命令，不由长期运行服务隐式执行。`seed-dev` 创建开发账号：
+`migrate` 和 `seed-dev` 是显式一次性命令，不由长期运行服务隐式执行。`seed-dev` 只用于本地开发：
 
 ```text
 admin@openkb.local / OpenKB-dev-123456
@@ -66,216 +68,88 @@ curl http://localhost:4100/health
 curl http://localhost:4200/health
 ```
 
-Redis 是 Phase 11 部署基线依赖，但当前 import/index workers 仍使用 PostgreSQL 轮询 `import_jobs` 和 `index_rebuild_jobs`；BullMQ 队列接入不属于 Phase 11。
+`/health.phase` 只是展示当前构建标识，不能作为升级验收的唯一依据。
 
-## 2. CPU-only 默认与模型开关
+## 3. Phase 22 升级验收
 
-本地和自托管默认是 CPU-only，且不配置模型 endpoint 时自动使用 BM25：
+部署验收应同时确认镜像 tag/commit、数据库迁移、表结构和关键接口：
+
+- `_prisma_migrations` 已完成 `0014_account_setup_admin_visibility`、`0015_dify_knowledge_alignment`、`0016_qa_summary_generation`。
+- 表结构包含 `document_qa_pairs`、`document_segment_summaries`、`document_summaries`，以及 `document_chunks.index_role`、`document_chunks.source_chunk_id`。
+- 关键接口可用：KB chunk settings、document processing、document reprocess、segment management、QA、summaries、search、Dify `/retrieval`。
+- Docker Compose/Helm 已透传 Phase 20-22 的 SMTP、CSRF、MCP OAuth、模型、导入工具、metrics 和 backup 环境变量。
+- Dify parity 修复以 `docs/30-dify-parity-v2-analysis.zh-CN.md` 为基线；旧 chunks 不自动迁移，显式 reprocess 后才使用 Dify 1.14.1-compatible splitter；QA、metadata/tags 与 segment 生命周期也按该基线验收。
+
+## 4. 模型与检索配置
+
+默认部署是 CPU-only BM25。dense、hybrid、rerank 只有在配置模型并完成 Milvus blue-green index rebuild 后才启用。
+
+核心变量：
 
 ```text
 MILVUS_ENABLE_BM25=true
 MILVUS_ENABLE_TEXT_EMBEDDING=false
 MILVUS_ENABLE_RERANK=false
 OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid
-OPENKB_EMBEDDING_ENDPOINT=
-OPENKB_RERANK_ENDPOINT=
-```
-
-`OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid` 只有在 embedding endpoint 配置且 active index 已重建后才会生效；否则自动回退到 `bm25`。
-
-如果启用直连模型服务，至少配置：
-
-```text
+OPENKB_EMBEDDING_REQUEST_FORMAT=openai_compatible | dashscope
 OPENKB_EMBEDDING_ENDPOINT
 OPENKB_EMBEDDING_MODEL
-OPENKB_EMBEDDING_DIM=2048
+OPENKB_EMBEDDING_DIM
+OPENKB_EMBEDDING_API_KEY
+OPENKB_RERANK_REQUEST_FORMAT=openai_compatible | dashscope
 OPENKB_RERANK_ENDPOINT
 OPENKB_RERANK_MODEL
-OPENKB_CONFIG_ENCRYPTION_KEY
+OPENKB_RERANK_API_KEY
 OPENKB_LLM_REQUEST_FORMAT
 OPENKB_LLM_ENDPOINT
 OPENKB_LLM_MODEL
+OPENKB_LLM_API_KEY
+OPENKB_CONFIG_ENCRYPTION_KEY
 ```
 
-没有 NVIDIA GPU / `nvidia-smi` 的机器不要在同机启动 MinerU GPU worker、Qwen Embedding TEI 或 Qwen Reranker vLLM。模型服务可以部署在独立机器或内网模型平台上。
+模型 secret 只能由 `system_admin` 以实例级加密配置保存，或通过环境变量提供。禁止知识库级模型配置，禁止明文写入仓库、日志或 audit。
 
-可选模型服务只能通过显式 compose profile、Helm values overlay 或外部部署启用。默认部署不启动高显存模型服务。
-
-## 3. Milvus 配置
-
-Milvus/token 和模型服务凭证放在部署层：
+Embedding 模型或维度变更必须走 Milvus blue-green rebuild：
 
 ```text
-Docker Compose env
-K8s Secret + Helm values
-provider service env
+new collection -> rebuild from PostgreSQL chunks -> health check -> alias switch -> rollback window
 ```
 
-OpenKB 数据库只允许保存实例级加密模型 secret；没有 `OPENKB_CONFIG_ENCRYPTION_KEY` 时不能保存或读取 DB secret，只能使用环境变量配置。
+不要在同一个 active collection 混写不同 embedding 模型或不同维度的向量。
 
-OpenKB 读取模型配置的优先级是 DB enabled 配置 > 环境变量 > 未配置；`retrieval_settings` 只保存当前模式：
+## 5. Helm
 
-```text
-bm25
-dense
-dense_rerank
-hybrid
-hybrid_rerank
-```
-
-默认 compose 使用 Milvus standalone + etcd + 独立 `milvus-minio`，与 OpenKB 附件用的 `minio-assets` 分开。
-
-Embedding 模型更换仍遵循：
-
-```text
-新 collection -> rebuild PostgreSQL chunks -> health check -> alias switch -> rollback window
-```
-
-禁止在 active collection 混写不同 embedding 模型或维度的向量。
-
-## 4. Helm
-
-最小 chart：
+Chart：
 
 ```text
 deploy/helm/openkb
 ```
 
-静态检查：
+检查：
 
 ```bash
 helm lint deploy/helm/openkb
 helm template openkb deploy/helm/openkb --values deploy/helm/openkb/values.yaml
 ```
 
-核心 values：
+敏感配置通过 Kubernetes Secret 提供。推荐使用 `secrets.existingSecret`，不要把真实密码、PAT、Dify key、SMTP password、模型 key 或 OAuth signing secret 写进 values 文件。
 
-```yaml
-image:
-  repository: openkb
-  tag: phase-11
-web:
-  enabled: true
-api:
-  enabled: true
-mcp:
-  enabled: true
-difyAdapter:
-  enabled: true
-workers:
-  import:
-    enabled: true
-  index:
-    enabled: true
-postgres:
-  enabled: true
-  external: false
-redis:
-  enabled: true
-  external: false
-s3:
-  external: false
-milvus:
-  mode: standalone # standalone | external
-secrets:
-  existingSecret: ""
-```
+## 6. 生产安全基线
 
-如果使用 external dependencies：
+公网或准生产环境必须满足：
 
-- `postgres.external=true` 时设置 `postgres.host`、`postgres.port`、`postgres.database`、`postgres.username`，或直接设置 `postgres.databaseUrl`。
-- `redis.external=true` 时设置 `redis.host` 和 `redis.port`。
-- `s3.external=true` 时设置 `s3.endpoint`、`s3.bucket`、`s3.region`。
-- `milvus.mode=external` 时设置 `milvus.uri`、`milvus.database`，token 通过 Secret 提供。
+- HTTPS、HSTS、反向代理或 Ingress TLS。
+- `AUTH_COOKIE_SECURE=true`。
+- `OPENKB_ALLOW_LOCAL_CORS=false`。
+- 精确配置 `CORS_ORIGINS`。
+- Cookie-auth mutation 使用 CSRF double-submit；Bearer 型 Dify/MCP 接入走独立鉴权。
+- PostgreSQL、Redis、MinIO Console、Milvus、etcd 不暴露公网。
+- SMTP、模型、导入工具、OAuth 等 secret 只来自 `.env`、Secret 或实例级加密 DB 配置。
+- 日志脱敏 `Authorization`、`Cookie`、`Set-Cookie`、password、token、api key。
 
-敏感配置通过 Secret 提供：
+## 7. 功能链路验证
 
-```text
-DATABASE_URL
-ADMIN_PASSWORD
-S3_ACCESS_KEY_ID
-S3_SECRET_ACCESS_KEY
-POSTGRES_PASSWORD
-MILVUS_TOKEN
-MILVUS_MINIO_ACCESS_KEY_ID
-MILVUS_MINIO_SECRET_ACCESS_KEY
-```
-
-如果设置 `secrets.existingSecret`，该 Secret 必须包含上述应用实际需要的 key。
-
-## 5. 环境变量
-
-OpenKB 应用读取：
-
-```text
-DATABASE_URL
-REDIS_URL
-APP_BASE_URL
-WEB_BASE_URL
-NEXT_PUBLIC_API_BASE_URL
-CORS_ORIGINS
-OPENKB_ALLOW_LOCAL_CORS
-AUTH_COOKIE_SECURE
-TRUST_PROXY_HEADERS
-API_RATE_LIMIT_MAX
-API_RATE_LIMIT_WINDOW_SECONDS
-AUTH_RATE_LIMIT_MAX
-AUTH_RATE_LIMIT_WINDOW_SECONDS
-UPLOAD_MAX_BYTES
-S3_ENDPOINT
-S3_REGION
-S3_BUCKET
-S3_ACCESS_KEY_ID
-S3_SECRET_ACCESS_KEY
-S3_FORCE_PATH_STYLE
-MILVUS_URI
-MILVUS_TOKEN
-MILVUS_DATABASE
-MILVUS_ACTIVE_ALIAS
-MILVUS_COLLECTION_PREFIX
-MILVUS_ENABLE_BM25
-MILVUS_ENABLE_TEXT_EMBEDDING
-MILVUS_ENABLE_RERANK
-MILVUS_VECTOR_DIM
-OPENKB_RETRIEVAL_DEFAULT_MODE
-OPENKB_EMBEDDING_ENDPOINT
-OPENKB_EMBEDDING_MODEL
-OPENKB_EMBEDDING_DIM
-OPENKB_EMBEDDING_BATCH_SIZE
-OPENKB_EMBEDDING_TIMEOUT_MS
-OPENKB_EMBEDDING_API_KEY
-OPENKB_RERANK_ENDPOINT
-OPENKB_RERANK_MODEL
-OPENKB_RERANK_TIMEOUT_MS
-OPENKB_RERANK_API_KEY
-OPENKB_CONFIG_ENCRYPTION_KEY
-OPENKB_LLM_REQUEST_FORMAT
-OPENKB_LLM_ENDPOINT
-OPENKB_LLM_MODEL
-OPENKB_LLM_API_KEY
-OPENKB_LLM_TIMEOUT_MS
-OPENKB_LLM_MAX_OUTPUT_TOKENS
-OPENKB_LLM_TEMPERATURE
-MCP_SERVER_BASE_URL
-DIFY_REQUEST_MAX_BYTES
-DIFY_RESULT_BASE_URL
-```
-
-Compose 构建还支持 `OPENKB_NODE_IMAGE` 覆盖 Node.js base image，例如在镜像源受限环境使用内部 registry mirror。
-
-`AUTH_COOKIE_SECURE` 默认为 `auto`：当 `WEB_BASE_URL`/`APP_BASE_URL` 是
-HTTPS 时自动写入 `Secure` cookie，本地 `http://localhost` compose 不写入
-`Secure`，避免登录后浏览器不回传 session cookie。
-
-公网测试平台还必须使用 `OPENKB_ALLOW_LOCAL_CORS=false`、精确 HTTPS
-`CORS_ORIGINS`、`AUTH_COOKIE_SECURE=true` 和反向代理/Ingress TLS；完整清单见
-`docs/24-public-test-platform-deployment.zh-CN.md`。
-
-注意：当前 Web 使用 Next.js production build，`NEXT_PUBLIC_API_BASE_URL` 是构建期公开变量。Docker Compose build 已把该值作为 build arg 传入；如果生产 API public URL 不同，应使用目标 URL 重新构建 Web 镜像。
-
-## 6. 验证范围
-
-部署闭环验证：
+基础验证：
 
 ```bash
 pnpm docs:check
@@ -283,55 +157,31 @@ pnpm format:check
 pnpm typecheck
 pnpm build
 pnpm test
-docker compose -f deploy/docker-compose/compose.yml build
-docker compose -f deploy/docker-compose/compose.yml up -d postgres redis minio-assets milvus-etcd milvus-minio milvus-standalone
-docker compose -f deploy/docker-compose/compose.yml run --rm migrate
-docker compose -f deploy/docker-compose/compose.yml run --rm seed-dev
-docker compose -f deploy/docker-compose/compose.yml up -d
-helm lint deploy/helm/openkb
-helm template openkb deploy/helm/openkb --values deploy/helm/openkb/values.yaml
+docker compose --env-file .env -f deploy/docker-compose/compose.yml config
 ```
 
-功能链路验证：
+应用链路：
 
 ```text
 登录
-知识库 Dashboard Overview/Chunks/Retrieval Lab/Settings
-上传/导入
-import worker 转 Markdown
-发布文档
-可选：修改 chunk settings 并触发 chunk rebuild
-触发 index rebuild
-搜索
-MCP PAT + kb.search
+创建/查看 workspace 与 knowledge base
+创建文档、编辑、发布
+显式 document reprocess
+KB Settings：处理模式、分块规则、检索策略、metadata、摘要、重处理
+Admin Indexing：创建 Milvus index rebuild job
+Web Search / Retrieval Lab
+MCP OAuth 或 PAT + kb.search
 Dify scoped key + /retrieval
+导入工具路由和 import worker
+SMTP test send 与 outbox retry
 ```
 
-启用真实模型后，还需要验证：
+注意：发布文档、reprocess PostgreSQL segments、Milvus index rebuild 是三件不同的事。发布不自动触发 Milvus 增量 upsert；搜索索引更新仍通过显式 rebuild 完成。
 
-```text
-/app/admin/retrieval probe embedding/rerank
-创建 rebuild job
-index-worker 写入 dense_vector
-bm25
-dense
-dense_rerank
-hybrid
-hybrid_rerank
-rerank 服务停止时搜索降级返回，并在 metadata 标记 rerank_failed
-```
+## 8. 参考文档
 
-公网测试平台部署前，部署人员必须向项目负责人确认域名、TLS、管理员账号、数据库、S3、Milvus、模型 endpoint/model、Dify/MCP 是否开放公网、上传策略、备份和日志保留。完整清单见 `docs/24-public-test-platform-deployment.zh-CN.md`。
-
-## 7. Phase 11 之后
-
-以下不属于 Phase 11：
-
-- Phase 20 已补生产 SMTP 发送、重试入口和基础 outbox 管理；复杂模板管理仍可后续增强。
-- Phase 20 已补 MCP OAuth 授权码、同意页、refresh/revoke；动态客户端注册仍未实现。
-- MCP PAT 和 Dify API key Web 管理页。
-- Office/PDF/OCR/MinerU 全量复杂转换。
-- 实时协同。
-- 生产级完整 Admin UI。
-- Phase 20 已补 metrics、基础备份恢复脚本和 Helm 入口；日志聚合、升级/回滚演练仍需按部署方环境完善。
-- 当前文档切片侧栏、全局搜索更完整的命中解释和发布后索引引导。
+- 本地快速开始：`docs/25-local-quickstart.zh-CN.md`
+- 公网测试平台：`docs/24-public-test-platform-deployment.zh-CN.md`
+- Dify External Knowledge：`docs/26-dify-external-knowledge-setup.zh-CN.md`
+- Dify 1.14.1 对齐：`docs/27-dify-knowledge-alignment.zh-CN.md`
+- Dify parity v2：`docs/30-dify-parity-v2-analysis.zh-CN.md`

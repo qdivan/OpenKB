@@ -93,6 +93,7 @@ type UpdateChunkSettingsInput = {
   parent_delimiter?: string;
   child_delimiter?: string;
   parent_max_characters?: number;
+  chunk_overlap_characters?: number;
   child_max_characters?: number;
   child_overlap_characters?: number;
 };
@@ -865,7 +866,9 @@ export class ContentService {
     const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
     const current = await this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase);
     const patch = normalizeChunkSettingsInput(input);
-    validateChunkSettingsCandidate({ ...current, ...patch });
+    const candidate = syncChunkSettingsProcessRule({ ...current, ...patch }, input);
+    patch.process_rule = candidate.process_rule as Prisma.InputJsonValue;
+    validateChunkSettingsCandidate(candidate);
     const updated = await this.prisma.$transaction(async (tx) => {
       const next = await tx.knowledgeBaseChunkSetting.update({
         where: { knowledge_base_id: knowledgeBaseId },
@@ -907,7 +910,8 @@ export class ContentService {
     const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
     const current = await this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase);
     const patch = normalizeChunkSettingsInput(input);
-    validateChunkSettingsCandidate({ ...current, ...patch });
+    const candidate = syncChunkSettingsProcessRule({ ...current, ...patch }, input);
+    validateChunkSettingsCandidate(candidate);
     let markdown = typeof input.markdown === "string" ? input.markdown : "";
     if (!markdown && input.document_id) {
       await this.permissions.requireCanRead(me.user.id, "document", input.document_id);
@@ -925,7 +929,7 @@ export class ContentService {
       markdown = version?.markdown ?? "";
     }
     const chunks = chunkMarkdownForIndex(markdown, {
-      ...toMarkdownChunkingSettings({ ...current, ...patch, revision: current.revision }),
+      ...toMarkdownChunkingSettings({ ...candidate, revision: current.revision }),
       settings_revision: current.revision
     }).slice(0, 80);
     return { chunks: chunks.map(toPreviewChunkDto), total: chunks.length };
@@ -4258,6 +4262,60 @@ function normalizeChunkSettingsInput(input: UpdateChunkSettingsInput) {
   return next;
 }
 
+function syncChunkSettingsProcessRule<
+  T extends {
+    process_rule?: unknown;
+    doc_form?: string | null;
+    parent_mode?: string | null;
+    parent_delimiter?: string;
+    child_delimiter?: string;
+    parent_max_characters?: number;
+    child_max_characters?: number;
+    child_overlap_characters?: number;
+  }
+>(settings: T, input: UpdateChunkSettingsInput = {}) {
+  const processRule = toRecord(normalizeProcessRule(settings.process_rule));
+  const segmentation = toRecord(processRule.segmentation);
+  const subchunkSegmentation = toRecord(processRule.subchunk_segmentation);
+  const parentMax = input.parent_max_characters ?? settings.parent_max_characters;
+  const childMax = input.child_max_characters ?? settings.child_max_characters;
+  const parentOverlap =
+    input.chunk_overlap_characters ??
+    (typeof segmentation.chunk_overlap === "number" ? segmentation.chunk_overlap : undefined);
+  const childOverlap =
+    input.child_overlap_characters ??
+    (typeof subchunkSegmentation.chunk_overlap === "number"
+      ? subchunkSegmentation.chunk_overlap
+      : settings.child_overlap_characters);
+  const nextProcessRule = normalizeProcessRule({
+    ...processRule,
+    parent_mode:
+      input.parent_mode ??
+      processRule.parent_mode ??
+      (settings.parent_mode === "full_doc" ? "full-doc" : "paragraph"),
+    segmentation: {
+      ...segmentation,
+      ...(input.parent_delimiter !== undefined || settings.parent_delimiter !== undefined
+        ? { separator: input.parent_delimiter ?? settings.parent_delimiter }
+        : {}),
+      ...(parentMax !== undefined ? { max_tokens: parentMax } : {}),
+      ...(parentOverlap !== undefined ? { chunk_overlap: parentOverlap } : {})
+    },
+    subchunk_segmentation: {
+      ...subchunkSegmentation,
+      ...(input.child_delimiter !== undefined || settings.child_delimiter !== undefined
+        ? { separator: input.child_delimiter ?? settings.child_delimiter }
+        : {}),
+      ...(childMax !== undefined ? { max_tokens: childMax } : {}),
+      ...(childOverlap !== undefined ? { chunk_overlap: childOverlap } : {})
+    }
+  });
+  return {
+    ...settings,
+    process_rule: nextProcessRule
+  };
+}
+
 function rejectForbiddenChunkSettingKeys(value: unknown): void {
   if (typeof value !== "object" || value === null) {
     return;
@@ -4916,6 +4974,7 @@ function toChunkSettingsDto(settings: {
   created_at: Date;
   updated_at: Date;
 }) {
+  const segmentation = toRecord(toRecord(settings.process_rule).segmentation);
   return {
     id: settings.id,
     tenant_id: settings.tenant_id,
@@ -4932,6 +4991,10 @@ function toChunkSettingsDto(settings: {
     parent_delimiter: settings.parent_delimiter,
     child_delimiter: settings.child_delimiter,
     parent_max_characters: settings.parent_max_characters,
+    chunk_overlap_characters: readRuleOverlap(
+      segmentation,
+      settings.doc_form === "hierarchical_model" ? 0 : 50
+    ),
     child_max_characters: settings.child_max_characters,
     child_overlap_characters: settings.child_overlap_characters,
     revision: settings.revision,

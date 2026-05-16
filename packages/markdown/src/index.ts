@@ -15,6 +15,9 @@ export const DEFAULT_CHUNK_MAX_CHARACTERS = 1800;
 export const DEFAULT_PARENT_CHUNK_MAX_CHARACTERS = 4000;
 export const DEFAULT_CHILD_CHUNK_MAX_CHARACTERS = 900;
 export const DEFAULT_CHILD_CHUNK_OVERLAP_CHARACTERS = 120;
+const DIFY_AUTOMATIC_CHUNK_MAX_CHARACTERS = 500;
+const DIFY_AUTOMATIC_CHUNK_OVERLAP_CHARACTERS = 50;
+const DIFY_RECURSIVE_SEPARATORS = ["\n\n", "。", ". ", " ", ""] as const;
 
 export type ImportConverterName = "markdown" | "text" | "html" | "csv";
 export type RequestedImportConverter = "auto" | ImportConverterName;
@@ -299,17 +302,24 @@ export function chunkMarkdownForIndex(
   };
 
   if (mode === "general") {
-    return chunkMarkdownByDelimiterWithOverlap(markdown, {
-      delimiter: normalizeChunkDelimiter(settings.parent_delimiter ?? rule.segmentation.separator),
+    return chunkMarkdownByDifySplitter(markdown, {
+      mode: rule.mode,
+      fixedSeparator: normalizeChunkDelimiter(
+        settings.parent_delimiter ?? rule.segmentation.separator
+      ),
       maxCharacters: positiveInt(
         settings.parent_max_characters ?? rule.segmentation.maxTokens,
-        DEFAULT_CHUNK_MAX_CHARACTERS
+        rule.mode === "automatic"
+          ? DIFY_AUTOMATIC_CHUNK_MAX_CHARACTERS
+          : DEFAULT_CHUNK_MAX_CHARACTERS
       ),
       overlapCharacters: boundedOverlap(
         settings.chunk_overlap_characters ?? rule.segmentation.chunkOverlap,
         positiveInt(
           settings.parent_max_characters ?? rule.segmentation.maxTokens,
-          DEFAULT_CHUNK_MAX_CHARACTERS
+          rule.mode === "automatic"
+            ? DIFY_AUTOMATIC_CHUNK_MAX_CHARACTERS
+            : DEFAULT_CHUNK_MAX_CHARACTERS
         )
       )
     }).map((chunk) => ({
@@ -343,6 +353,13 @@ export function chunkMarkdownForIndex(
       settings.parent_max_characters ?? rule.segmentation.maxTokens,
       DEFAULT_PARENT_CHUNK_MAX_CHARACTERS
     ),
+    parentOverlapCharacters: boundedOverlap(
+      settings.chunk_overlap_characters ?? rule.segmentation.chunkOverlap,
+      positiveInt(
+        settings.parent_max_characters ?? rule.segmentation.maxTokens,
+        DEFAULT_PARENT_CHUNK_MAX_CHARACTERS
+      )
+    ),
     childMaxCharacters: positiveInt(
       settings.child_max_characters ?? rule.subchunkSegmentation.maxTokens,
       DEFAULT_CHILD_CHUNK_MAX_CHARACTERS
@@ -354,6 +371,7 @@ export function chunkMarkdownForIndex(
         DEFAULT_CHILD_CHUNK_MAX_CHARACTERS
       )
     ),
+    processRuleMode: rule.mode,
     settingsRevision,
     metadataBase
   });
@@ -408,6 +426,7 @@ export function chunkQaPairsForIndex(
 }
 
 type ResolvedDifyProcessRule = {
+  mode: DifyProcessRuleMode;
   preProcessingRules: Array<{ id: string; enabled: boolean }>;
   segmentation: { separator: string; maxTokens: number; chunkOverlap: number };
   subchunkSegmentation: { separator: string; maxTokens: number; chunkOverlap: number };
@@ -428,14 +447,17 @@ function resolveDifyProcessRule(
     settings.parent_mode ??
     (rule.parent_mode === "full_doc" || rule.parent_mode === "full-doc" ? "full_doc" : "paragraph");
   return {
+    mode,
     preProcessingRules: normalizePreProcessingRules(rule.pre_processing_rules),
     segmentation: normalizeDifySegmentation(rule.segmentation, {
-      separator: "\n\n",
+      separator: "\n",
       maxTokens:
-        docForm === "hierarchical_model"
-          ? DEFAULT_PARENT_CHUNK_MAX_CHARACTERS
-          : DEFAULT_CHUNK_MAX_CHARACTERS,
-      chunkOverlap: docForm === "hierarchical_model" ? 0 : 50
+        mode === "automatic"
+          ? DIFY_AUTOMATIC_CHUNK_MAX_CHARACTERS
+          : docForm === "hierarchical_model"
+            ? DEFAULT_PARENT_CHUNK_MAX_CHARACTERS
+            : DEFAULT_CHUNK_MAX_CHARACTERS,
+      chunkOverlap: mode === "automatic" ? DIFY_AUTOMATIC_CHUNK_OVERLAP_CHARACTERS : 50
     }),
     subchunkSegmentation: normalizeDifySegmentation(rule.subchunk_segmentation, {
       separator: "\n",
@@ -454,9 +476,9 @@ function defaultDifyProcessRule(docForm: DifyDocForm): Record<string, unknown> {
         { id: "remove_urls_emails", enabled: false }
       ],
       segmentation: {
-        separator: "\n\n",
+        separator: "\n",
         max_tokens: DEFAULT_PARENT_CHUNK_MAX_CHARACTERS,
-        chunk_overlap: 0
+        chunk_overlap: 50
       },
       parent_mode: "paragraph",
       subchunk_segmentation: {
@@ -472,9 +494,9 @@ function defaultDifyProcessRule(docForm: DifyDocForm): Record<string, unknown> {
       { id: "remove_urls_emails", enabled: false }
     ],
     segmentation: {
-      separator: "\n\n",
-      max_tokens: DEFAULT_CHUNK_MAX_CHARACTERS,
-      chunk_overlap: 50
+      separator: "\n",
+      max_tokens: DIFY_AUTOMATIC_CHUNK_MAX_CHARACTERS,
+      chunk_overlap: DIFY_AUTOMATIC_CHUNK_OVERLAP_CHARACTERS
     },
     parent_mode: "paragraph",
     subchunk_segmentation: {
@@ -531,17 +553,30 @@ function applyDifyPreProcessing(
   markdownInput: string,
   rules: Array<{ id: string; enabled: boolean }>
 ): string {
-  let markdown = normalizeMarkdownSource(markdownInput);
+  let markdown = normalizeMarkdownSource(markdownInput).replace(
+    /<\||\|>|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\uFFFE]/g,
+    (match) => (match === "<|" ? "<" : match === "|>" ? ">" : "")
+  );
   if (rules.some((rule) => rule.id === "remove_urls_emails" && rule.enabled)) {
+    const placeholders: Array<{ token: string; value: string }> = [];
+    const protect = (value: string) => {
+      const token = `__OPENKB_MARKDOWN_URL_${placeholders.length}__`;
+      placeholders.push({ token, value });
+      return token;
+    };
     markdown = markdown
-      .replace(/https?:\/\/[^\s)>\]]+/gi, "")
-      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "");
+      .replace(/!\[[^\]]*]\(https?:\/\/[^)]+\)/gi, (match) => protect(match))
+      .replace(/\[[^\]]*]\(https?:\/\/[^)]+\)/gi, (match) => protect(match))
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "")
+      .replace(/https?:\/\/\S+/gi, "");
+    for (const placeholder of placeholders) {
+      markdown = markdown.replaceAll(placeholder.token, placeholder.value);
+    }
   }
   if (rules.some((rule) => rule.id === "remove_extra_spaces" && rule.enabled)) {
     markdown = markdown
-      .split("\n")
-      .map((line) => line.replace(/[ \t]{2,}/g, " ").trimEnd())
-      .join("\n");
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[\t\f\r \u00a0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]{2,}/g, " ");
   }
   return normalizeMarkdownSource(markdown);
 }
@@ -553,8 +588,10 @@ function chunkMarkdownParentChild(
     parentDelimiter: string;
     childDelimiter: string;
     parentMaxCharacters: number;
+    parentOverlapCharacters: number;
     childMaxCharacters: number;
     childOverlapCharacters: number;
+    processRuleMode: DifyProcessRuleMode;
     settingsRevision: number;
     metadataBase: Record<string, unknown>;
   }
@@ -577,7 +614,12 @@ function chunkMarkdownParentChild(
             }
           }
         ]
-      : chunkMarkdownByDelimiter(markdown, options.parentDelimiter, options.parentMaxCharacters);
+      : chunkMarkdownByDifySplitter(markdown, {
+          mode: options.processRuleMode,
+          fixedSeparator: options.parentDelimiter,
+          maxCharacters: options.parentMaxCharacters,
+          overlapCharacters: options.parentOverlapCharacters
+        });
 
   const chunks: HierarchicalMarkdownChunk[] = [];
   let ordinal = 0;
@@ -616,12 +658,14 @@ function chunkMarkdownParentChild(
     });
     ordinal += 1;
 
-    const childSegments = splitChildMarkdown(
-      parent.content_markdown,
-      options.childDelimiter,
-      options.childMaxCharacters,
-      options.childOverlapCharacters
-    );
+    const childSegments = splitDifyText(parent.content_markdown, {
+      mode: options.processRuleMode,
+      fixedSeparator: options.childDelimiter,
+      maxCharacters: options.childMaxCharacters,
+      overlapCharacters: options.childOverlapCharacters
+    })
+      .map((chunk) => chunk.trim())
+      .filter(Boolean);
     for (const [childOrdinal, childMarkdown] of childSegments.entries()) {
       const contentText = extractMarkdownPlainText(childMarkdown);
       const childRange = findMarkdownRange(
@@ -660,6 +704,379 @@ function chunkMarkdownParentChild(
   }
 
   return chunks.length > 0 ? chunks : chunkMarkdownForIndex("", { mode: "general" });
+}
+
+function chunkMarkdownByDifySplitter(
+  markdown: string,
+  options: {
+    mode: DifyProcessRuleMode;
+    fixedSeparator: string;
+    maxCharacters: number;
+    overlapCharacters: number;
+  }
+): MarkdownChunk[] {
+  const outline = extractMarkdownOutline(markdown);
+  const chunks = splitDifyText(markdown, options)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  let cursor = 0;
+  const mapped = chunks.map((contentMarkdown, ordinal) => {
+    const range = findMarkdownRange(markdown, contentMarkdown, cursor);
+    cursor = Math.max(cursor, range.endChar ?? cursor);
+    const startLine =
+      typeof range.startChar === "number" ? lineNumberAtChar(markdown, range.startChar) : 1;
+    const endLine =
+      typeof range.endChar === "number"
+        ? lineNumberAtChar(markdown, Math.max(range.endChar - 1, range.startChar ?? 0))
+        : startLine;
+    const contentText = extractMarkdownPlainText(contentMarkdown);
+    return {
+      ordinal,
+      heading_path: headingPathAtLine(outline, startLine),
+      content_text: contentText,
+      content_markdown: contentMarkdown,
+      token_count: estimateTokenCount(contentText),
+      metadata: {
+        start_line: startLine,
+        end_line: endLine,
+        start_char: range.startChar,
+        end_char: range.endChar
+      }
+    };
+  });
+
+  return mapped.length > 0
+    ? mapped
+    : [
+        {
+          ordinal: 0,
+          heading_path: [],
+          content_text: "",
+          content_markdown: "",
+          token_count: 0,
+          metadata: { start_line: 1, end_line: 1, start_char: 0, end_char: 0 }
+        }
+      ];
+}
+
+function splitDifyText(
+  text: string,
+  options: {
+    mode: DifyProcessRuleMode;
+    fixedSeparator: string;
+    maxCharacters: number;
+    overlapCharacters: number;
+  }
+): string[] {
+  const chunkSize =
+    options.mode === "automatic" ? DIFY_AUTOMATIC_CHUNK_MAX_CHARACTERS : options.maxCharacters;
+  const chunkOverlap =
+    options.mode === "automatic"
+      ? DIFY_AUTOMATIC_CHUNK_OVERLAP_CHARACTERS
+      : boundedOverlap(options.overlapCharacters, chunkSize);
+
+  if (options.mode === "automatic") {
+    return recursiveDifySplit(text, DIFY_RECURSIVE_SEPARATORS, {
+      chunkSize,
+      chunkOverlap
+    });
+  }
+
+  const fixedSeparator = decodeDifySeparator(options.fixedSeparator);
+  const pieces = fixedSeparator ? splitOnInitialFixedDifySeparator(text, fixedSeparator) : [text];
+  return pieces.flatMap((piece) =>
+    codePointLength(piece) > chunkSize
+      ? fixedRecursiveDifySplit(piece, DIFY_RECURSIVE_SEPARATORS, {
+          chunkSize,
+          chunkOverlap,
+          preserveSpaceSeparator: fixedSeparator !== " "
+        })
+      : [piece]
+  );
+}
+
+function recursiveDifySplit(
+  text: string,
+  separators: readonly string[],
+  options: { chunkSize: number; chunkOverlap: number }
+): string[] {
+  let separator = separators[separators.length - 1] ?? "";
+  let nextSeparators: readonly string[] = [];
+  for (const [index, candidate] of separators.entries()) {
+    if (candidate === "") {
+      separator = candidate;
+      break;
+    }
+    if (hasDifySeparator(text, candidate)) {
+      separator = candidate;
+      nextSeparators = separators.slice(index + 1);
+      break;
+    }
+  }
+
+  const splits = splitOnDifySeparator(text, separator).filter((split) =>
+    separator === "\n" ? split !== "" : split !== "" && split !== "\n"
+  );
+  const finalChunks: string[] = [];
+  let goodSplits: string[] = [];
+  let goodSplitLengths: number[] = [];
+  const splitLengths = splits.map(codePointLength);
+
+  for (const [index, split] of splits.entries()) {
+    const splitLength = splitLengths[index] ?? 0;
+    if (splitLength < options.chunkSize) {
+      goodSplits.push(split);
+      goodSplitLengths.push(splitLength);
+      continue;
+    }
+
+    if (goodSplits.length > 0) {
+      finalChunks.push(...mergeDifySplits(goodSplits, "", goodSplitLengths, options));
+      goodSplits = [];
+      goodSplitLengths = [];
+    }
+
+    if (nextSeparators.length === 0) {
+      finalChunks.push(split);
+    } else {
+      finalChunks.push(...recursiveDifySplit(split, nextSeparators, options));
+    }
+  }
+
+  if (goodSplits.length > 0) {
+    finalChunks.push(...mergeDifySplits(goodSplits, "", goodSplitLengths, options));
+  }
+
+  return finalChunks;
+}
+
+function fixedRecursiveDifySplit(
+  text: string,
+  separators: readonly string[],
+  options: { chunkSize: number; chunkOverlap: number; preserveSpaceSeparator: boolean }
+): string[] {
+  let separator = separators[separators.length - 1] ?? "";
+  let nextSeparators: readonly string[] = [];
+  for (const [index, candidate] of separators.entries()) {
+    if (candidate === "") {
+      separator = candidate;
+      break;
+    }
+    if (hasDifySeparator(text, candidate)) {
+      separator = candidate;
+      nextSeparators = separators.slice(index + 1);
+      break;
+    }
+  }
+
+  if (separator === "") {
+    return splitDifyCharactersWithOverlap(text, options.chunkSize, options.chunkOverlap);
+  }
+
+  const splits = splitOnFixedDifySeparator(text, separator, options.preserveSpaceSeparator).filter(
+    (split) => (separator === "\n" ? split !== "" : split !== "" && split !== "\n")
+  );
+  const finalChunks: string[] = [];
+  let goodSplits: string[] = [];
+  let goodSplitLengths: number[] = [];
+  const splitLengths = splits.map(codePointLength);
+
+  for (const [index, split] of splits.entries()) {
+    const splitLength = splitLengths[index] ?? 0;
+    if (splitLength < options.chunkSize) {
+      goodSplits.push(split);
+      goodSplitLengths.push(splitLength);
+      continue;
+    }
+
+    if (goodSplits.length > 0) {
+      finalChunks.push(...mergeDifySplits(goodSplits, "", goodSplitLengths, options));
+      goodSplits = [];
+      goodSplitLengths = [];
+    }
+
+    if (nextSeparators.length === 0) {
+      finalChunks.push(split);
+    } else {
+      // Dify's FixedRecursiveCharacterTextSplitter falls back to the base recursive
+      // splitter for oversized pieces, which preserves spaces and Markdown structure.
+      finalChunks.push(...recursiveDifySplit(split, nextSeparators, options));
+    }
+  }
+
+  if (goodSplits.length > 0) {
+    finalChunks.push(...mergeDifySplits(goodSplits, "", goodSplitLengths, options));
+  }
+
+  return finalChunks;
+}
+
+function mergeDifySplits(
+  splits: string[],
+  separator: string,
+  lengths: number[],
+  options: { chunkSize: number; chunkOverlap: number }
+): string[] {
+  const separatorLength = codePointLength(separator);
+  const docs: string[] = [];
+  let currentDoc: string[] = [];
+  let total = 0;
+
+  for (const [index, split] of splits.entries()) {
+    const splitLength = lengths[index] ?? codePointLength(split);
+    if (total + splitLength + (currentDoc.length > 0 ? separatorLength : 0) > options.chunkSize) {
+      if (currentDoc.length > 0) {
+        const doc = joinDifyDocs(currentDoc, separator);
+        if (doc !== null) {
+          docs.push(doc);
+        }
+        while (
+          total > options.chunkOverlap ||
+          (total + splitLength + (currentDoc.length > 0 ? separatorLength : 0) >
+            options.chunkSize &&
+            total > 0)
+        ) {
+          total -=
+            codePointLength(currentDoc[0] ?? "") + (currentDoc.length > 1 ? separatorLength : 0);
+          currentDoc = currentDoc.slice(1);
+        }
+      }
+    }
+    currentDoc.push(split);
+    total += splitLength + (currentDoc.length > 1 ? separatorLength : 0);
+  }
+
+  const doc = joinDifyDocs(currentDoc, separator);
+  if (doc !== null) {
+    docs.push(doc);
+  }
+  return docs;
+}
+
+function splitDifyCharactersWithOverlap(
+  text: string,
+  chunkSize: number,
+  chunkOverlap: number
+): string[] {
+  const chunks: string[] = [];
+  let currentPart = "";
+  let currentLength = 0;
+  let overlapPart = "";
+  let overlapLength = 0;
+
+  for (const character of Array.from(text)) {
+    if (currentLength + 1 <= chunkSize - chunkOverlap) {
+      currentPart += character;
+      currentLength += 1;
+    } else if (currentLength + 1 <= chunkSize) {
+      currentPart += character;
+      currentLength += 1;
+      overlapPart += character;
+      overlapLength += 1;
+    } else {
+      chunks.push(currentPart);
+      currentPart = overlapPart + character;
+      currentLength = overlapLength + 1;
+      overlapPart = "";
+      overlapLength = 0;
+    }
+  }
+
+  if (currentPart) {
+    chunks.push(currentPart);
+  }
+  return chunks;
+}
+
+function splitOnDifySeparator(text: string, separator: string): string[] {
+  if (separator === "") {
+    return Array.from(text);
+  }
+  const parts = text.split(separator);
+  return parts.flatMap((part, index) =>
+    index < parts.length - 1 ? [`${part}${separator}`] : [part]
+  );
+}
+
+function splitOnFixedDifySeparator(
+  text: string,
+  separator: string,
+  preserveSpaceSeparator: boolean
+): string[] {
+  if (separator === "") {
+    return Array.from(text);
+  }
+  if (separator === " ") {
+    return preserveSpaceSeparator ? splitOnDifySeparator(text, separator) : text.split(/ +/);
+  }
+  if (separator === ". ") {
+    return splitOnEnglishPeriodSeparator(text);
+  }
+  const parts = text.split(separator);
+  return parts.flatMap((part, index) =>
+    index < parts.length - 1 ? [`${part}${separator}`] : [part]
+  );
+}
+
+function splitOnInitialFixedDifySeparator(text: string, separator: string): string[] {
+  if (separator === "") {
+    return [text];
+  }
+  if (separator === " ") {
+    return text.split(/ +/);
+  }
+  if (separator === ". ") {
+    return splitOnEnglishPeriodSeparator(text).map((part, index, parts) =>
+      index < parts.length - 1 && part.endsWith(separator) ? part.slice(0, -separator.length) : part
+    );
+  }
+  return text.split(separator);
+}
+
+function splitOnEnglishPeriodSeparator(text: string): string[] {
+  const separator = ". ";
+  const parts: string[] = [];
+  let start = 0;
+  for (let index = 0; index < text.length - 1; index += 1) {
+    if (text[index] !== "." || text[index + 1] !== " ") {
+      continue;
+    }
+    if (isOrderedListMarkerPeriod(text, index)) {
+      continue;
+    }
+    parts.push(text.slice(start, index + separator.length));
+    start = index + separator.length;
+    index += 1;
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+function isOrderedListMarkerPeriod(text: string, periodIndex: number): boolean {
+  let lineStart = text.lastIndexOf("\n", periodIndex - 1);
+  lineStart = lineStart === -1 ? 0 : lineStart + 1;
+  const beforePeriod = text.slice(lineStart, periodIndex);
+  return /^\s*\d+$/.test(beforePeriod);
+}
+
+function hasDifySeparator(text: string, separator: string): boolean {
+  if (separator === ". ") {
+    return /.\s/.test(text) && text.includes(separator);
+  }
+  return text.includes(separator);
+}
+
+function joinDifyDocs(docs: string[], separator: string): string | null {
+  const text = docs.join(separator).trim();
+  return text ? text : null;
+}
+
+function codePointLength(value: string): number {
+  return Array.from(value).length;
+}
+
+function decodeDifySeparator(value: string): string {
+  return value.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
 }
 
 function chunkMarkdownByDelimiterWithOverlap(

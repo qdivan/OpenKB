@@ -219,7 +219,7 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 
 边界：
 - 不做 owner transfer，不做匿名编辑分享链接，不做宽泛用户搜索。
-- 外部 SMTP 仍未实现；邀请邮件继续写入开发 outbox。
+- 生产 SMTP 已在 Phase 20 接入；没有 SMTP 或投递失败时仍保留 outbox 记录供管理员重试。
 - PostgreSQL + `PermissionService` 仍是最终权限真相，管理员身份不默认读取私有内容。
 
 ## Phase 17 - Admin 运维管理 UI
@@ -233,7 +233,7 @@ Phase 11 已完成最小部署闭环，包含生产/自托管 Docker Compose、H
 - Admin API 补齐对应 Dify、MCP、Milvus、Audit、Auth Settings 运维接口；Dify key 新增加密存储字段，旧 hash-only key 只能 rotate 后 reveal。
 
 边界：
-- 不实现完整 MCP OAuth authorize/token/refresh 流程，保留到 Phase 20。
+- 完整 MCP OAuth authorize/token/refresh 流程已在 Phase 20 接入；Phase 17 只保留 Admin 运维入口的历史边界说明。
 - 不改变 MCP user-bound / Dify app-key-bound / PostgreSQL final permission check 规则。
 - 普通 list/detail DTO、audit 和日志不返回 raw secret；Dify raw key 只通过显式 reveal，PAT raw token 只在创建时显示一次。
 
@@ -296,14 +296,14 @@ Phase 20 实现落点：
 - `openkb_*`、chunk、retrieval explain 字段是技术诊断 metadata，不应替代 Dify 风格业务 metadata schema。
 ## Phase 22 - Dify 1.14.1 知识库处理与检索逻辑对齐
 
-当前状态：Phase 22 已进入“升级 + 差异审计 + 分步实现”阶段。Dify 1.14.1 原地升级、本地 sandbox Python execution 修复、三方对照矩阵和后续拆分计划记录在 `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`。
+当前状态：Phase 22.2-22.9 已完成主要对齐和 parity 收敛。Dify 1.14.1 原地升级、本地 sandbox Python execution 修复、三方对照矩阵记录在 `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`；Dify Parity v2 的分块、检索、metadata、QA 和 segment 差异基线记录在 `docs/30-dify-parity-v2-analysis.zh-CN.md`；后续路线统一记录在 `docs/31-dify-parity-next-phases.zh-CN.md`。
 
 输出：
 - Dify `doc_form` 对齐：`text_model`、`hierarchical_model`、`qa_model`。
-- Dify `process_rule` 对齐：automatic/custom/hierarchical、paragraph parent、full-doc parent、文档处理快照和显式 reprocess。
+- Dify `process_rule` 对齐：automatic/custom/hierarchical、paragraph parent、full-doc parent、文档处理快照和显式 reprocess；Phase 22.8 起新建或显式 reprocess 默认使用 Dify 1.14.1-compatible recursive splitter。
 - Dify `retrieval_model` 对齐：semantic/full_text/hybrid/keyword、economy/high_quality、rerank 开关、metadata filters。
 - Segment 管理：Phase 22.4 已支持 active/disabled/deleted、override content、reset override、soft delete/restore；override 不反写 Markdown 正文。
-- QA 与摘要索引：手动 QA pair、summary schema、后续 LLM 批量生成。
+- QA 与摘要索引：手动/CSV/mock/LLM 显式触发已接入；Dify Adapter 严格暴露 Dify 风格 QA metadata，Web 搜索保持 answer-first。
 - Dify Adapter metadata 增加 `doc_form`、`indexing_technique`、`retrieval_model`、`segment_status`、`summary_hit`、`qa_question`、`qa_answer`。
 
 边界：
@@ -311,9 +311,13 @@ Phase 20 实现落点：
 - 不让 Dify key 模拟用户；仍按 app-key-bound allowed KB scope 检索。
 - Milvus 仍是派生索引；PostgreSQL + PermissionService 仍是最终权限真相。
 
-后续拆分：
-- Phase 22.2：Dify 风格分块与显式 reprocess。
-- Phase 22.3：KB 级 retrieval_model 完整注入 Web/MCP/Dify/Search。
-- Phase 22.4：文档级 segment 管理与索引重建提示已完成基础闭环。
-- Phase 22.5：QA/summary 生成闭环，先 mock/手动，后接实例级 LLM。
-- Phase 22.6：KB Settings 与文档右侧 Dify-like 处理面板。
+已完成：
+- Phase 22.2-22.6：基础闭环已完成，包括显式 reprocess、retrieval_model 注入、segment 管理、QA/summary 和 Web 信息层级。
+- Phase 22.8：Dify-compatible splitter 与 parity v2 工程基线已接入；旧 chunks 不自动迁移，显式 reprocess 后才使用新 splitter。
+- Phase 22.9：已收敛 raw/Milkdown/indexed 输入对照、QA Dify Adapter 语义、metadata/tags 文档 metadata 真相、segment lifecycle 证据；同模型 live retrieval parity 仍需在 Dify/OpenKB 同 corpus、同模型、同开关环境下复跑。
+
+后续路线：
+- `docs/31-dify-parity-next-phases.zh-CN.md` 是 Phase 22.9 之后的唯一后续路线入口。
+- Phase n+1：低风险兼容补齐，聚焦 chunk 参数 UI/API、默认 process snapshot、parent/child overlap 展示与三种 doc_form 的 reprocess 一致性。
+- Phase n+2：QA parity，保持 LLM 显式触发，确保 `qa_model` import/reprocess 只索引当前 active QA pairs，并让 Dify Adapter/Web/MCP 的 QA 返回语义稳定分流。
+- Phase n+3：图片与附件检索，按 Dify 1.14.1 的 `UploadFile` + `SegmentAttachmentBinding` 逻辑对齐 OpenKB asset-to-segment 绑定、image metadata、回源和可选 image vector。

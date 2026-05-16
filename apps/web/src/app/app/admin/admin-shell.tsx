@@ -38,7 +38,7 @@ const adminNavItems = [
   {
     href: "/app/admin/email",
     icon: <Mail className="h-4 w-4" />,
-    label: "Email",
+    label: "Email delivery",
     description: "SMTP and outbox",
     systemOnly: true
   },

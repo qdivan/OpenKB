@@ -123,11 +123,14 @@ MILVUS_ENABLE_BM25=true
 MILVUS_ENABLE_TEXT_EMBEDDING=false
 MILVUS_ENABLE_RERANK=false
 OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid
+OPENKB_EMBEDDING_REQUEST_FORMAT=openai_compatible
 OPENKB_EMBEDDING_ENDPOINT=
+OPENKB_RERANK_REQUEST_FORMAT=openai_compatible
 OPENKB_RERANK_ENDPOINT=
 ```
 
 To test dense/hybrid/rerank, set `OPENKB_EMBEDDING_*` and optional `OPENKB_RERANK_*`, restart app services, then create an index rebuild job from `/app/admin/retrieval`.
+Native providers such as DashScope must set the matching `OPENKB_EMBEDDING_REQUEST_FORMAT` / `OPENKB_RERANK_REQUEST_FORMAT`; endpoint, model, and key alone are not enough because the request payload shape differs from OpenAI-compatible APIs.
 
 OpenKB does not store embedding/rerank provider API keys in its database.
 

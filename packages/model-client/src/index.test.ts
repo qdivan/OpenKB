@@ -9,6 +9,8 @@ import {
   isModelProviderAllowedForKind,
   normalizeModelProvider,
   OpenKBModelClient,
+  parseDashScopeEmbeddingResponse,
+  parseDashScopeRerankResults,
   parseEmbeddingResponse,
   parseOpenAICompatibleModelCapabilityDetection,
   parseOpenAICompatibleModelCapabilities,
@@ -52,6 +54,43 @@ describe("@openkb/model-client", () => {
     expect(results).toEqual([
       { index: 1, relevance_score: 0.8 },
       { index: 0, relevance_score: 0.2 }
+    ]);
+  });
+
+  it("parses DashScope native embedding and rerank responses", () => {
+    expect(
+      parseDashScopeEmbeddingResponse(
+        {
+          output: {
+            embeddings: [
+              { index: 1, embedding: [0.3, 0.4], type: "vl" },
+              { index: 0, embedding: [0.1, 0.2], type: "vl" }
+            ]
+          }
+        },
+        2,
+        2
+      )
+    ).toEqual([
+      [0.1, 0.2],
+      [0.3, 0.4]
+    ]);
+
+    expect(
+      parseDashScopeRerankResults(
+        {
+          output: {
+            results: [
+              { index: 0, relevance_score: 0.84 },
+              { index: 1, relevance_score: 0.12 }
+            ]
+          }
+        },
+        2
+      )
+    ).toEqual([
+      { index: 0, relevance_score: 0.84 },
+      { index: 1, relevance_score: 0.12 }
     ]);
   });
 
@@ -282,18 +321,27 @@ describe("@openkb/model-client", () => {
 
   it("reads endpoint/model settings from environment without secrets", () => {
     const config = getOpenKBModelClientConfig({
+      OPENKB_EMBEDDING_REQUEST_FORMAT: "dashscope",
       OPENKB_EMBEDDING_ENDPOINT: "http://model/v1/embeddings",
       OPENKB_EMBEDDING_MODEL: "qwen3-vl-embedding-2b",
       OPENKB_EMBEDDING_DIM: "2048",
+      OPENKB_RERANK_REQUEST_FORMAT: "dashscope",
       OPENKB_RERANK_ENDPOINT: "http://model/v1/rerank",
       OPENKB_RERANK_MODEL: "qwen3-vl-reranker-2b",
       OPENKB_LLM_MODEL: "gpt-4.1-mini"
     });
 
     expect(config.embedding).toMatchObject({
+      provider: "dashscope",
       endpoint: "http://model/v1/embeddings",
       model: "qwen3-vl-embedding-2b",
       dim: 2048,
+      source: "env"
+    });
+    expect(config.rerank).toMatchObject({
+      provider: "dashscope",
+      endpoint: "http://model/v1/rerank",
+      model: "qwen3-vl-reranker-2b",
       source: "env"
     });
     expect(config.language).toMatchObject({
@@ -488,10 +536,118 @@ describe("@openkb/model-client", () => {
     });
   });
 
+  it("calls DashScope native embedding and rerank formats", async () => {
+    const calls: Array<{
+      url: string;
+      body: Record<string, unknown> | null;
+      headers: Record<string, string>;
+    }> = [];
+    const client = new OpenKBModelClient(
+      {
+        embedding: {
+          provider: "dashscope",
+          endpoint:
+            "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding",
+          model: "qwen3-vl-embedding",
+          apiKey: "dashscope-key",
+          source: "env",
+          dim: 3,
+          batchSize: 2,
+          timeoutMs: 1000
+        },
+        rerank: {
+          provider: "dashscope",
+          endpoint: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+          model: "qwen3-vl-rerank",
+          apiKey: "dashscope-key",
+          source: "env",
+          timeoutMs: 1000
+        },
+        language: {
+          provider: "openai_responses",
+          source: "none",
+          timeoutMs: 1000,
+          maxOutputTokens: 20,
+          temperature: 0
+        }
+      },
+      async (url, init) => {
+        const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+        calls.push({
+          url,
+          body,
+          headers: init.headers
+        });
+        const isEmbedding = url.includes("multimodal-embedding");
+        const contents = ((body?.input as { contents?: unknown[] } | undefined)?.contents ??
+          []) as unknown[];
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            isEmbedding
+              ? {
+                  output: {
+                    embeddings: contents.map((_, index) => ({
+                      index,
+                      embedding:
+                        index === 0 && contents.length > 1 ? [0.1, 0.2, 0.3] : [0.4, 0.5, 0.6]
+                    }))
+                  }
+                }
+              : {
+                  output: {
+                    results: [
+                      { index: 1, relevance_score: 0.9 },
+                      { index: 0, relevance_score: 0.1 }
+                    ]
+                  }
+                },
+          text: async () => ""
+        };
+      }
+    );
+
+    await expect(client.embedTexts(["a", "b"])).resolves.toEqual([
+      [0.1, 0.2, 0.3],
+      [0.4, 0.5, 0.6]
+    ]);
+    await expect(client.rerankDocuments({ query: "q", documents: ["a", "b"] })).resolves.toEqual([
+      { index: 1, relevance_score: 0.9 },
+      { index: 0, relevance_score: 0.1 }
+    ]);
+    await expect(client.probeEmbedding()).resolves.toMatchObject({
+      configured: true,
+      ok: true,
+      capabilities_detected: true,
+      capabilities: {
+        input_modalities: ["text", "image"],
+        provider_model_type: "embedding"
+      }
+    });
+
+    expect(calls[0]?.body).toMatchObject({
+      model: "qwen3-vl-embedding",
+      input: { contents: [{ text: "a" }, { text: "b" }] },
+      parameters: { dimension: 3 }
+    });
+    expect(calls[1]?.body).toMatchObject({
+      model: "qwen3-vl-rerank",
+      input: {
+        query: { text: "q" },
+        documents: [{ text: "a" }, { text: "b" }]
+      },
+      parameters: { return_documents: false, top_n: 2 }
+    });
+    expect(calls[0]?.headers.authorization).toBe("Bearer dashscope-key");
+  });
+
   it("normalizes legacy providers and validates kind/provider combinations", () => {
     expect(normalizeModelProvider("openai", "language")).toBe("openai_responses");
     expect(normalizeModelProvider("openai", "embedding")).toBe("openai_compatible");
+    expect(normalizeModelProvider("aliyun", "embedding")).toBe("dashscope");
     expect(isModelProviderAllowedForKind("openai_compatible", "embedding")).toBe(true);
+    expect(isModelProviderAllowedForKind("dashscope", "embedding")).toBe(true);
     expect(isModelProviderAllowedForKind("openai_responses", "embedding")).toBe(false);
     expect(isModelProviderAllowedForKind("openai_chat_completions", "language")).toBe(true);
     expect(isModelProviderAllowedForKind("anthropic_messages", "language")).toBe(true);

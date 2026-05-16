@@ -516,6 +516,68 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
     }
   });
 
+  it("round-trips Dify chunk overlap settings and snapshots explicit reprocess rules", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+
+      const settings = await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        parent_delimiter: " ",
+        parent_max_characters: 260,
+        chunk_overlap_characters: 26,
+        process_rule: {
+          segmentation: { separator: " ", max_tokens: 260, chunk_overlap: 26 }
+        },
+        summary_index_setting: { enable: true, summary_prompt: "Summarize for retrieval." }
+      });
+      expect(settings.process_rule).toMatchObject({
+        segmentation: { separator: " ", max_tokens: 260, chunk_overlap: 26 }
+      });
+      expect(settings.chunk_overlap_characters).toBe(26);
+      expect(settings.summary_index_setting).toMatchObject({
+        enable: true,
+        summary_prompt: "Summarize for retrieval."
+      });
+
+      let document = await content.getDocument(login.sessionToken, seed.documentId);
+      expect(document.processing_status).toBe("needs_reprocess");
+      const reprocessed = await content.reprocessDocument(login.sessionToken, seed.documentId);
+      expect(reprocessed.processing_status).toBe("current");
+      expect(reprocessed.process_rule_snapshot).toMatchObject({
+        doc_form: "text_model",
+        process_rule: {
+          segmentation: { separator: " ", max_tokens: 260, chunk_overlap: 26 }
+        },
+        settings_revision: settings.revision,
+        content_version_id: reprocessed.currentVersion?.id,
+        content_markdown_hash: reprocessed.currentVersion?.markdown_hash
+      });
+
+      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+        doc_form: "qa_model"
+      });
+      document = await content.getDocument(login.sessionToken, seed.documentId);
+      expect(document.doc_form).toBe("qa_model");
+      expect(document.processing_status).toBe("needs_reprocess");
+
+      await expect(
+        content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+          doc_form: "qa_model",
+          process_rule_mode: "hierarchical"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
   it("requires current-version segments before QA or summary generation", async () => {
     const seed = await seedDev({ prisma });
     const content = new ContentService(auth, permissions);

@@ -126,9 +126,9 @@ Child chunks keep searchable text.`,
       parent_ordinal: 0,
       child_ordinal: null,
       settings_revision: 3,
-      start_line: 1,
-      start_char: 0
+      start_line: 1
     });
+    expect(parents[0]?.start_char).toBeGreaterThanOrEqual(0);
     expect(children[0]).toMatchObject({
       chunk_type: "child",
       parent_ordinal: 0,
@@ -231,5 +231,132 @@ Child chunks keep searchable text.`,
 
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.every((chunk) => chunk.settings_revision === 2)).toBe(true);
+  });
+
+  it("uses Dify-compatible recursive automatic splitting and code point length", () => {
+    const chunks = chunkMarkdownForIndex(
+      `${"甲".repeat(240)}。${"乙".repeat(240)}。${"😀".repeat(80)}。${"丙".repeat(240)}`,
+      {
+        doc_form: "text_model",
+        process_rule_mode: "automatic"
+      }
+    );
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0]?.content_markdown.endsWith("。")).toBe(true);
+    expect(chunks.every((chunk) => Array.from(chunk.content_markdown).length <= 550)).toBe(true);
+  });
+
+  it("uses Dify-compatible fixed separator before recursive fallback", () => {
+    const chunks = chunkMarkdownForIndex(
+      `Alpha section\n---CUT---\n${"Beta sentence. ".repeat(80)}\n---CUT---\nGamma section`,
+      {
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        process_rule: {
+          segmentation: { separator: "\n---CUT---\n", max_tokens: 120, chunk_overlap: 20 }
+        }
+      }
+    );
+
+    expect(chunks[0]?.content_text).toContain("Alpha section");
+    expect(chunks.some((chunk) => chunk.content_text.includes("Beta sentence"))).toBe(true);
+    expect(chunks.some((chunk) => chunk.content_text.includes("---CUT---"))).toBe(false);
+    expect(chunks.length).toBeGreaterThan(3);
+  });
+
+  it("preserves spaces when custom sentence splitting falls back recursively", () => {
+    const chunks = chunkMarkdownForIndex(
+      `Vite aims to support the most common patterns to build web apps, but it avoids supporting every possible edge case. ${"The fallback keeps readable words intact. ".repeat(12)}`,
+      {
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        process_rule: {
+          segmentation: { separator: ". ", max_tokens: 80, chunk_overlap: 10 }
+        }
+      }
+    );
+    const markdown = chunks.map((chunk) => chunk.content_markdown).join("\n");
+
+    expect(markdown).toContain("Vite aims to support");
+    expect(markdown).not.toContain("Viteaims");
+    expect(markdown).not.toContain("webapps");
+  });
+
+  it("does not split ordered-list markers when custom separator is an English period", () => {
+    const chunks = chunkMarkdownForIndex(
+      `1. Install OpenKB with Docker.\n2. Configure Dify retrieval.\n\n${"This sentence exercises period fallback. ".repeat(10)}`,
+      {
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        process_rule: {
+          segmentation: { separator: ". ", max_tokens: 90, chunk_overlap: 10 }
+        }
+      }
+    );
+    const markdown = chunks.map((chunk) => chunk.content_markdown).join("\n");
+
+    expect(markdown).toContain("1. Install OpenKB");
+    expect(markdown).toContain("2. Configure Dify");
+    expect(markdown).not.toContain("\n1\n");
+    expect(markdown).not.toContain("\n2\n");
+  });
+
+  it("keeps markdown links and images when Dify URL/email cleanup is enabled", () => {
+    const chunks = chunkMarkdownForIndex(
+      "Alpha   beta user@example.com https://bare.example/path [keep](https://link.example/a) ![img](https://image.example/i.png)",
+      {
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        process_rule: {
+          pre_processing_rules: [
+            { id: "remove_extra_spaces", enabled: true },
+            { id: "remove_urls_emails", enabled: true }
+          ],
+          segmentation: { separator: "\n", max_tokens: 500, chunk_overlap: 50 }
+        }
+      }
+    );
+    const markdown = chunks.map((chunk) => chunk.content_markdown).join("\n");
+
+    expect(markdown).toContain("Alpha beta");
+    expect(markdown).not.toContain("user@example.com");
+    expect(markdown).not.toContain("https://bare.example/path");
+    expect(markdown).toContain("[keep](https://link.example/a)");
+    expect(markdown).toContain("![img](https://image.example/i.png)");
+  });
+
+  it("preserves Markdown structural syntax in Dify-compatible chunks", () => {
+    const chunks = chunkMarkdownForIndex(
+      `# Heading
+
+> Quote
+
+\`\`\`ts
+const value = 1;
+\`\`\`
+
+- first
+1. second
+
+![img](https://image.example/i.png)
+[link](https://link.example/a)`,
+      {
+        doc_form: "text_model",
+        process_rule_mode: "custom",
+        process_rule: {
+          segmentation: { separator: "\n\n", max_tokens: 120, chunk_overlap: 0 }
+        }
+      }
+    );
+    const markdown = chunks.map((chunk) => chunk.content_markdown).join("\n\n");
+
+    expect(markdown).toContain("# Heading");
+    expect(markdown).toContain("> Quote");
+    expect(markdown).toContain("```ts");
+    expect(markdown).toContain("- first");
+    expect(markdown).toContain("1. second");
+    expect(markdown).toContain("![img](https://image.example/i.png)");
+    expect(markdown).toContain("[link](https://link.example/a)");
   });
 });

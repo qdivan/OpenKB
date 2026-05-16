@@ -43,18 +43,17 @@ const MODEL_COPY: Record<
   embedding: {
     title: "Embedding",
     description: "Dense retrieval vectors. Changing model or dimension requires a rebuild.",
-    formatLabel: "OpenAI-compatible embeddings",
+    formatLabel: "Embedding request format",
     formatDescription:
-      "Uses /v1/embeddings style JSON: model plus input. Works with OpenAI-compatible gateways and vLLM-compatible services.",
+      "Choose OpenAI-compatible JSON or DashScope native multimodal embedding JSON.",
     endpointPlaceholder: "https://api.openai.com/v1/embeddings",
     modelPlaceholder: "text-embedding-3-large"
   },
   rerank: {
     title: "Rerank",
     description: "Optional final ranking pass after Milvus candidates are permission-checked.",
-    formatLabel: "OpenAI-compatible rerank",
-    formatDescription:
-      "Uses OpenKB rerank JSON: model, query, and documents. Keep this endpoint OpenAI-compatible at the gateway layer.",
+    formatLabel: "Rerank request format",
+    formatDescription: "Choose OpenKB rerank JSON or DashScope native text-rerank JSON.",
     endpointPlaceholder: "https://provider.example/v1/rerank",
     modelPlaceholder: "rerank-model"
   },
@@ -67,6 +66,23 @@ const MODEL_COPY: Record<
     modelPlaceholder: "gpt-4.1-mini"
   }
 };
+
+const EMBEDDING_RERANK_PROVIDER_OPTIONS: Array<{
+  value: ModelProvider;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "openai_compatible",
+    label: "OpenAI-compatible",
+    description: "Embedding sends model plus input. Rerank sends model, query, and documents."
+  },
+  {
+    value: "dashscope",
+    label: "DashScope",
+    description: "Uses Alibaba Cloud native qwen3-vl-embedding and qwen3-vl-rerank request formats."
+  }
+];
 
 const LANGUAGE_PROVIDER_OPTIONS: Array<{
   value: ModelProvider;
@@ -90,11 +106,32 @@ const LANGUAGE_PROVIDER_OPTIONS: Array<{
   }
 ];
 
-const LANGUAGE_DEFAULT_ENDPOINTS: Record<ModelProvider, string | null> = {
-  openai_compatible: null,
-  openai_responses: "https://api.openai.com/v1/responses",
-  openai_chat_completions: "https://api.openai.com/v1/chat/completions",
-  anthropic_messages: "https://api.anthropic.com/v1/messages"
+const MODEL_PROVIDER_DEFAULT_ENDPOINTS: Record<
+  ModelKind,
+  Partial<Record<ModelProvider, string>>
+> = {
+  embedding: {
+    dashscope:
+      "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+  },
+  rerank: {
+    dashscope: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+  },
+  language: {
+    openai_responses: "https://api.openai.com/v1/responses",
+    openai_chat_completions: "https://api.openai.com/v1/chat/completions",
+    anthropic_messages: "https://api.anthropic.com/v1/messages"
+  }
+};
+
+const MODEL_PROVIDER_DEFAULT_MODELS: Record<ModelKind, Partial<Record<ModelProvider, string>>> = {
+  embedding: {
+    dashscope: "qwen3-vl-embedding"
+  },
+  rerank: {
+    dashscope: "qwen3-vl-rerank"
+  },
+  language: {}
 };
 
 const inputClass =
@@ -234,14 +271,18 @@ export function ModelsAdminClient() {
 
   function handleProviderChange(kind: ModelKind, provider: ModelProvider) {
     const currentEndpoint = forms[kind].endpoint.trim();
-    const defaultEndpoints = Object.values(LANGUAGE_DEFAULT_ENDPOINTS).filter(Boolean);
-    const nextEndpoint = LANGUAGE_DEFAULT_ENDPOINTS[provider];
+    const currentModel = forms[kind].model.trim();
+    const defaultEndpoints = Object.values(MODEL_PROVIDER_DEFAULT_ENDPOINTS[kind]).filter(Boolean);
+    const defaultModels = Object.values(MODEL_PROVIDER_DEFAULT_MODELS[kind]).filter(Boolean);
+    const nextEndpoint = MODEL_PROVIDER_DEFAULT_ENDPOINTS[kind][provider];
+    const nextModel = MODEL_PROVIDER_DEFAULT_MODELS[kind][provider];
     updateForm(kind, {
       provider,
-      ...(kind === "language" &&
-      nextEndpoint &&
-      (!currentEndpoint || defaultEndpoints.includes(currentEndpoint))
+      ...(nextEndpoint && (!currentEndpoint || defaultEndpoints.includes(currentEndpoint))
         ? { endpoint: nextEndpoint }
+        : {}),
+      ...(nextModel && (!currentModel || defaultModels.includes(currentModel))
+        ? { model: nextModel }
         : {})
     });
   }
@@ -304,16 +345,8 @@ export function ModelsAdminClient() {
                   </div>
                   <p className="mt-1 text-sm text-zinc-600">{t(MODEL_COPY[kind].description)}</p>
                   <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
-                    <p className="font-medium text-zinc-800">
-                      {kind === "language"
-                        ? t(MODEL_COPY[kind].formatLabel)
-                        : MODEL_COPY[kind].formatLabel}
-                    </p>
-                    <p className="mt-1">
-                      {kind === "language"
-                        ? t(MODEL_COPY[kind].formatDescription)
-                        : t(MODEL_COPY[kind].formatDescription)}
-                    </p>
+                    <p className="font-medium text-zinc-800">{t(MODEL_COPY[kind].formatLabel)}</p>
+                    <p className="mt-1">{t(MODEL_COPY[kind].formatDescription)}</p>
                   </div>
                 </div>
                 <SourcePill source={setting?.source ?? "none"} />
@@ -355,11 +388,36 @@ export function ModelsAdminClient() {
                   </Field>
                 ) : null}
 
+                {kind === "embedding" || kind === "rerank" ? (
+                  <Field label={t("Request format")}>
+                    <select
+                      className={inputClass}
+                      onChange={(event) =>
+                        handleProviderChange(kind, event.target.value as ModelProvider)
+                      }
+                      value={form.provider}
+                    >
+                      {EMBEDDING_RERANK_PROVIDER_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {t(
+                        EMBEDDING_RERANK_PROVIDER_OPTIONS.find(
+                          (option) => option.value === form.provider
+                        )?.description ?? MODEL_COPY[kind].formatDescription
+                      )}
+                    </p>
+                  </Field>
+                ) : null}
+
                 <Field label={t("Endpoint")}>
                   <input
                     className={inputClass}
                     onChange={(event) => updateForm(kind, { endpoint: event.target.value })}
-                    placeholder={MODEL_COPY[kind].endpointPlaceholder}
+                    placeholder={getEndpointPlaceholder(kind, form.provider)}
                     value={form.endpoint}
                   />
                 </Field>
@@ -368,7 +426,7 @@ export function ModelsAdminClient() {
                   <input
                     className={inputClass}
                     onChange={(event) => updateForm(kind, { model: event.target.value })}
-                    placeholder={MODEL_COPY[kind].modelPlaceholder}
+                    placeholder={getModelPlaceholder(kind, form.provider)}
                     value={form.model}
                   />
                 </Field>
@@ -630,13 +688,17 @@ function emptyForm(kind: ModelKind): ModelFormState {
   };
 }
 
+function getEndpointPlaceholder(kind: ModelKind, provider: ModelProvider): string {
+  return MODEL_PROVIDER_DEFAULT_ENDPOINTS[kind][provider] ?? MODEL_COPY[kind].endpointPlaceholder;
+}
+
+function getModelPlaceholder(kind: ModelKind, provider: ModelProvider): string {
+  return MODEL_PROVIDER_DEFAULT_MODELS[kind][provider] ?? MODEL_COPY[kind].modelPlaceholder;
+}
+
 function toForm(setting: AdminModelSetting): ModelFormState {
   const provider =
-    (setting.provider as string) === "openai"
-      ? "openai_responses"
-      : setting.kind === "language"
-        ? setting.provider
-        : "openai_compatible";
+    (setting.provider as string) === "openai" ? "openai_responses" : setting.provider;
   return {
     provider,
     enabled: setting.source === "db" ? setting.enabled : false,
@@ -683,16 +745,19 @@ function validateModelProbeForm(
   }
 
   const endpoint = form.endpoint.trim();
-  if (!endpoint) {
+  const providerDefaultEndpoint = MODEL_PROVIDER_DEFAULT_ENDPOINTS[kind][form.provider];
+  if (!endpoint && !providerDefaultEndpoint) {
     return t("Endpoint is required for database model checks.");
   }
-  try {
-    const url = new URL(endpoint);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return t("Endpoint must start with http:// or https://.");
+  if (endpoint) {
+    try {
+      const url = new URL(endpoint);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return t("Endpoint must start with http:// or https://.");
+      }
+    } catch {
+      return t("Endpoint must be a valid URL.");
     }
-  } catch {
-    return t("Endpoint must be a valid URL.");
   }
 
   if (!form.model.trim()) {

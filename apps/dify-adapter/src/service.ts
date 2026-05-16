@@ -286,7 +286,7 @@ export class DifyAdapterService {
         ? "rerank"
         : "retrieval";
     return {
-      content: result.content,
+      content: toDifyRecordContent(result),
       score,
       title: document?.title ?? result.title,
       metadata: {
@@ -459,6 +459,19 @@ function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+export function toDifyRecordContent(result: RetrievalSearchResult): string {
+  const hitType = stringOrNull(result.metadata.hit_type);
+  if (hitType !== "qa") {
+    return result.content;
+  }
+  const question = stringOrNull(result.metadata.qa_question);
+  const answer = stringOrNull(result.metadata.qa_answer);
+  if (!question || !answer) {
+    return result.content;
+  }
+  return `question:${question} \nanswer:${answer}`;
 }
 
 function stringOrNull(value: unknown): string | null {

@@ -116,9 +116,11 @@ docker compose -f deploy/docker-compose/compose.yml up -d
 
 ```bash
 OPENKB_RETRIEVAL_DEFAULT_MODE=hybrid
+OPENKB_EMBEDDING_REQUEST_FORMAT=openai_compatible
 OPENKB_EMBEDDING_ENDPOINT=http://192.168.6.220:18081/v1/embeddings
 OPENKB_EMBEDDING_MODEL=qwen3-vl-embedding-2b
 OPENKB_EMBEDDING_DIM=2048
+OPENKB_RERANK_REQUEST_FORMAT=openai_compatible
 OPENKB_RERANK_ENDPOINT=http://192.168.6.220:18082/v1/rerank
 OPENKB_RERANK_MODEL=qwen3-vl-reranker-2b
 OPENKB_CONFIG_ENCRYPTION_KEY=<32+ chars or 64 hex chars if using DB model secrets>
@@ -126,6 +128,20 @@ OPENKB_LLM_REQUEST_FORMAT=openai_responses
 OPENKB_LLM_ENDPOINT=https://api.openai.com/v1/responses
 OPENKB_LLM_MODEL=<optional OpenAI-compatible language model>
 OPENKB_LLM_API_KEY=<optional env secret>
+```
+
+阿里云 DashScope 原生 `qwen3-vl-embedding` / `qwen3-vl-rerank` 不走 OpenAI-compatible `/v1/embeddings` 或 `/v1/rerank`，需要使用 `dashscope` request format：
+
+```bash
+OPENKB_EMBEDDING_REQUEST_FORMAT=dashscope
+OPENKB_EMBEDDING_ENDPOINT=https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding
+OPENKB_EMBEDDING_MODEL=qwen3-vl-embedding
+OPENKB_EMBEDDING_DIM=768
+OPENKB_EMBEDDING_API_KEY=<dashscope api key>
+OPENKB_RERANK_REQUEST_FORMAT=dashscope
+OPENKB_RERANK_ENDPOINT=https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank
+OPENKB_RERANK_MODEL=qwen3-vl-rerank
+OPENKB_RERANK_API_KEY=<dashscope api key>
 ```
 
 然后重启应用和 index-worker，登录 `/app/admin/retrieval`，执行 probe、创建 rebuild job，等重建完成后再切换 `dense`、`hybrid` 或 rerank 模式。
@@ -170,3 +186,8 @@ docker compose -f deploy/docker-compose/compose.yml down -v
 - Redis 已作为部署基线服务提供，但当前 workers 仍通过 PostgreSQL 轮询任务表。
 - OpenKB 默认仍可只读环境变量；如使用 `/app/admin/models`，只有 `system_admin` 可以保存实例级加密模型 secret。数据库不得保存明文 provider key，也不提供知识库级模型配置。
 - 如果 Web 登录后回到登录页，先检查 `APP_BASE_URL`、`AUTH_COOKIE_SECURE` 和浏览器访问协议是否一致。
+## Phase 22 本地验收补充
+
+`/health.phase` 只说明当前构建显示的阶段，不等同于升级验收。确认 Phase 22
+环境时，还要检查 `0014`、`0015`、`0016` 迁移、表结构和 QA/Summary/Reprocess/Dify
+等新接口。

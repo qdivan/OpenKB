@@ -20,6 +20,8 @@
   <a href="docs/00-index.zh-CN.md">文档</a>
   ·
   <a href="docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md">Dify 1.14.1 对齐审计</a>
+  ·
+  <a href="docs/31-dify-parity-next-phases.zh-CN.md">后续路线</a>
 </p>
 
 <p align="center">
@@ -36,13 +38,15 @@
 
 OpenKB 是一个开源、自托管的团队知识库。它把文档正文、版本、协作者和权限放在 PostgreSQL 里，把 Milvus 当作可重建的检索索引。Web、MCP 和 Dify 返回结果前都会回到 PostgreSQL 做最终权限检查。
 
-当前主线处于 `v0.3.x / Phase 22`：正在对齐 Dify 1.14.1 的知识库处理、分块、检索策略、QA、summary 和 segment 管理。它适合本地开发、公网测试平台和私有化试跑，还不是生产 GA 版本。
+当前主线处于 `v0.3.x / Phase 22.9`：Phase 22.2-22.6 已完成 Dify-like 处理规则、retrieval model、segment、QA/summary 和 Web 信息层级的基础闭环；22.8-22.9 已完成 Dify-compatible splitter 与主要 parity 收敛。下一步按 `docs/31` 继续做低风险兼容补齐、QA parity、图片与附件检索。它适合本地开发、公网测试平台和私有化试跑，还不是生产 GA 版本。
 
 ## Highlights
 
 - 语雀式知识库结构：工作区、知识库、目录、文档、协作者、邀请和只读分享。
 - Markdown-first 编辑：Milkdown 富文本体验，Markdown 版本仍是正文真相。
 - Dify-like 知识库处理：普通 RAG、父子检索、QA 知识库、显式 reprocess、segment override、summary index。
+- Dify-compatible parity：新建或显式 reprocess 后按 Dify 1.14.1 recursive splitter 行为生成 PostgreSQL segments；Dify Adapter 对 QA、summary、metadata 和 tags 使用更接近 Dify 内部知识库的语义。
+- 后续路线清晰：先补 chunk 参数和 snapshot 一致性，再补 QA parity，最后按 Dify 的 segment attachment 逻辑做图片与附件检索。
 - 检索策略可解释：BM25、semantic、hybrid、rerank、parent-child 回填、metadata filters 和命中解释。
 - 安全接入：MCP 绑定真实用户；Dify 绑定 app key 和 allowed KB scope。
 - 运维控制台：用户、模型、导入工具、Dify、MCP、索引、SMTP、审计和安全运维入口。
@@ -85,6 +89,22 @@ pnpm dev:local:web
 
 此模式下 Web 是 `http://localhost:3100`，API 是 `http://localhost:4101`。运行 `next dev` 时不要同时执行 Web `next build`，两者会争用同一个 `.next` 目录。
 
+## Upgrade Acceptance
+
+`/health` is a liveness and display endpoint. Do not use `phase` alone as the
+upgrade gate. For a Phase 22 deployment, verify the release image or commit, then
+check the database and interfaces:
+
+- Prisma migrations include `0014_account_setup_admin_visibility`,
+  `0015_dify_knowledge_alignment`, and `0016_qa_summary_generation`.
+- Phase 22 tables and columns exist, especially `document_qa_pairs`,
+  `document_segment_summaries`, `document_summaries`,
+  `document_chunks.index_role`, and `document_chunks.source_chunk_id`.
+- Key APIs respond after authentication: KB chunk settings, document processing,
+  document reprocess, QA, summaries, search, and Dify `/retrieval`.
+- Docker Compose deployments pass through the Phase 20-22 SMTP, CSRF, MCP OAuth,
+  model, import-tool, metrics, and backup environment variables.
+
 ## Releases
 
 - [`phase-21`](https://github.com/qdivan/OpenKB/releases/tag/phase-21): Dify External Knowledge 原生体验补强，包含配置向导、Dify 友好 metadata、KB metadata schema 和文档 metadata values。
@@ -99,6 +119,8 @@ pnpm dev:local:web
 - [Dify External Knowledge 配置指南](docs/26-dify-external-knowledge-setup.zh-CN.md)
 - [Dify 1.14.1 对齐计划](docs/27-dify-knowledge-alignment.zh-CN.md)
 - [Dify 1.14.1 差异审计](docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md)
+- [Dify parity v2 工程基线](docs/30-dify-parity-v2-analysis.zh-CN.md)
+- [Dify parity 后续路线](docs/31-dify-parity-next-phases.zh-CN.md)
 - [本地快速开始](docs/25-local-quickstart.zh-CN.md)
 - [部署说明](docs/13-deployment.zh-CN.md)
 

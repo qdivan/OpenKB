@@ -45,11 +45,14 @@
 
 - `docs/26-dify-external-knowledge-setup.zh-CN.md`：OpenKB 作为 Dify External Knowledge 的配置、metadata 映射和本地 Docker/WSL 验证指南。
 - `docs/27-dify-knowledge-alignment.zh-CN.md`：Dify 1.14.1 知识库处理、分块、检索策略、QA、摘要和 segment 管理的 OpenKB 对齐计划。
-- `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`：本地 Dify 1.14.1 升级记录、真实运行验证、差异矩阵和 Phase 22 后续拆分计划。
+- `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`：本地 Dify 1.14.1 升级记录、真实运行验证、差异矩阵和 Phase 22 历史拆分记录。
+- `docs/29-i18n-terminology-alignment.zh-CN.md`：前端中文术语对齐基线，覆盖 Dify 知识库/检索术语和语雀式协作权限术语。
+- `docs/30-dify-parity-v2-analysis.zh-CN.md`：Dify Parity v2 报告、Dify 1.14.1 后端和 OpenKB 后端的三方差异分析基线；Phase 22.9 的 splitter、QA、metadata/tags 和 segment parity 收敛以该文档为验收基线。
+- `docs/31-dify-parity-next-phases.zh-CN.md`：Phase 22.9 之后的后续路线入口，固定低风险兼容补齐、QA parity、图片与附件检索三段顺序。
 
 ## 辅助文档
 
-- `docs/17-glossary.zh-CN.md`：术语表。
+- `docs/17-glossary.zh-CN.md`：术语表；前端具体翻译以 `docs/29-i18n-terminology-alignment.zh-CN.md` 为准。
 - `docs/23-docs-code-gap-analysis.zh-CN.md`：历史本机开发移交快照。该文档可能包含过期 phase/status 表述，当前状态以 README、`docs/15`、`docs/27`、`docs/28` 为准。
 - `docs/24-public-test-platform-deployment.zh-CN.md`：公网测试平台部署清单。
 - `docs/25-local-quickstart.zh-CN.md`：本地快速启动、源码开发端口和冒烟测试。

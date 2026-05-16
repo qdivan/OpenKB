@@ -81,6 +81,7 @@ describe("@openkb/milvus schema", () => {
     const filter = buildChunkSearchFilter({
       tenantId: "tenant-a",
       knowledgeBaseIds: ["kb-1", "kb-2"],
+      documentIds: ["doc-1", 'doc"2'],
       accessPrincipals: ["user:u1", "workspace:w1:member"],
       filters: { tags: ["mcp", 'quote"tag'] }
     });
@@ -92,6 +93,7 @@ describe("@openkb/milvus schema", () => {
       'ARRAY_CONTAINS_ANY(access_principals, ["user:u1", "workspace:w1:member"])'
     );
     expect(filter).toContain('knowledge_base_id in ["kb-1", "kb-2"]');
+    expect(filter).toContain('document_id in ["doc-1", "doc\\"2"]');
     expect(filter).toContain('json_contains_any(metadata["tags"], ["mcp", "quote\\"tag"])');
   });
 
@@ -99,6 +101,7 @@ describe("@openkb/milvus schema", () => {
     const filter = buildScopedChunkSearchFilter({
       tenantId: "tenant-a",
       knowledgeBaseIds: ["kb-1"],
+      documentIds: ["doc-1"],
       filters: { tags: ["dify"] }
     });
 
@@ -106,6 +109,7 @@ describe("@openkb/milvus schema", () => {
     expect(filter).toContain("is_current == true");
     expect(filter).toContain('doc_status == "published"');
     expect(filter).toContain('knowledge_base_id in ["kb-1"]');
+    expect(filter).toContain('document_id in ["doc-1"]');
     expect(filter).toContain('json_contains_any(metadata["tags"], ["dify"])');
     expect(filter).not.toContain("access_principals");
   });

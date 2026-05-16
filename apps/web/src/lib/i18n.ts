@@ -108,6 +108,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Child chunks": "子块",
   "Child delimiter": "子块分隔符",
   "Child overlap": "子块重叠",
+  "Parent/standard overlap": "父块/标准重叠",
   "Chinese list numbering is not part of V1 Markdown serialization.":
     "中文编号不属于 V1 Markdown 序列化能力。",
   "Chinese numbering": "中文编号",
@@ -348,6 +349,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Dense retrieval vectors. Changing model or dimension requires a rebuild.":
     "用于 dense 检索向量。更换模型或向量维度后需要重建索引。",
   "Embedding, rerank, and LLM": "Embedding、Rerank 与 LLM",
+  "Embedding request format": "Embedding 请求格式",
   Endpoint: "端点",
   "Index rebuild required after this embedding configuration.":
     "修改 Embedding 配置后需要重建索引。",
@@ -360,12 +362,21 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Only system admins can configure models.": "只有系统管理员可以配置模型。",
   "OpenAI-compatible embeddings": "OpenAI-compatible embeddings",
   "OpenAI-compatible rerank": "OpenAI-compatible rerank",
+  "Choose OpenAI-compatible JSON or DashScope native multimodal embedding JSON.":
+    "选择 OpenAI-compatible JSON 或 DashScope 原生 multimodal embedding JSON。",
+  "Choose OpenKB rerank JSON or DashScope native text-rerank JSON.":
+    "选择 OpenKB rerank JSON 或 DashScope 原生 text-rerank JSON。",
+  "Embedding sends model plus input. Rerank sends model, query, and documents.":
+    "Embedding 发送 model 和 input；Rerank 发送 model、query 和 documents。",
+  "Uses Alibaba Cloud native qwen3-vl-embedding and qwen3-vl-rerank request formats.":
+    "使用阿里云原生 qwen3-vl-embedding 和 qwen3-vl-rerank 请求格式。",
   "Optional final ranking pass after Milvus candidates are permission-checked.":
     "Milvus 候选结果通过权限检查后，可选执行最终重排。",
   "Paste a new key": "粘贴新 Key",
   "Probe failed": "检测失败",
   "Probe succeeded": "检测成功",
   "Request format": "请求格式",
+  "Rerank request format": "Rerank 请求格式",
   "Search and index controls": "搜索与索引控制",
   Secret: "密钥",
   "Sends model, input, store:false, max_output_tokens, and temperature.":
@@ -870,6 +881,10 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Processing revision": "处理版本",
   "Current version id": "当前版本 ID",
   "Current version hash": "当前版本 Hash",
+  "Snapshot settings revision": "快照设置版本",
+  "Snapshot parent mode": "快照父块模式",
+  "Snapshot parent overlap": "快照父块重叠",
+  "Snapshot child overlap": "快照子块重叠",
   "Process rule snapshot": "处理规则快照",
   "Publish indexing help":
     "发布只决定当前文档版本是否可进入检索候选；它不会同步重建 PostgreSQL 分块，也不会写入 Milvus embedding。内容或规则变化后请显式重处理分块，再按需执行 Milvus blue-green 索引重建。",
@@ -968,6 +983,202 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Saving...": "保存中...",
   "Metadata saved.": "Metadata 已保存。",
   "Add fields in the knowledge base Metadata tab.": "请在知识库 Metadata 标签中添加字段。"
+});
+
+// Dify/Yuque terminology alignment overrides.
+// Keep this block last so newer Dify-facing UI does not drift back to mixed
+// "chunk/segment/metadata" wording in Chinese.
+Object.assign(ZH_CN_TRANSLATIONS, {
+  Action: "操作",
+  Clear: "清除",
+  "Copied.": "已复制。",
+  "Current share": "当前分享",
+  'Delete "{title}"?': "删除“{title}”？",
+  Enable: "启用",
+  "Failed to load.": "加载失败。",
+  "Markdown source is invalid.": "Markdown 源码无效。",
+  "Password verification failed.": "密码验证失败。",
+  Redo: "重做",
+  "Reset link": "重置链接",
+  Restore: "恢复",
+  Role: "角色",
+  "Role update failed.": "角色更新失败。",
+  "Saved.": "已保存。",
+  Undo: "撤销",
+
+  Chunk: "分段",
+  Chunks: "分段",
+  "Child chunks": "子分段",
+  "Chunk map": "分段地图",
+  "Chunk rebuild": "分段重建",
+  "Chunk settings": "分段设置",
+  "Document chunks": "文档分段",
+  "Loading chunks": "正在加载分段",
+  "No chunks": "暂无分段",
+  "No chunks for this document": "此文档暂无分段",
+  "Open the document Chunks panel to manage segment status or overrides.":
+    "打开文档右侧“分段”面板管理分段状态或覆盖内容。",
+  "Publish or rebuild chunks before this document can be searched.":
+    "发布并重处理分段后，此文档才能被搜索。",
+  "Reading PostgreSQL chunks.": "正在读取 PostgreSQL 分段。",
+  "Rebuild chunks": "重建分段",
+  "Save the document before reprocessing chunks.": "重处理分段前请先保存文档。",
+  "Select a document to inspect chunks": "选择一个文档查看分段",
+  "This document changed after its chunks were generated.":
+    "当前文档内容或处理规则已变化，现有 PostgreSQL 分段可能不是最新版本。",
+  "Version restored. Rebuild chunks and search index if this document is published.":
+    "版本已恢复。如果此文档已发布，请重处理分段并按需重建搜索索引。",
+  "{count} chunks": "{count} 个分段",
+  "chunks stale": "分段已过期",
+  "matched child, returned parent {id}": "命中子分段，返回父分段 {id}",
+  "matched chunk {id}": "命中分段 {id}",
+
+  Segments: "分段",
+  "Segment map": "分段地图",
+  "Document segments": "文档分段",
+  "Child segments": "子分段",
+  "segments stale": "分段已过期",
+  "{count} segments": "{count} 个分段",
+  "No segments for this document": "此文档暂无分段",
+  "Select a document to inspect segments": "请选择文档查看分段",
+  "Open the document Segments panel to manage segment status or overrides.":
+    "打开文档右侧“分段”面板管理分段状态或覆盖内容。",
+  "Loading segments": "正在加载分段",
+  "Reading PostgreSQL segments.": "正在读取 PostgreSQL 分段。",
+  "This document changed after its segments were generated.":
+    "当前文档内容或处理规则已变化，现有 PostgreSQL 分段可能不是最新版本。",
+  "Reprocess document segments": "重处理文档分段",
+  "Reprocess segments before this document can be searched.":
+    "请先重处理分段，此文档才能按最新内容参与检索。",
+  "Document published. Reprocess segments before rebuilding the Milvus index.":
+    "文档已发布。请先重处理分段，再按需重建 Milvus 索引。",
+  "Version restored. Reprocess segments before rebuilding the search index.":
+    "版本已恢复。请先重处理分段，再按需重建搜索索引。",
+  "Save the document before reprocessing segments.": "重处理分段前请先保存文档。",
+  "Document segments reprocessed. Rebuild Milvus index when retrieval should update.":
+    "文档分段已重处理。如需检索更新，请重建 Milvus 索引。",
+  "QA changes require reprocess and then Milvus index rebuild before retrieval updates.":
+    "问答变更需要先重处理分段，再重建 Milvus 索引后才会影响检索。",
+  "QA updated. Reprocess chunks, then rebuild Milvus index before retrieval updates.":
+    "问答已更新。请重处理分段，并在需要检索生效时重建 Milvus 索引。",
+  "QA updated. Reprocess segments, then rebuild Milvus index before retrieval updates.":
+    "问答已更新。请重处理分段，并在需要检索生效时重建 Milvus 索引。",
+  "Source chunk": "来源分段",
+  "Mock all segment summaries": "Mock 全部分段摘要",
+  "Segment summaries": "分段摘要",
+  "Disable segment": "禁用分段",
+  "Enable segment": "启用分段",
+  "Restore segment": "恢复分段",
+  "Show deleted segments": "显示已删除分段",
+  "Soft delete segment": "软删除分段",
+  "Disabled segments stay in PostgreSQL but are excluded from retrieval after the next Milvus rebuild.":
+    "禁用的分段会保留在 PostgreSQL 中，但在下次 Milvus 重建后会从检索中排除。",
+  "Reset this segment override and return retrieval content to the source chunk?":
+    "重置这个分段的覆盖内容，并让检索内容回到原始分段吗？",
+  "Soft-deleted segments are hidden by default and excluded from retrieval after the next Milvus rebuild.":
+    "软删除的分段默认隐藏，并会在下次 Milvus 重建后从检索中排除。",
+  "Segment changes are stored in PostgreSQL. Rebuild the Milvus index before search, MCP, or Dify use them.":
+    "分段变更已写入 PostgreSQL。需要重建 Milvus 索引后，搜索、MCP、Dify 才会使用这些变更。",
+  "PostgreSQL segment updated. Rebuild the Milvus index before Web Search, MCP, or Dify use this change.":
+    "PostgreSQL 分段已更新。需要重建 Milvus 索引后，Web Search、MCP、Dify 才会使用这次变更。",
+
+  Metadata: "元数据",
+  "Dify metadata schema": "Dify 元数据结构",
+  "Filterable metadata": "可过滤元数据字段",
+  "These fields can be used in Dify metadata_condition. Document metadata is preferred; openkb_* fields are diagnostics.":
+    "这些字段可用于 Dify metadata_condition。优先使用文档元数据；openkb_* 字段主要用于诊断。",
+  "These fields become document metadata and can be used by Dify metadata_condition.":
+    "这些字段会成为文档元数据，可被 Dify metadata_condition 过滤。",
+  "No custom metadata fields": "没有自定义元数据字段",
+  "Add metadata field": "添加元数据字段",
+  "Dify-native document metadata for filtering.": "用于过滤的 Dify 风格文档元数据。",
+  "Loading metadata": "正在加载元数据",
+  "Reading document metadata.": "正在读取文档元数据。",
+  "No metadata": "没有元数据",
+  "Save metadata": "保存元数据",
+  "Metadata saved.": "元数据已保存。",
+  "Add fields in the knowledge base Metadata tab.": "请在知识库“元数据”标签中添加字段。",
+
+  "Dify doc form": "Dify 文档模式",
+  "Document form": "文档模式",
+  "General document": "通用",
+  "Parent-child document": "父子",
+  "QA document": "问答",
+  "Processing mode": "处理模式",
+  "Chunk rules": "分段规则",
+  "Retrieval policy": "检索设置",
+  "Search method": "检索方法",
+  "Indexing technique": "索引模式",
+  "Economy keyword/BM25": "经济（关键词/BM25）",
+  "High quality Embedding/Hybrid": "高质量（Embedding/Hybrid）",
+  "Semantic search": "向量检索",
+  "Full text search": "全文检索",
+  "Hybrid search": "混合检索",
+  "Keyword search": "关键词",
+  "Automatic segmentation": "自动分段",
+  "Custom segmentation": "自定义分段",
+  "Hierarchical segmentation": "父子分段",
+  "Parent segmentation creates retrieval context. Subchunk segmentation creates matchable child segments.":
+    "父级分段生成检索上下文；子分段生成可命中的子分段。",
+  "These Dify-like settings decide how documents are processed into derived segments. They do not configure model secrets.":
+    "这些 Dify 风格设置决定文档如何被处理成派生分段；它们不配置模型密钥。",
+  "Dify-like document processing is snapshotted per document version and reprocessed explicitly.":
+    "Dify 风格文档处理会按文档版本保存快照，并由用户显式重处理。",
+  "Reprocess rebuilds PostgreSQL segments from Markdown. Search, MCP, and Dify still need a Milvus index rebuild before they use the new segments.":
+    "重处理会从 Markdown 重建 PostgreSQL 分段；搜索、MCP 和 Dify 仍需要 Milvus 索引重建后才会使用新分段。",
+  "Publishing, reprocessing, and Milvus index rebuild are separate steps. Reprocess updates PostgreSQL segments; index rebuild updates search, MCP, and Dify.":
+    "发布、重处理和 Milvus 索引重建是三个独立步骤。重处理更新 PostgreSQL 分段；索引重建更新搜索、MCP 和 Dify。",
+  "Document published. Reprocess chunks before rebuilding the Milvus index.":
+    "文档已发布。请先重处理分段，再按需重建 Milvus 索引。",
+  "Document chunks reprocessed. Rebuild Milvus index when retrieval should update.":
+    "文档分段已重处理。如需检索更新，请重建 Milvus 索引。",
+  "Version restored. Reprocess chunks before rebuilding the search index.":
+    "版本已恢复。请先重处理分段，再按需重建搜索索引。",
+  "Reprocess chunks": "重处理分段",
+  "Reprocess chunks before this document can be searched.":
+    "请先重处理分段，此文档才能按最新内容参与检索。",
+  "Queue KB chunk rebuild": "排队 KB 分段重建",
+  "Publish indexing help":
+    "发布只决定当前文档版本是否可进入检索候选；它不会同步重建 PostgreSQL 分段，也不会写入 Milvus embedding。内容或规则变化后请显式重处理分段，再按需执行 Milvus blue-green 索引重建。",
+  "Index rebuild creates a new Milvus collection from PostgreSQL chunks, writes BM25 and embedding fields, runs health checks, then switches the active alias. It is needed when the embedding model, vector dimension, schema, function configuration, or input modality changes. Publishing a document only makes its current chunks eligible for retrieval; it does not mutate the active collection inline.":
+    "索引重建会从 PostgreSQL 分段创建新的 Milvus collection，写入 BM25 和 Embedding 字段，完成健康检查后再切换当前别名。更换 Embedding 模型、向量维度、schema、Function 配置或输入模态时需要重建。发布文档只让当前分段具备检索资格，不会在请求内直接修改当前 collection。",
+
+  "API endpoint for Dify": "Dify API 端点",
+  "External Knowledge adapter": "外部知识库适配器",
+  "External Knowledge keys": "外部知识库密钥",
+  "External Knowledge ID": "外部知识库 ID",
+  "Create a mapping first to get an External Knowledge ID.":
+    "先创建知识映射，才能获得外部知识库 ID。",
+  "Manage External Knowledge API keys and knowledge mappings.":
+    "管理 Dify 外部知识库 API 密钥和知识映射。",
+  "Create Dify API key": "创建 Dify API 密钥",
+  "Dify knowledge id": "Dify knowledge_id",
+  "Allowed KB ids": "允许的知识库 ID",
+  "API keys": "API 密钥",
+  "Secret reveal": "显示密钥",
+  "Secret copied.": "密钥已复制。",
+  "PAT token shown once": "PAT token 只显示一次",
+  Scopes: "权限范围",
+
+  Workspaces: "工作区",
+  Workspace: "工作区",
+  "Workspace name": "工作区名称",
+  "Rename workspace": "重命名工作区",
+  "Create a workspace and knowledge base from the left rail.": "从左侧栏创建工作区和知识库。",
+  Collaborators: "协作者",
+  "Access settings": "访问设置",
+  "Workspace collaborators": "工作区协作者",
+  "Knowledge base collaborators": "知识库协作者",
+  "Document collaborators": "文档协作者",
+
+  account_setup: "欢迎设置密码邮件",
+  password_reset: "密码重置邮件",
+  email_verification: "邮箱验证邮件",
+  email_outbox_pending: "待发送",
+  email_outbox_sent: "已发送",
+  email_outbox_failed: "失败",
+  Email: "邮箱",
+  "Email delivery": "邮件"
 });
 
 const TRANSLATIONS: Record<Locale, Record<string, string>> = {

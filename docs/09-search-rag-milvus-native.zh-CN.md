@@ -305,4 +305,4 @@ Markdown/current version
   -> 返回 child match + parent context + score metadata
 ```
 
-Milvus 只索引 `general` 和 `child` chunk；`parent` chunk 只保存在 PostgreSQL，用于知识库 Dashboard、切片可视化和上下文回填。知识库 owner/manager 可以调整切片设置和触发 chunk rebuild，但不能配置 embedding/rerank endpoint、模型、维度或 Milvus collection。
+Milvus 只索引 `general`、`child` 以及显式生成的 QA/summary 派生 chunk；`parent` chunk 只保存在 PostgreSQL，用于知识库 Dashboard、切片可视化和上下文回填。知识库 owner/manager 可以调整处理规则并逐篇触发 document reprocess，但不能配置 embedding/rerank endpoint、模型、维度或 Milvus collection。影响检索派生层的变更仍需要显式 Milvus index rebuild 后才会进入搜索、MCP 和 Dify。

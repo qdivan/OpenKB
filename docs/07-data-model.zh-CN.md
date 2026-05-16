@@ -377,6 +377,7 @@ model_settings (
   provider text not null check (
     provider in (
       'openai_compatible',
+      'dashscope',
       'openai_responses',
       'openai_chat_completions',
       'anthropic_messages'

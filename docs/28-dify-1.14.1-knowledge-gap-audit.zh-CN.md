@@ -5,7 +5,7 @@
 - 本地 Dify 从 `1.13.0` 原地升级到 `1.14.1` 的执行记录、验证结果和回滚边界。
 - 以 Dify `1.14.1` 源码、升级后的本地 Dify UI/运行行为、OpenKB 当前实现为三方参照，逐项审计知识库处理、分块、检索和 segment 管理差异。
 
-本文是当前 Dify 对齐工作的基线。`docs/27-dify-knowledge-alignment.zh-CN.md` 仍作为 Phase 22 设计计划保留；若两者冲突，以本文的“已验证状态”和“后续拆分计划”为准。
+本文是 Dify 1.14.1 升级与能力审计基线。分块与检索结果的实测差异以后续 `docs/30-dify-parity-v2-analysis.zh-CN.md` 为准；若两者冲突，以 docs/30 的 parity 结论为准。Phase 22.9 之后的新增计划统一放在 `docs/31-dify-parity-next-phases.zh-CN.md`，本文不再作为后续执行入口。
 
 ## 参照来源
 
@@ -128,20 +128,20 @@ python_path: /opt/python/bin/python3
 
 | Dify 1.14.1 能力/字段 | Dify 语义 | OpenKB 当前映射 | 状态 | 差异与后续 |
 | --- | --- | --- | --- | --- |
-| Dataset / Knowledge | 知识库级对象，保存索引技术、检索模型、summary 设置、metadata schema 等 | `knowledge_bases` + `knowledge_base_chunk_settings` + metadata fields | 部分实现 | OpenKB 已有 KB dashboard/settings，但设置入口还不如 Dify 集中 |
-| Document | 知识库内文档，可保存处理规则快照、启用状态和 summary 状态 | `documents` + `document_versions` + processing snapshot | 部分实现 | OpenKB 正文以 Markdown 版本为真相，处理快照是派生索引层 |
+| Dataset / Knowledge | 知识库级对象，保存索引技术、检索模型、summary 设置、metadata schema 等 | `knowledge_bases` + `knowledge_base_chunk_settings` + metadata fields | Phase 22.6 UI 已对齐 | 后续 Phase n+1 只补参数展示/校验一致性 |
+| Document | 知识库内文档，可保存处理规则快照、启用状态和 summary 状态 | `documents` + `document_versions` + processing snapshot | Phase 22.6 UI 已对齐 | OpenKB 正文以 Markdown 版本为真相，处理快照是派生索引层 |
 | Segment | 检索最小片段，可启用/禁用、编辑内容、删除 | `document_chunks` | 已实现基础闭环 | 文档右侧 Segments 面板管理 active/disabled/deleted、override/reset；KB Segment map 只做分组预览 |
-| `doc_form=text_model` | 普通 RAG 文档，生成普通段落 chunks | `doc_form=text_model` / `general` chunks | 部分实现 | 基础已对齐，automatic/custom 参数覆盖率需继续补 |
-| `doc_form=hierarchical_model` | 父子检索知识库 | `doc_form=hierarchical_model` + parent/child chunks | 部分实现 | 已有父子 chunk 思路，文档级 UI 与 reprocess 仍需补齐 |
-| `doc_form=qa_model` | QA 知识库，索引问题、返回答案 | `document_qa_pairs` / QA metadata | 部分实现 | 手动/CSV 基础可做，LLM 生成 QA 未完整闭环 |
-| `indexing_technique=economy` | 关键词/全文类低成本索引 | BM25 / keyword strategy | 部分实现 | 需要把 KB 默认策略更完整注入 Web/MCP/Dify/Search |
-| `indexing_technique=high_quality` | embedding/hybrid/rerank 高质量索引 | Admin Models + dense/hybrid/rerank + Milvus profile | 部分实现 | OpenKB 不做 KB 级模型密钥，使用实例级模型配置 |
-| `process_rule.mode=automatic` | Dify 默认切分规则 | OpenKB 默认 process rule | 部分实现 | 需按 Dify 1.14.1 参数补齐 separator/max tokens/overlap 默认值 |
-| `process_rule.mode=custom` | 用户自定义切分规则 | KB chunk settings / process rule JSON | Phase 22.6 UI 已对齐 | KB Settings 已拆出分块规则 tab |
-| `process_rule.mode=hierarchical` | 父子切分规则 | parent/child chunk settings | 部分实现 | 需把 paragraph/full-doc 选择清晰落到文档处理快照 |
-| `parent_mode=paragraph` | 段落父块 | `parent_mode=paragraph` | 部分实现 | 需要端到端 reprocess job 验证 |
-| `parent_mode=full-doc` | 全文父块 | `parent_mode=full-doc` | 部分实现 | 需要大文档 token/size 限制提示 |
-| Subchunk segmentation | 父子模式中的子块规则 | `subchunk_segmentation` | 部分实现 | 需要 UI 和 worker 参数覆盖测试 |
+| `doc_form=text_model` | 普通 RAG 文档，生成普通段落 chunks | `doc_form=text_model` / `general` chunks | Phase 22.8/22.9 已补 splitter parity | Phase n+1 继续补参数 UI/API 与快照一致性 |
+| `doc_form=hierarchical_model` | 父子检索知识库 | `doc_form=hierarchical_model` + parent/child chunks | Phase 22.8/22.9 已补 splitter parity | Phase n+1 继续补 parent/subchunk overlap 展示 |
+| `doc_form=qa_model` | QA 知识库，索引问题、返回答案 | `document_qa_pairs` / QA metadata | Phase 22.5/22.9 已有基础闭环 | Phase n+2 继续补正文生成 QA pair 与 Dify parity |
+| `indexing_technique=economy` | 关键词/全文类低成本索引 | BM25 / keyword strategy | Phase 22.3 已注入 | 同模型 live retrieval parity 仍需复跑 |
+| `indexing_technique=high_quality` | embedding/hybrid/rerank 高质量索引 | Admin Models + dense/hybrid/rerank + Milvus profile | Phase 22.3 已注入 | OpenKB 不做 KB 级模型密钥，使用实例级模型配置 |
+| `process_rule.mode=automatic` | Dify 默认切分规则 | Dify 1.14.1-compatible recursive splitter | Phase 22.8 已接入，Phase 22.9 已补复跑证据 | 新建或显式 reprocess 后使用；旧 chunks 不自动迁移 |
+| `process_rule.mode=custom` | 用户自定义切分规则 | fixed separator + recursive fallback | Phase 22.8 已接入，Phase 22.9 已补输入规范化对照 | KB Settings 已拆出分块规则 tab |
+| `process_rule.mode=hierarchical` | 父子切分规则 | parent/subchunk fixed separator + recursive fallback | Phase 22.8 已接入，Phase 22.9 已补 parent/full-doc fixtures | paragraph/full-doc 继续落在文档处理快照 |
+| `parent_mode=paragraph` | 段落父块 | `parent_mode=paragraph` | Phase 22.8/22.9 已补 parity fixture | Phase n+1 继续补 UI 展示与回归验收 |
+| `parent_mode=full-doc` | 全文父块 | `parent_mode=full-doc` | Phase 22.8/22.9 已补 parity fixture | Phase n+1 继续补 UI 展示与大小提示 |
+| Subchunk segmentation | 父子模式中的子块规则 | `subchunk_segmentation` | Phase 22.8/22.9 已补 splitter parity | Phase n+1 继续补参数覆盖测试 |
 | Document process snapshot | 文档导入/重处理时的规则快照 | `process_rule_snapshot` | Phase 22.6 UI 已对齐 | 文档右侧新增处理快照面板 |
 | Reprocess | 文档按当前/指定规则重新处理 segment | document reprocess API | Phase 22.6 UI 已对齐 | KB Settings 重处理 tab 逐篇触发现有 document reprocess |
 | `retrieval_model.search_method=semantic_search` | 语义检索 | dense / dense_rerank | Phase 22.3 已注入 | embedding/index 不可用时返回 `SEARCH_INDEX_NOT_READY` |
@@ -165,12 +165,13 @@ python_path: /opt/python/bin/python3
 
 ## OpenKB 对齐结论
 
-OpenKB 当前已经进入 Phase 22 的 schema/API 基础阶段：Dify 风格字段和部分 chunk/retrieval/metadata 扩展已经在代码中出现，但距离 Dify 1.14.1 的“原生知识库体验”仍有四个主要缺口：
+OpenKB 当前已经完成 Phase 22 的基础闭环：Dify 风格字段、chunk/retrieval/metadata/QA/summary/segment 扩展已经进入主线。后续重点不再是补“有没有这个字段”，而是补“配置、派生索引和 Dify parity 是否完全一致”：
 
-1. **处理规则闭环不足**：需要把 KB 默认规则、文档快照、显式 reprocess、状态提示和 worker 行为统一起来。
+1. **处理规则基础闭环已完成，parity 收敛是当前重点**：KB 默认规则、文档快照、显式 reprocess、状态提示和 worker 行为已进入主线；Phase 22.8 已把 splitter 算法对齐 Dify 1.14.1，Phase 22.9 继续收敛 QA、metadata/tags、segment lifecycle 和复跑证据。
 2. **检索策略已完成基础注入**：Phase 22.3 已让 KB 级 `retrieval_model` 成为 Web Search、Retrieval Lab、MCP、Dify Adapter 的共同默认策略；Phase 22.6 已把策略配置放入 KB Settings 的“检索策略”tab。
 3. **segment 管理基础已落地**：Phase 22.4 已实现启用/禁用、override/reset、soft delete/restore 和 index rebuild 提示；Phase 22.6 已把文案和入口统一为 Segments。
-4. **summary/QA 生成闭环已进入 UI 可用阶段**：Phase 22.5 完成手动/CSV/mock/LLM 显式触发；Phase 22.6 已把 QA 与 Summary 放入文档右侧独立面板。后续重点是批量任务、失败重试和更细的命中解释可视化。
+4. **summary/QA 生成闭环已进入 UI 可用阶段**：Phase 22.5 完成手动/CSV/mock/LLM 显式触发；Phase 22.6 已把 QA 与 Summary 放入文档右侧独立面板；Phase n+2 将继续补齐正文生成 QA pair 与 Dify Adapter QA parity。
+5. **图片与附件检索是下一块大工程**：Dify 1.14.1 使用 `UploadFile` + `SegmentAttachmentBinding` 绑定图片到 segment，并在 vision-capable embedding 下建立 image vector；OpenKB 后续按 `docs/31` 对齐 asset-to-segment 绑定、image metadata、回源和可选 image vector。
 
 当前 UI 截图基于本地真实服务生成，覆盖 KB 处理配置、文档处理快照和搜索命中解释：
 
@@ -178,14 +179,16 @@ OpenKB 当前已经进入 Phase 22 的 schema/API 基础阶段：Dify 风格字�
 
 ![OpenKB Search Result](assets/openkb-search.png)
 
-## 后续分步开发计划
+## Phase 22 已完成拆分与历史计划
 
-### Phase 22.2 — Dify 风格分块与显式 reprocess
+以下拆分用于追溯 Phase 22 的实现路径。新的后续路线以 `docs/31-dify-parity-next-phases.zh-CN.md` 为准。
 
-- 完整落地 `automatic/custom/hierarchical` 参数。
-- 文档保存处理规则快照，内容或规则变更后标记 `needs_reprocess`。
-- 实现 reprocess job，重建 PostgreSQL chunks，但不自动切 Milvus alias。
-- 父子模式支持 paragraph parent 与 full-doc parent 的端到端测试。
+### Phase 22.2 / 22.8 — Dify 风格分块与显式 reprocess
+
+- Phase 22.2 已完成显式 reprocess、处理快照和 parent/full-doc 基础闭环。
+- Phase 22.8 已将新建或显式 reprocess 后的 splitter 默认切到 Dify 1.14.1-compatible recursive splitter。
+- 旧 chunks 不自动迁移；Milvus 仍需显式 blue-green index rebuild。
+- Parity 验收以 `docs/30` 和 `scripts/parity` 的小型 golden fixtures / 大样本报告为准。
 
 ### Phase 22.3 — KB 级 retrieval_model 注入
 
@@ -214,6 +217,12 @@ OpenKB 当前已经进入 Phase 22 的 schema/API 基础阶段：Dify 风格字�
 - 已完成 KB Settings Dify-like tabs：处理模式、分块规则、检索策略、metadata、摘要、重处理。
 - 已完成文档右侧大纲、处理快照、Segments、QA、Summary、Metadata、Versions 的面板层级。
 - 页面风格保持 OpenKB 自己的产品设计，但知识库/文档处理信息层级与 Dify 1.14.1 对齐。
+
+### Phase 22.8 / 22.9 — Parity v2 修复
+
+- 默认 splitter 对齐 Dify 1.14.1 后端，而不是只对齐字段名。
+- QA 对外 Dify Adapter 按 Dify 风格暴露 question/answer metadata；Web 继续 answer-first。
+- 文档 metadata 是 Dify `metadata_condition` 的业务真相；chunk 技术字段保留为诊断 metadata。
 
 ## 明确不对齐项
 

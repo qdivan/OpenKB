@@ -47,12 +47,30 @@ describe("i18n helpers", () => {
     expect(translate("zh-CN", "Probe")).toBe("检测");
     expect(translate("zh-CN", "Search and index controls")).toBe("搜索与索引控制");
     expect(translate("zh-CN", "Enable database setting")).toBe("启用数据库配置");
-    expect(translate("zh-CN", "No chunks for this document")).toBe("此文档暂无分块");
+    expect(translate("zh-CN", "No chunks for this document")).toBe("此文档暂无分段");
     expect(translate("zh-CN", "Open document")).toBe("打开文档");
     expect(translate("zh-CN", "status: {value}", { value: "active" })).toBe("状态：active");
     expect(translate("zh-CN", "visibility: {value}", { value: "workspace" })).toBe(
       "可见性：workspace"
     );
     expect(translate("zh-CN", "Embedding batch size help")).toContain("不是并行请求数");
+  });
+
+  it("keeps Dify and Yuque overlapping terminology aligned", () => {
+    expect(translate("zh-CN", "Segments")).toBe("分段");
+    expect(translate("zh-CN", "Chunks")).toBe("分段");
+    expect(translate("zh-CN", "Metadata")).toBe("元数据");
+    expect(translate("zh-CN", "Retrieval policy")).toBe("检索设置");
+    expect(translate("zh-CN", "Search method")).toBe("检索方法");
+    expect(translate("zh-CN", "Semantic search")).toBe("向量检索");
+    expect(translate("zh-CN", "Full text search")).toBe("全文检索");
+    expect(translate("zh-CN", "Hybrid search")).toBe("混合检索");
+    expect(translate("zh-CN", "Keyword search")).toBe("关键词");
+    expect(translate("zh-CN", "General document")).toBe("通用");
+    expect(translate("zh-CN", "Parent-child document")).toBe("父子");
+    expect(translate("zh-CN", "QA document")).toBe("问答");
+    expect(translate("zh-CN", "Workspace name")).toBe("工作区名称");
+    expect(translate("zh-CN", "Collaborators")).toBe("协作者");
+    expect(translate("zh-CN", "External Knowledge ID")).toBe("外部知识库 ID");
   });
 });

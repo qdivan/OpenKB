@@ -1,13 +1,17 @@
 # 14 — UI 路由和页面
 
-本文档区分当前已实现页面和后续计划页面，避免把完整产品体验误认为 v0.3.x 已完成能力。
+本文记录当前 OpenKB Web 页面结构。OpenKB 的视觉风格保持自己的紧凑工作台设计，但知识库处理、分块、检索、QA、summary 和 metadata 的信息层级正在对齐 Dify 1.14.1。
 
-## 1. 已实现页面
+## 1. 已实现路由
 
 ```text
+/
 /login
 /register
 /verify-email
+/password-reset
+/invite/:token
+/share/:token
 /app
 /app/workspaces
 /app/workspaces/:workspaceId
@@ -17,6 +21,7 @@
 /app/admin
 /app/admin/users
 /app/admin/auth-settings
+/app/admin/email
 /app/admin/retrieval
 /app/admin/models
 /app/admin/import-tools
@@ -24,100 +29,97 @@
 /app/admin/dify
 /app/admin/mcp
 /app/admin/audit
-/password-reset
-/invite/:token
-/share/:token
+/app/admin/security
 ```
 
-Phase 13 起，未选中文档时 `/app/kb/:kbId` 展示知识库 Dashboard；选中文档后进入 Yuque-like 文档编辑器：左侧文档树、中心文档编辑器、右侧 outline，并支持 Read/Edit/Source、自动保存、上传导入、搜索入口和发布状态切换。
+`/app/kb/:kbId` 是知识库首页；选中文档后进入 `/app/kb/:kbId/docs/:docId`。工作台切换 workspace、KB、document 时使用软导航，不应再依赖整页刷新。
 
-## 2. 当前未实现页面
+## 2. 工作台布局
+
+主工作台：
 
 ```text
-/admin/audit-logs
+Left sidebar: workspace / knowledge base
+Document tree: folder + page
+Center: KB dashboard or document editor
+Right panel: outline / processing / segments / QA / summary / metadata / versions
+Top actions: search, settings, collaborators, share, logout
 ```
 
-当前已实现 `/app/admin`、`/app/admin/users`、`/app/admin/auth-settings`、`/app/admin/retrieval`、`/app/admin/models`、`/app/admin/import-tools`、`/app/admin/indexing`、`/app/admin/dify`、`/app/admin/mcp` 和 `/app/admin/audit` 页面。用户管理页支持账号创建、激活/停用/软删除、租户角色、密码重置链接、会话撤销和账号审计入口。Models 页面是实例级 `system_admin` 配置中心，Import Tools 页面是实例级 `system_admin` 导入工具配置中心；Admin 页面不显示“给某个知识库单独配置模型或导入工具”的入口。Phase 17 起，Admin 运维页提供 Auth Settings、Audit Logs、Indexing、Dify key/mapping 和 MCP PAT/OAuth client/grant 管理入口。
+文档编辑页支持：
 
-管理员创建账号时，用户管理页展示的是“欢迎设置密码”链接或邮件投递状态，而不是临时密码。系统管理员在工作台可看到实例范围内的 workspace / knowledge base 元数据；若某个私有知识库仅为“管理可见”，工作台必须显示内容未授权提示和“审计接管”入口，不能直接显示文档树或正文。
+- 阅读、编辑、源码模式。
+- Milkdown 富文本编辑，Markdown 版本仍是正文真相。
+- 自动保存、显式保存、版本冲突提示。
+- 发布/取消发布。
+- 右侧处理面板和检索派生层管理。
 
-## 3. 文档页面布局
+## 3. 知识库 Dashboard
 
-```text
-/app/kb/:kbId/docs/:docId
-  - TopBar
-  - LeftDocumentTree
-  - DocumentTitle
-  - Draft/Published state
-  - Publish/Unpublish action
-  - MilkdownEditorOrReader
-  - RightOutline
-```
+顶层 tabs：
 
-Phase 18 已实现：
+- `Overview`：文档数、发布数、segments、索引状态、最近导入和 rebuild 状态。
+- `Segments`：按文档分组展示 PostgreSQL segments，显示 active/disabled/deleted、override、summary/QA 命中类型，并提供跳转到文档侧栏管理的入口。
+- `Retrieval Lab`：使用当前 KB 默认 `retrieval_model`，允许临时覆盖 top_k、score_threshold 和 context mode；不会修改 KB 默认配置。
+- `Settings`：Dify-like 设置入口。
 
-- 文档右侧栏支持 `Outline / Chunks / Versions` 切换。
-- `Versions` 显示版本列表、Markdown 预览、行级差异摘要和 restore。
-- `Chunks` 显示当前文档的 PostgreSQL chunks，并提示发布/重建 chunks 与搜索索引。
-- 搜索页和知识库 Retrieval Lab 展示 parent / child 命中解释。
+Settings 子 tabs：
 
-## 4. 权限面板
+- `处理模式`：`doc_form`、`indexing_technique`、`process_rule_mode`、`parent_mode`、settings revision。
+- `分块规则`：automatic/custom/hierarchical 参数、parent/subchunk separator、max tokens/chars、overlap、规则预览。
+- `检索策略`：semantic/full_text/hybrid/keyword、top_k、score threshold、rerank 开关、hybrid weights。
+- `Metadata`：KB metadata schema。
+- `摘要`：summary index 配置和提示；配置本身不自动消耗 LLM。
+- `重处理`：列出 page 文档 processing 状态，逐个调用 document reprocess；Milvus index rebuild 仍需手动执行。
 
-位置：文档/知识库顶部“分享”或“协作”按钮。
+## 4. 文档右侧面板
 
-Phase 16 已实现：
+文档右侧 tabs：
 
-- 工作台顶部“协作”按钮打开 AccessPanel，默认目标为当前文档；未选中文档时为知识库；面板内可切换 Workspace / KB / Document。
-- Workspace 使用 `workspace_members`，展示成员并允许管理 `admin/member/guest`；owner 锁定，不做 owner transfer。
-- KB/document 使用 `collaborators`，展示协作者并允许管理 `manager/editor/viewer`；owner 锁定。
-- 邀请优先按邮箱创建，支持 `require_approval`、过期时间和最大使用次数；`/invite/:token` 用于登录用户接受邀请，待审批邀请需管理员批准后才授权。
-- 顶部“分享”按钮打开 SharePanel，支持只读分享链接、密码访问、登录要求、仅工作区成员、关闭分享和重置链接。
-- `/share/:token` 是最小只读页；文档分享展示只读 Markdown，知识库分享展示文档树和只读文档内容入口，workspace 分享展示共享知识库列表。
-- 前端交互禁止使用浏览器原生 `window.prompt` / `window.confirm` / `window.alert`；创建、重命名、删除、移除、未保存离开等应用内交互必须使用 OpenKB Web 弹窗。唯一例外是浏览器刷新/关闭标签页时的 `beforeunload` 未保存保护。
+- `大纲`：标题大纲。
+- `处理`：processing status、processing revision、process rule snapshot、current version id/hash、KB settings revision、发布/reprocess/index rebuild 关系说明和 Reprocess 按钮。
+- `Segments`：enable/disable、override content、reset override、soft delete/restore。所有操作只影响检索派生层，不反写 Markdown 正文。
+- `QA`：手动 QA、CSV 导入、mock/LLM 生成。QA 索引 question，Dify Adapter metadata 返回 `qa_question` / `qa_answer`，Web 可继续 answer-first 展示。
+- `Summary`：文档级和 segment 级 summary，支持 manual/mock/LLM 显式生成。Summary hit 映射回原始 active chunk。
+- `Metadata`：文档级 metadata values。
+- `Versions`：版本列表、Markdown 预览、差异摘要、restore。
 
-仍未实现：分享链接编辑权限、owner 转让、宽泛用户搜索、完整分享访问日志 UI。
+没有当前版本 active content segments 时，QA/summary/segment 操作应提示先 reprocess 文档。
 
-## 5. 知识库 Dashboard
+## 5. 协作与分享
 
-`/app/kb/:kbId` 在未选中文档时呈现知识库首页，而不是直接打开第一篇文档：
+顶部协作按钮打开 AccessPanel：
 
-```text
-/app/kb/:kbId
-  - Overview metrics
-  - Document coverage
-  - Import jobs
-  - Index status
-  - Chunk map
-  - Retrieval lab
-  - Chunk settings
-```
+- Workspace 使用 `workspace_members`，角色为 `owner/admin/member/guest`。
+- KB/document 使用 `collaborators`，角色为 `owner/manager/editor/viewer`。
+- 邮箱邀请支持过期时间、最大使用次数和审批。
+- `/invite/:token` 用于登录用户接受邀请。
 
-当前 Dashboard 已展示：
+顶部分享按钮打开 SharePanel：
 
-- 文档数、已发布文档数、chunk 数。
-- 切片是否 stale、Milvus index 是否需要重建。
-- 最近导入任务和最近 index rebuild job。
-- 切片地图：按文档、标题、段落展示 parent/child chunk。
-- 检索测试台：输入 query，选择 context mode，展示命中子块、父块上下文、raw score、rerank score。
-- Settings：管理 KB 级切片模式、段落/全文父块、父/子分隔符、max chars、overlap，并触发 chunk rebuild。
+- 只读分享链接。
+- 密码访问。
+- 登录要求。
+- 仅 workspace member。
+- 关闭分享和重置链接。
+- `/share/:token` 是最小只读页面；v0.x 不提供分享链接编辑权限。
 
-## 6. 知识库设置页
+前端禁止使用浏览器原生 `window.prompt`、`window.confirm`、`window.alert`。应用内交互必须使用 OpenKB Web dialog；唯一例外是浏览器刷新/关闭标签页时的 `beforeunload` 未保存保护。
 
-知识库 owner/manager 可以管理：
+## 6. Admin 控制台
 
-- 标题。
-- 描述。
-- 公开性。
-- 协作者。
-- 邀请/分享。
-- 目录。
-- 只读查看索引状态和切片状态。
+Admin 页面包括：
 
-不能管理：
+- Users：账号创建、欢迎设置密码邮件、激活/停用/软删除、租户角色、会话撤销和审计。
+- Auth Settings：注册、邮箱验证、邀请必需、默认状态、域名白名单。
+- Email：SMTP 配置、测试发送、outbox 状态和重试。
+- Retrieval：检索状态和探测。
+- Models：实例级 embedding/rerank/LLM 配置；仅 `system_admin` 可保存 secret。
+- Import Tools：实例级 MarkItDown/MinerU/Pandoc/Tesseract OCR 路由；仅 `system_admin` 可保存 secret。
+- Indexing：Milvus health、profiles、rebuild jobs、alias switch。
+- Dify：Dify API key、mapping、allowed KB、配置向导和可过滤 metadata 字段。
+- MCP：PAT、OAuth clients、grants。
+- Audit：完整审计列表和过滤。
+- Security：secrets 状态、轮换提示和运维安全入口。
 
-- Embedding 模型。
-- Rerank 模型。
-- LLM 模型。
-- Milvus collection。
-
-模型 secret、endpoint 和 model 配置只属于 `system_admin`；`tenant_admin` 可以查看检索状态但不能保存 Models 配置。Milvus 和检索模式仍是 admin 控制面能力。
+Admin 配置不是内容权限。管理员能管理元数据，但不能默认读取所有私有正文；紧急内容接管必须显式确认并写 audit。

@@ -111,7 +111,7 @@ Example pattern:
 
 ```bash
 kubectl run openkb-migrate --rm -it --restart=Never \
-  --image=openkb:phase-11 \
+  --image=openkb:phase-22 \
   --env-from=configmap/openkb-config \
   --env-from=secret/openkb-secret \
   -- pnpm db:migrate

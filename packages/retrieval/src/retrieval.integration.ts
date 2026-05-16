@@ -256,6 +256,7 @@ async function createChunkForSeedDocument(
     workspaceId: string;
     knowledgeBaseId: string;
     documentId: string;
+    userId: string;
   },
   contentText: string,
   tags: string[] = []
@@ -293,6 +294,54 @@ async function createChunkForSeedDocument(
       }
     }
   });
+
+  if (tags.length > 0) {
+    const field = await prismaClient.knowledgeBaseMetadataField.upsert({
+      where: {
+        knowledge_base_id_name: {
+          knowledge_base_id: seed.knowledgeBaseId,
+          name: "tags"
+        }
+      },
+      create: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        name: "tags",
+        type: "string",
+        status: "active",
+        sort_order: 0,
+        created_by: seed.userId,
+        updated_by: seed.userId
+      },
+      update: {
+        status: "active",
+        updated_by: seed.userId
+      }
+    });
+    await prismaClient.documentMetadataValue.upsert({
+      where: {
+        document_id_field_id: {
+          document_id: seed.documentId,
+          field_id: field.id
+        }
+      },
+      create: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        document_id: seed.documentId,
+        field_id: field.id,
+        value: tags,
+        updated_by: seed.userId
+      },
+      update: {
+        value: tags,
+        updated_by: seed.userId,
+        updated_at: new Date()
+      }
+    });
+  }
 }
 
 async function indexCurrentChunks(

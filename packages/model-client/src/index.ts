@@ -12,14 +12,20 @@ export const DEFAULT_LANGUAGE_ENDPOINT = "https://api.openai.com/v1/responses";
 export const DEFAULT_OPENAI_CHAT_COMPLETIONS_ENDPOINT =
   "https://api.openai.com/v1/chat/completions";
 export const DEFAULT_ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages";
+export const DEFAULT_DASHSCOPE_MULTIMODAL_EMBEDDING_ENDPOINT =
+  "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding";
+export const DEFAULT_DASHSCOPE_TEXT_RERANK_ENDPOINT =
+  "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank";
 
 export const MODEL_KINDS = ["embedding", "rerank", "language"] as const;
 export const MODEL_PROVIDERS = [
   "openai_compatible",
+  "dashscope",
   "openai_responses",
   "openai_chat_completions",
   "anthropic_messages"
 ] as const;
+export const EMBEDDING_RERANK_MODEL_PROVIDERS = ["openai_compatible", "dashscope"] as const;
 export const LANGUAGE_MODEL_PROVIDERS = [
   "openai_responses",
   "openai_chat_completions",
@@ -76,8 +82,10 @@ export type StoredModelSetting = {
   capabilities_detected_at?: Date | string | null;
 };
 
+export type EmbeddingRerankModelProvider = (typeof EMBEDDING_RERANK_MODEL_PROVIDERS)[number];
+
 export type EmbeddingConfig = {
-  provider: "openai_compatible";
+  provider: EmbeddingRerankModelProvider;
   endpoint?: string;
   model?: string;
   apiKey?: string;
@@ -89,7 +97,7 @@ export type EmbeddingConfig = {
 };
 
 export type RerankConfig = {
-  provider: "openai_compatible";
+  provider: EmbeddingRerankModelProvider;
   endpoint?: string;
   model?: string;
   apiKey?: string;
@@ -203,18 +211,40 @@ export class OpenKBModelClient {
       return [];
     }
 
-    const body = await postJson(
-      this.fetchFn,
-      this.config.rerank.endpoint,
-      {
-        model: this.config.rerank.model,
-        query: input.query,
-        documents: input.documents
-      },
-      this.config.rerank.timeoutMs,
-      this.config.rerank.apiKey
-    );
-    const results = parseRerankResults(body, input.documents.length);
+    const body =
+      this.config.rerank.provider === "dashscope"
+        ? await postJson(
+            this.fetchFn,
+            this.config.rerank.endpoint,
+            {
+              model: this.config.rerank.model,
+              input: {
+                query: { text: input.query },
+                documents: input.documents.map((text) => ({ text }))
+              },
+              parameters: {
+                return_documents: false,
+                top_n: input.documents.length
+              }
+            },
+            this.config.rerank.timeoutMs,
+            this.config.rerank.apiKey
+          )
+        : await postJson(
+            this.fetchFn,
+            this.config.rerank.endpoint,
+            {
+              model: this.config.rerank.model,
+              query: input.query,
+              documents: input.documents
+            },
+            this.config.rerank.timeoutMs,
+            this.config.rerank.apiKey
+          );
+    const results =
+      this.config.rerank.provider === "dashscope"
+        ? parseDashScopeRerankResults(body, input.documents.length)
+        : parseRerankResults(body, input.documents.length);
     return results.sort((a, b) => b.relevance_score - a.relevance_score);
   }
 
@@ -344,23 +374,49 @@ export class OpenKBModelClient {
   }
 
   private async requestEmbeddingBatch(texts: string[]): Promise<number[][]> {
-    const body = await postJson(
-      this.fetchFn,
-      this.config.embedding.endpoint,
-      {
-        model: this.config.embedding.model,
-        input: texts
-      },
-      this.config.embedding.timeoutMs,
-      this.config.embedding.apiKey
-    );
-    return parseEmbeddingResponse(body, texts.length, this.config.embedding.dim);
+    const body =
+      this.config.embedding.provider === "dashscope"
+        ? await postJson(
+            this.fetchFn,
+            this.config.embedding.endpoint,
+            {
+              model: this.config.embedding.model,
+              input: {
+                contents: texts.map((text) => ({ text }))
+              },
+              parameters: {
+                dimension: this.config.embedding.dim
+              }
+            },
+            this.config.embedding.timeoutMs,
+            this.config.embedding.apiKey
+          )
+        : await postJson(
+            this.fetchFn,
+            this.config.embedding.endpoint,
+            {
+              model: this.config.embedding.model,
+              input: texts
+            },
+            this.config.embedding.timeoutMs,
+            this.config.embedding.apiKey
+          );
+    return this.config.embedding.provider === "dashscope"
+      ? parseDashScopeEmbeddingResponse(body, texts.length, this.config.embedding.dim)
+      : parseEmbeddingResponse(body, texts.length, this.config.embedding.dim);
   }
 
   private async detectModelCapabilities(
     kind: "embedding" | "rerank"
   ): Promise<{ value: ModelCapabilities | null; detected: boolean; warnings: string[] }> {
     const config = kind === "embedding" ? this.config.embedding : this.config.rerank;
+    if (config.provider === "dashscope") {
+      return {
+        value: getDashScopeModelCapabilities(kind, config.model, this.config.embedding.dim),
+        detected: true,
+        warnings: []
+      };
+    }
     const endpoint = getModelListEndpoint(config.endpoint);
     if (!endpoint || !config.model) {
       return { value: null, detected: false, warnings: [] };
@@ -532,6 +588,9 @@ export function normalizeModelProvider(
   if (normalized === "openai") {
     return kind === "language" ? "openai_responses" : "openai_compatible";
   }
+  if (normalized === "aliyun" || normalized === "aliyun_dashscope") {
+    return "dashscope";
+  }
   if ((MODEL_PROVIDERS as readonly string[]).includes(normalized ?? "")) {
     return normalized as ModelProvider;
   }
@@ -542,7 +601,7 @@ export function isModelProviderAllowedForKind(provider: ModelProvider, kind: Mod
   if (kind === "language") {
     return (LANGUAGE_MODEL_PROVIDERS as readonly string[]).includes(provider);
   }
-  return provider === "openai_compatible";
+  return (EMBEDDING_RERANK_MODEL_PROVIDERS as readonly string[]).includes(provider);
 }
 
 export function parseEmbeddingResponse(
@@ -593,6 +652,64 @@ export function parseEmbeddingResponse(
   return rows.map((row) => row.embedding);
 }
 
+export function parseDashScopeEmbeddingResponse(
+  body: unknown,
+  expectedCount: number,
+  expectedDim: number
+): number[][] {
+  const payload = assertRecord(body, "DashScope embedding response");
+  const output = assertRecord(payload.output, "DashScope embedding response output");
+  if (!Array.isArray(output.embeddings)) {
+    throw new ModelClientError(
+      "MODEL_RESPONSE_INVALID",
+      "DashScope embedding response output.embeddings is invalid."
+    );
+  }
+
+  const rows = output.embeddings.map((item, fallbackIndex) => {
+    const row = assertRecord(item, "DashScope embedding response item");
+    const embedding = row.embedding;
+    const index = typeof row.index === "number" ? row.index : fallbackIndex;
+    if (!Number.isInteger(index) || index < 0 || index >= expectedCount) {
+      throw new ModelClientError(
+        "MODEL_RESPONSE_INVALID",
+        "DashScope embedding response index is invalid."
+      );
+    }
+    if (!Array.isArray(embedding) || !embedding.every((value) => typeof value === "number")) {
+      throw new ModelClientError(
+        "MODEL_RESPONSE_INVALID",
+        "DashScope embedding response vector is invalid."
+      );
+    }
+    if (embedding.length !== expectedDim) {
+      throw new ModelClientError(
+        "EMBEDDING_DIM_MISMATCH",
+        `Embedding dimension mismatch. Expected ${expectedDim}, got ${embedding.length}.`,
+        400,
+        {
+          expected_dim: expectedDim,
+          actual_dim: embedding.length
+        }
+      );
+    }
+    return {
+      index,
+      embedding: embedding as number[]
+    };
+  });
+
+  if (rows.length !== expectedCount) {
+    throw new ModelClientError(
+      "MODEL_RESPONSE_INVALID",
+      "DashScope embedding response count does not match input count."
+    );
+  }
+
+  rows.sort((a, b) => a.index - b.index);
+  return rows.map((row) => row.embedding);
+}
+
 export function parseRerankResults(body: unknown, documentCount: number): RerankDocumentScore[] {
   const payload = assertRecord(body, "Rerank response");
   if (!Array.isArray(payload.results)) {
@@ -613,6 +730,47 @@ export function parseRerankResults(body: unknown, documentCount: number): Rerank
     }
     if (typeof score !== "number" || !Number.isFinite(score)) {
       throw new ModelClientError("MODEL_RESPONSE_INVALID", "Rerank response score is invalid.");
+    }
+    return {
+      index,
+      relevance_score: score
+    };
+  });
+}
+
+export function parseDashScopeRerankResults(
+  body: unknown,
+  documentCount: number
+): RerankDocumentScore[] {
+  const payload = assertRecord(body, "DashScope rerank response");
+  const output = assertRecord(payload.output, "DashScope rerank response output");
+  if (!Array.isArray(output.results)) {
+    throw new ModelClientError(
+      "MODEL_RESPONSE_INVALID",
+      "DashScope rerank response output.results is invalid."
+    );
+  }
+
+  return output.results.map((item) => {
+    const row = assertRecord(item, "DashScope rerank response item");
+    const index = row.index;
+    const score = row.relevance_score ?? row.score;
+    if (
+      typeof index !== "number" ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= documentCount
+    ) {
+      throw new ModelClientError(
+        "MODEL_RESPONSE_INVALID",
+        "DashScope rerank response index is invalid."
+      );
+    }
+    if (typeof score !== "number" || !Number.isFinite(score)) {
+      throw new ModelClientError(
+        "MODEL_RESPONSE_INVALID",
+        "DashScope rerank response score is invalid."
+      );
     }
     return {
       index,
@@ -688,9 +846,11 @@ function resolveEmbeddingConfig(
   setting: StoredModelSetting | undefined
 ): EmbeddingConfig {
   if (setting?.enabled) {
+    const provider = normalizeEmbeddingRerankProvider(setting.provider);
     return {
-      provider: "openai_compatible",
-      endpoint: emptyToUndefined(setting.endpoint ?? undefined),
+      provider,
+      endpoint:
+        emptyToUndefined(setting.endpoint ?? undefined) ?? defaultEmbeddingEndpoint(provider),
       model: emptyToUndefined(setting.model ?? undefined),
       apiKey: decryptSettingApiKey(setting, env),
       source: "db",
@@ -705,9 +865,10 @@ function resolveEmbeddingConfig(
     };
   }
 
+  const provider = normalizeEmbeddingRerankProvider(env.OPENKB_EMBEDDING_REQUEST_FORMAT);
   const envConfig: EmbeddingConfig = {
-    provider: "openai_compatible",
-    endpoint: emptyToUndefined(env.OPENKB_EMBEDDING_ENDPOINT),
+    provider,
+    endpoint: emptyToUndefined(env.OPENKB_EMBEDDING_ENDPOINT) ?? defaultEmbeddingEndpoint(provider),
     model: emptyToUndefined(env.OPENKB_EMBEDDING_MODEL),
     apiKey: emptyToUndefined(env.OPENKB_EMBEDDING_API_KEY),
     source: "env",
@@ -728,9 +889,10 @@ function resolveRerankConfig(
   setting: StoredModelSetting | undefined
 ): RerankConfig {
   if (setting?.enabled) {
+    const provider = normalizeEmbeddingRerankProvider(setting.provider);
     return {
-      provider: "openai_compatible",
-      endpoint: emptyToUndefined(setting.endpoint ?? undefined),
+      provider,
+      endpoint: emptyToUndefined(setting.endpoint ?? undefined) ?? defaultRerankEndpoint(provider),
       model: emptyToUndefined(setting.model ?? undefined),
       apiKey: decryptSettingApiKey(setting, env),
       source: "db",
@@ -741,9 +903,10 @@ function resolveRerankConfig(
     };
   }
 
+  const provider = normalizeEmbeddingRerankProvider(env.OPENKB_RERANK_REQUEST_FORMAT);
   const envConfig: RerankConfig = {
-    provider: "openai_compatible",
-    endpoint: emptyToUndefined(env.OPENKB_RERANK_ENDPOINT),
+    provider,
+    endpoint: emptyToUndefined(env.OPENKB_RERANK_ENDPOINT) ?? defaultRerankEndpoint(provider),
     model: emptyToUndefined(env.OPENKB_RERANK_MODEL),
     apiKey: emptyToUndefined(env.OPENKB_RERANK_API_KEY),
     source: "env",
@@ -1121,6 +1284,25 @@ function emptyCapabilities(kind: "embedding" | "rerank"): ModelCapabilities {
   });
 }
 
+function getDashScopeModelCapabilities(
+  kind: "embedding" | "rerank",
+  model: string | undefined,
+  embeddingDim: number
+): ModelCapabilities {
+  return normalizeModelCapabilities(null, {
+    input_modalities: kind === "embedding" ? ["text", "image"] : ["text"],
+    dimensions: kind === "embedding" ? embeddingDim : null,
+    languages: ["zh", "en"],
+    provider_model_type: kind,
+    supports_batch: kind === "embedding" ? true : null,
+    raw_provider: compactRecord({
+      provider: "dashscope",
+      model,
+      request_format: kind === "embedding" ? "multimodal-embedding" : "text-rerank"
+    })
+  });
+}
+
 function mergeDetectedCapabilities(
   base: ModelCapabilities | undefined,
   detected: ModelCapabilities | null,
@@ -1229,6 +1411,23 @@ function normalizeLanguageProvider(value: string | null | undefined): LanguageCo
   return isModelProviderAllowedForKind(provider, "language")
     ? (provider as LanguageConfig["provider"])
     : "openai_responses";
+}
+
+function normalizeEmbeddingRerankProvider(
+  value: string | null | undefined
+): EmbeddingRerankModelProvider {
+  const provider = normalizeModelProvider(value, "embedding");
+  return isModelProviderAllowedForKind(provider, "embedding")
+    ? (provider as EmbeddingRerankModelProvider)
+    : "openai_compatible";
+}
+
+function defaultEmbeddingEndpoint(provider: EmbeddingRerankModelProvider): string | undefined {
+  return provider === "dashscope" ? DEFAULT_DASHSCOPE_MULTIMODAL_EMBEDDING_ENDPOINT : undefined;
+}
+
+function defaultRerankEndpoint(provider: EmbeddingRerankModelProvider): string | undefined {
+  return provider === "dashscope" ? DEFAULT_DASHSCOPE_TEXT_RERANK_ENDPOINT : undefined;
 }
 
 function defaultLanguageEndpoint(provider: LanguageConfig["provider"]): string {

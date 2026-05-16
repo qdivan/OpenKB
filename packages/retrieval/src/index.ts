@@ -295,15 +295,29 @@ export class RetrievalService {
     const modelClient = await this.createModelClient();
     const policy = await this.resolveSearchPolicy(tenantId, modelClient, normalized);
     const mode = policy.mode;
+    for (const knowledgeBaseId of normalized.knowledgeBaseIds) {
+      await this.permissions.requireCanRead(userId, "knowledge_base", knowledgeBaseId);
+    }
+
+    const documentIds = await this.resolveTagFilteredDocumentIds(
+      tenantId,
+      normalized.knowledgeBaseIds,
+      normalized.filters
+    );
+    if (documentIds && documentIds.length === 0) {
+      const contextMode = await this.resolveContextMode(
+        tenantId,
+        normalized.knowledgeBaseIds,
+        normalized.requestedContextMode
+      );
+      return this.toSearchResponse(normalized.query, policy, [], new Map(), contextMode);
+    }
+
     const queryVector = await this.embedQueryIfNeeded(
       normalized.query,
       mode.effectiveMode,
       modelClient
     );
-
-    for (const knowledgeBaseId of normalized.knowledgeBaseIds) {
-      await this.permissions.requireCanRead(userId, "knowledge_base", knowledgeBaseId);
-    }
 
     const accessPrincipals = filterRetrievalAccessPrincipals(
       await this.permissions.getAccessPrincipals(userId, tenantId)
@@ -319,7 +333,8 @@ export class RetrievalService {
         tenantId,
         accessPrincipals,
         knowledgeBaseIds: normalized.knowledgeBaseIds,
-        filters: normalized.filters,
+        documentIds,
+        filters: toMilvusCandidateFilters(normalized.filters),
         limit: policy.candidateLimit
       });
     } catch (error) {
@@ -368,11 +383,6 @@ export class RetrievalService {
     const modelClient = await this.createModelClient();
     const policy = await this.resolveSearchPolicy(tenantId, modelClient, normalized);
     const mode = policy.mode;
-    const queryVector = await this.embedQueryIfNeeded(
-      normalized.query,
-      mode.effectiveMode,
-      modelClient
-    );
     const activeKnowledgeBaseIds = await this.resolveActiveAppKnowledgeBaseIds(
       tenantId,
       normalized.knowledgeBaseIds
@@ -395,6 +405,26 @@ export class RetrievalService {
       };
     }
 
+    const documentIds = await this.resolveTagFilteredDocumentIds(
+      tenantId,
+      activeKnowledgeBaseIds,
+      normalized.filters
+    );
+    if (documentIds && documentIds.length === 0) {
+      const contextMode = await this.resolveContextMode(
+        tenantId,
+        activeKnowledgeBaseIds,
+        normalized.requestedContextMode
+      );
+      return this.toSearchResponse(normalized.query, policy, [], new Map(), contextMode);
+    }
+
+    const queryVector = await this.embedQueryIfNeeded(
+      normalized.query,
+      mode.effectiveMode,
+      modelClient
+    );
+
     let candidates: MilvusSearchChunkResult[];
     try {
       candidates = await this.getMilvus().searchScopedChunks({
@@ -404,7 +434,8 @@ export class RetrievalService {
         hybridWeights: policy.hybridWeights,
         tenantId,
         knowledgeBaseIds: activeKnowledgeBaseIds,
-        filters: normalized.filters,
+        documentIds,
+        filters: toMilvusCandidateFilters(normalized.filters),
         limit: policy.candidateLimit
       });
     } catch (error) {
@@ -1236,12 +1267,16 @@ export class RetrievalService {
       return [];
     }
 
-    const enriched = filters.metadataCondition
-      ? await this.enrichWithDocumentMetadata(candidates)
-      : candidates;
+    const enriched =
+      filters.metadataCondition || filters.tags.length > 0
+        ? await this.enrichWithDocumentMetadata(candidates)
+        : candidates;
 
     return enriched.filter((candidate) => {
       if (scoreThreshold !== undefined && normalizedScore(candidate.score) < scoreThreshold) {
+        return false;
+      }
+      if (filters.tags.length > 0 && !matchesTagsFilter(candidate.metadata, filters.tags)) {
         return false;
       }
       if (
@@ -1330,6 +1365,59 @@ export class RetrievalService {
         ...(metadataByDocumentId.get(candidate.document_id) ?? {})
       }
     }));
+  }
+
+  private async resolveTagFilteredDocumentIds(
+    tenantId: string,
+    knowledgeBaseIds: string[],
+    filters: RetrievalSearchFilters
+  ): Promise<string[] | undefined> {
+    if (filters.tags.length === 0) {
+      return undefined;
+    }
+
+    const metadataValueDelegate = this.prisma.documentMetadataValue;
+    const metadataFieldDelegate = this.prisma.knowledgeBaseMetadataField;
+    const canReadMetadataValues =
+      metadataValueDelegate &&
+      typeof metadataValueDelegate.findMany === "function" &&
+      metadataFieldDelegate &&
+      typeof metadataFieldDelegate.findMany === "function";
+    if (!canReadMetadataValues) {
+      return undefined;
+    }
+
+    const knowledgeBaseWhere =
+      knowledgeBaseIds.length > 0 ? { knowledge_base_id: { in: knowledgeBaseIds } } : {};
+
+    const fields = await metadataFieldDelegate.findMany({
+      where: {
+        tenant_id: tenantId,
+        ...knowledgeBaseWhere,
+        name: "tags",
+        status: "active"
+      },
+      select: { id: true }
+    });
+    const fieldIds = unique(fields.map((field) => field.id));
+    if (fieldIds.length === 0) {
+      return [];
+    }
+
+    const values = await metadataValueDelegate.findMany({
+      where: {
+        tenant_id: tenantId,
+        ...knowledgeBaseWhere,
+        field_id: { in: fieldIds }
+      },
+      select: { document_id: true, value: true }
+    });
+
+    return unique(
+      values
+        .filter((value) => matchesTagsFilter({ tags: value.value }, filters.tags))
+        .map((value) => value.document_id)
+    );
   }
 
   private async embedQueryIfNeeded(
@@ -2000,6 +2088,32 @@ function normalizeSearchFilters(value: unknown): RetrievalSearchFilters {
       filters.metadata_condition ?? filters.metadataCondition
     )
   };
+}
+
+function toMilvusCandidateFilters(filters: RetrievalSearchFilters): RetrievalSearchFilters {
+  return {
+    ...filters,
+    // Dify-style tags are document metadata in OpenKB. Keep tag filtering in the
+    // PostgreSQL-backed post-filter so chunk technical metadata cannot become the
+    // product truth for metadata_condition/tags parity.
+    tags: []
+  };
+}
+
+function matchesTagsFilter(metadata: Record<string, unknown>, tags: string[]): boolean {
+  if (tags.length === 0) {
+    return true;
+  }
+  const value = metadata.tags;
+  const actualTags = Array.isArray(value)
+    ? value.map((item) => String(item))
+    : typeof value === "string"
+      ? value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
+  return tags.some((tag) => actualTags.includes(tag));
 }
 
 function normalizeOptionalMetadataCondition(value: unknown): RetrievalMetadataCondition | null {
