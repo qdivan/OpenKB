@@ -79,6 +79,7 @@ Required local environment variables:
 DIFY_CONSOLE_API_BASE_URL=http://localhost:18080/console/api
 DIFY_DATASET_ID=<dify dataset id>
 DIFY_CONSOLE_TOKEN=<token>              # or DIFY_CONSOLE_COOKIE=<cookie>
+DIFY_CSRF_TOKEN=<csrf token>            # optional if DIFY_CONSOLE_COOKIE contains csrf_token
 OPENKB_API_BASE_URL=http://localhost:4101
 OPENKB_KNOWLEDGE_BASE_ID=<openkb kb id>
 OPENKB_SEARCH_COOKIE=<cookie>
@@ -95,13 +96,14 @@ DIFY_SCORE_THRESHOLD=0
 DIFY_RERANK_ENABLE=true
 DIFY_KEYWORD_WEIGHT=0.5
 DIFY_VECTOR_WEIGHT=0.5
+DIFY_EMBEDDING_PROVIDER_NAME=<dify embedding provider name>
 DIFY_EMBEDDING_MODEL=qwen3-vl-embedding
 DIFY_RERANK_PROVIDER_NAME=<dify provider name>
 DIFY_RERANK_MODEL=qwen3-vl-rerank
 DIFY_RERANK_MODE=reranking_model
 ```
 
-When rerank is enabled, Dify hit-testing needs both `DIFY_RERANK_PROVIDER_NAME` and `DIFY_RERANK_MODEL` so the request override uses the same reranking model as OpenKB. OpenKB `/api/search` is a cookie-authenticated mutation, so the script sends `x-openkb-csrf` from `OPENKB_CSRF_TOKEN` or the configured CSRF cookie name inside `OPENKB_SEARCH_COOKIE`.
+When hybrid/vector weights are sent, Dify hit-testing needs `DIFY_EMBEDDING_PROVIDER_NAME` and `DIFY_EMBEDDING_MODEL` inside `retrieval_model.weights.vector_setting`. When rerank is enabled, Dify hit-testing also needs both `DIFY_RERANK_PROVIDER_NAME` and `DIFY_RERANK_MODEL` so the request override uses the same reranking model as OpenKB. Dify console hit-testing and OpenKB `/api/search` are cookie-authenticated mutations, so the script sends `X-CSRF-Token` from `DIFY_CSRF_TOKEN` or `DIFY_CONSOLE_COOKIE`, and `x-openkb-csrf` from `OPENKB_CSRF_TOKEN` or the configured CSRF cookie name inside `OPENKB_SEARCH_COOKIE`.
 
 Run:
 

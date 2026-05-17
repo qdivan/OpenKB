@@ -16,12 +16,19 @@ import {
   type OpenKBMilvus
 } from "@openkb/milvus";
 import { PermissionService } from "@openkb/permissions";
+import {
+  createObjectStorage,
+  getObjectStorageConfig,
+  StorageConfigError,
+  type ObjectStorage
+} from "@openkb/storage";
 
 export type IndexWorkerOptions = {
   prisma?: PrismaClient;
   milvus?: OpenKBMilvus;
   permissions?: PermissionService;
   modelClient?: OpenKBModelClient;
+  storage?: ObjectStorage;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -80,6 +87,21 @@ type ChunkRow = {
   document_updated_at: Date;
 };
 
+type AssetRow = {
+  id: string;
+  tenant_id: string;
+  document_id: string | null;
+  object_key: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: bigint;
+};
+
+type DenseVectorResolution = {
+  vectors: Array<number[] | undefined>;
+  metadataOverrides: Map<string, Record<string, unknown>>;
+};
+
 export async function runRebuildOnce(options: IndexWorkerOptions = {}): Promise<IndexRunResult> {
   const prisma = options.prisma ?? createDatabaseClient();
   const permissions = options.permissions ?? new PermissionService({ prisma });
@@ -112,6 +134,7 @@ export async function runRebuildOnce(options: IndexWorkerOptions = {}): Promise<
         milvus,
         modelClient,
         job,
+        options.storage,
         options.env
       );
       return {
@@ -153,12 +176,18 @@ async function processRebuildJob(
   milvus: OpenKBMilvus,
   modelClient: OpenKBModelClient,
   job: IndexRebuildJobRow,
+  storage: ObjectStorage | undefined,
   env: NodeJS.ProcessEnv = process.env
 ): Promise<number> {
   const config = getMilvusConfig(env);
   const modelConfig = modelClient.config;
   const embeddingConfigured = isEmbeddingConfigured(modelConfig);
   const rerankConfigured = isRerankConfigured(modelConfig);
+  const embeddingCapabilities = embeddingConfigured
+    ? await modelClient
+        .resolveEmbeddingCapabilities()
+        .catch(() => modelConfig.embedding.capabilities ?? null)
+    : null;
   const now = new Date();
 
   const profile = await prisma.milvusIndexProfile.create({
@@ -179,7 +208,7 @@ async function processRebuildJob(
         embedding_endpoint_configured: embeddingConfigured,
         embedding_model: modelConfig.embedding.model ?? null,
         embedding_dim: modelConfig.embedding.dim,
-        embedding_capabilities: modelConfig.embedding.capabilities ?? null,
+        embedding_capabilities: embeddingCapabilities,
         rerank_endpoint_configured: rerankConfigured,
         rerank_model: modelConfig.rerank.model ?? null,
         rerank_capabilities: modelConfig.rerank.capabilities ?? null
@@ -197,6 +226,7 @@ async function processRebuildJob(
       milvus,
       modelClient,
       job,
+      storage,
       env
     );
     await milvus.flush(job.target_collection);
@@ -246,10 +276,10 @@ async function insertCurrentChunks(
   milvus: OpenKBMilvus,
   modelClient: OpenKBModelClient,
   job: IndexRebuildJobRow,
+  storage: ObjectStorage | undefined,
   env: NodeJS.ProcessEnv
 ): Promise<number> {
   const batchSize = parsePositiveInt(env.INDEX_WORKER_BATCH_SIZE, 100);
-  const embeddingConfigured = modelClient.embeddingConfigured;
   let offset = 0;
   let inserted = 0;
   const principalCache = new Map<string, string[]>();
@@ -260,9 +290,15 @@ async function insertCurrentChunks(
       return inserted;
     }
 
-    const denseVectors = embeddingConfigured
-      ? await modelClient.embedTexts(rows.map((row) => truncate(row.content_text, 65_535)))
-      : [];
+    const { vectors: denseVectors, metadataOverrides } = await resolveDenseVectorsForRows({
+      prisma,
+      modelClient,
+      rows,
+      storage,
+      env
+    });
+    await persistChunkMetadataOverrides(prisma, rows, metadataOverrides);
+
     const records: MilvusChunkRecord[] = [];
     for (const [index, row] of rows.entries()) {
       let accessPrincipals = principalCache.get(row.document_id);
@@ -270,11 +306,208 @@ async function insertCurrentChunks(
         accessPrincipals = await permissions.getObjectAccessPrincipals("document", row.document_id);
         principalCache.set(row.document_id, accessPrincipals);
       }
-      records.push(toMilvusChunkRecord(row, accessPrincipals, denseVectors[index]));
+      records.push(
+        toMilvusChunkRecord(
+          row,
+          accessPrincipals,
+          denseVectors[index],
+          metadataOverrides.get(row.id)
+        )
+      );
     }
 
     inserted += await milvus.insertChunks(job.target_collection, records);
     offset += rows.length;
+  }
+}
+
+async function resolveDenseVectorsForRows(input: {
+  prisma: PrismaClient;
+  modelClient: OpenKBModelClient;
+  rows: ChunkRow[];
+  storage?: ObjectStorage;
+  env: NodeJS.ProcessEnv;
+}): Promise<DenseVectorResolution> {
+  if (!input.modelClient.embeddingConfigured) {
+    return { vectors: [], metadataOverrides: new Map() };
+  }
+
+  const rows = input.rows;
+  const vectors: Array<number[] | undefined> = new Array(rows.length);
+  const metadataOverrides = new Map<string, Record<string, unknown>>();
+  const textIndexes: number[] = [];
+  const imageCandidates: Array<{
+    index: number;
+    row: ChunkRow;
+    metadata: Record<string, unknown>;
+    assetId: string;
+  }> = [];
+
+  const imageVectorMode = normalizeImageVectorMode(input.env.OPENKB_IMAGE_VECTOR_MODE);
+  const maxBytes = parsePositiveInt(input.env.OPENKB_IMAGE_EMBED_MAX_BYTES, 10_485_760);
+  const imageCapabilityEnabled =
+    imageVectorMode === "auto" && (await modelSupportsImageEmbedding(input.modelClient));
+
+  for (const [index, row] of rows.entries()) {
+    const metadata = toSafeRecord(row.metadata);
+    if (row.index_role !== "asset_image") {
+      textIndexes.push(index);
+      continue;
+    }
+
+    if (imageVectorMode === "off") {
+      markImageFallback(metadataOverrides, row, "image_vector_off");
+      textIndexes.push(index);
+      continue;
+    }
+    if (!imageCapabilityEnabled) {
+      markImageFallback(metadataOverrides, row, "image_capability_missing");
+      textIndexes.push(index);
+      continue;
+    }
+
+    const assetId = getRecordString(metadata, "asset_id");
+    if (!assetId) {
+      markImageFallback(metadataOverrides, row, "external_image_not_fetched");
+      textIndexes.push(index);
+      continue;
+    }
+    imageCandidates.push({ index, row, metadata, assetId });
+  }
+
+  const imageInputs: Array<{ index: number; dataUri: string; text?: string }> = [];
+  if (imageCandidates.length > 0) {
+    const assetById = await readCandidateAssets(input.prisma, imageCandidates);
+    const storage = resolveObjectStorage(input.storage, input.env);
+
+    for (const candidate of imageCandidates) {
+      const asset = assetById.get(candidate.assetId);
+      if (
+        !asset ||
+        asset.tenant_id !== candidate.row.tenant_id ||
+        asset.document_id !== candidate.row.document_id
+      ) {
+        markImageFallback(metadataOverrides, candidate.row, "asset_not_bound_to_document");
+        textIndexes.push(candidate.index);
+        continue;
+      }
+      if (!isSupportedImageMime(asset.mime_type)) {
+        markImageFallback(metadataOverrides, candidate.row, "unsupported_mime_type");
+        textIndexes.push(candidate.index);
+        continue;
+      }
+      if (asset.size_bytes > BigInt(maxBytes)) {
+        markImageFallback(metadataOverrides, candidate.row, "image_too_large");
+        textIndexes.push(candidate.index);
+        continue;
+      }
+      if (!storage) {
+        markImageFallback(metadataOverrides, candidate.row, "storage_unconfigured");
+        textIndexes.push(candidate.index);
+        continue;
+      }
+
+      let body: Buffer;
+      try {
+        body = await storage.getObject({ key: asset.object_key });
+      } catch {
+        markImageFallback(metadataOverrides, candidate.row, "asset_read_failed");
+        textIndexes.push(candidate.index);
+        continue;
+      }
+
+      imageInputs.push({
+        index: candidate.index,
+        dataUri: `data:${asset.mime_type};base64,${body.toString("base64")}`,
+        text: truncate(candidate.row.content_text, 4096)
+      });
+    }
+  }
+
+  if (imageInputs.length > 0) {
+    try {
+      const imageVectors = await input.modelClient.embedImages(
+        imageInputs.map((image) => ({ dataUri: image.dataUri, text: image.text }))
+      );
+      for (const [offset, image] of imageInputs.entries()) {
+        vectors[image.index] = imageVectors[offset];
+        markImageVectorEnabled(
+          metadataOverrides,
+          rows[image.index],
+          input.modelClient.config.embedding.model
+        );
+      }
+    } catch {
+      for (const image of imageInputs) {
+        const row = rows[image.index];
+        if (!row) {
+          continue;
+        }
+        markImageFallback(metadataOverrides, row, "image_vector_failed");
+        textIndexes.push(image.index);
+      }
+    }
+  }
+
+  if (textIndexes.length > 0) {
+    const textVectors = await input.modelClient.embedTexts(
+      textIndexes.map((index) => truncate(rows[index]!.content_text, 65_535))
+    );
+    for (const [offset, index] of textIndexes.entries()) {
+      vectors[index] = textVectors[offset];
+    }
+  }
+
+  return { vectors, metadataOverrides };
+}
+
+async function readCandidateAssets(
+  prisma: PrismaClient,
+  candidates: Array<{ assetId: string; row: ChunkRow }>
+): Promise<Map<string, AssetRow>> {
+  const assetIds = unique(candidates.map((candidate) => candidate.assetId));
+  if (assetIds.length === 0) {
+    return new Map();
+  }
+
+  const assets = (await prisma.documentAsset.findMany({
+    where: {
+      id: { in: assetIds },
+      tenant_id: { in: unique(candidates.map((candidate) => candidate.row.tenant_id)) }
+    },
+    select: {
+      id: true,
+      tenant_id: true,
+      document_id: true,
+      object_key: true,
+      filename: true,
+      mime_type: true,
+      size_bytes: true
+    }
+  })) as AssetRow[];
+
+  return new Map(assets.map((asset) => [asset.id, asset]));
+}
+
+async function persistChunkMetadataOverrides(
+  prisma: PrismaClient,
+  rows: ChunkRow[],
+  metadataOverrides: Map<string, Record<string, unknown>>
+): Promise<void> {
+  for (const row of rows) {
+    const override = metadataOverrides.get(row.id);
+    if (!override) {
+      continue;
+    }
+    await prisma.documentChunk.update({
+      where: { id: row.id },
+      data: {
+        metadata: {
+          ...toSafeRecord(row.metadata),
+          ...override
+        } as Prisma.InputJsonObject
+      }
+    });
   }
 }
 
@@ -372,7 +605,8 @@ async function markJobFailed(
 function toMilvusChunkRecord(
   row: ChunkRow,
   accessPrincipals: string[],
-  denseVector?: number[]
+  denseVector?: number[],
+  metadataOverride?: Record<string, unknown>
 ): MilvusChunkRecord {
   const record: MilvusChunkRecord = {
     id: row.id,
@@ -388,7 +622,7 @@ function toMilvusChunkRecord(
     heading_path: row.heading_path ?? [],
     content_text: truncate(row.content_text, 65_535),
     content_markdown: truncate(row.content_markdown, 65_535),
-    metadata: normalizeMetadata(row),
+    metadata: normalizeMetadata(row, metadataOverride),
     access_principals: accessPrincipals,
     created_at: row.created_at.getTime(),
     updated_at: row.document_updated_at.getTime()
@@ -399,26 +633,33 @@ function toMilvusChunkRecord(
   return record;
 }
 
-function normalizeMetadata(row: ChunkRow): Record<string, unknown> {
+function normalizeMetadata(
+  row: ChunkRow,
+  metadataOverride: Record<string, unknown> = {}
+): Record<string, unknown> {
   const sourceMetadata =
     typeof row.metadata === "object" && row.metadata !== null
       ? (row.metadata as Record<string, unknown>)
       : {};
+  const metadata = {
+    ...sourceMetadata,
+    ...metadataOverride
+  };
   const hitType =
-    typeof sourceMetadata.hit_type === "string"
-      ? sourceMetadata.hit_type
+    typeof metadata.hit_type === "string"
+      ? metadata.hit_type
       : row.index_role === "summary"
         ? "summary"
-        : sourceMetadata.qa_pair_id
+        : metadata.qa_pair_id
           ? "qa"
           : "content";
   const originalChunkId =
-    typeof sourceMetadata.original_chunk_id === "string"
-      ? sourceMetadata.original_chunk_id
+    typeof metadata.original_chunk_id === "string"
+      ? metadata.original_chunk_id
       : (row.source_chunk_id ?? row.id);
 
   return {
-    ...sourceMetadata,
+    ...metadata,
     ordinal: row.ordinal,
     token_count: row.token_count,
     chunk_type: row.chunk_type,
@@ -438,7 +679,7 @@ function normalizeMetadata(row: ChunkRow): Record<string, unknown> {
     index_role: row.index_role,
     source_chunk_id: row.source_chunk_id,
     hit_type: hitType,
-    summary_hit: sourceMetadata.summary_hit === true || row.index_role === "summary",
+    summary_hit: metadata.summary_hit === true || row.index_role === "summary",
     original_chunk_id: originalChunkId
   };
 }
@@ -493,6 +734,96 @@ function toStoredModelSetting(setting: {
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = value ? Number(value) : fallback;
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeImageVectorMode(value: string | undefined): "auto" | "off" {
+  return value?.trim().toLowerCase() === "off" ? "off" : "auto";
+}
+
+async function modelSupportsImageEmbedding(modelClient: OpenKBModelClient): Promise<boolean> {
+  let modalities = modelClient.config.embedding.capabilities?.input_modalities ?? [];
+  try {
+    modalities = (await modelClient.resolveEmbeddingCapabilities()).input_modalities;
+  } catch {
+    // Keep configured capabilities as the offline fallback.
+  }
+  return modalities.map((modality) => modality.toLowerCase()).includes("image");
+}
+
+function isSupportedImageMime(mimeType: string | null | undefined): boolean {
+  if (!mimeType) {
+    return false;
+  }
+  const normalized = mimeType.toLowerCase();
+  return (
+    normalized === "image/png" ||
+    normalized === "image/jpeg" ||
+    normalized === "image/jpg" ||
+    normalized === "image/webp" ||
+    normalized === "image/gif"
+  );
+}
+
+function resolveObjectStorage(storage: ObjectStorage | undefined, env: NodeJS.ProcessEnv) {
+  if (storage) {
+    return storage;
+  }
+  try {
+    return createObjectStorage(getObjectStorageConfig(env));
+  } catch (error) {
+    if (error instanceof StorageConfigError) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function markImageVectorEnabled(
+  metadataOverrides: Map<string, Record<string, unknown>>,
+  row: ChunkRow | undefined,
+  model: string | undefined
+): void {
+  if (!row) {
+    return;
+  }
+  mergeMetadataOverride(metadataOverrides, row.id, {
+    image_vector_enabled: true,
+    image_vector_source: "image",
+    image_vector_model: model ?? null,
+    image_vector_fallback_reason: null
+  });
+}
+
+function markImageFallback(
+  metadataOverrides: Map<string, Record<string, unknown>>,
+  row: ChunkRow,
+  reason: string
+): void {
+  mergeMetadataOverride(metadataOverrides, row.id, {
+    image_vector_enabled: false,
+    image_vector_source: "text",
+    image_vector_fallback_reason: reason
+  });
+}
+
+function mergeMetadataOverride(
+  metadataOverrides: Map<string, Record<string, unknown>>,
+  chunkId: string,
+  override: Record<string, unknown>
+): void {
+  metadataOverrides.set(chunkId, {
+    ...(metadataOverrides.get(chunkId) ?? {}),
+    ...override
+  });
+}
+
+function getRecordString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function unique<T extends string>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
 function truncate(value: string, maxLength: number): string {

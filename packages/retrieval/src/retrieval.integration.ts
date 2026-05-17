@@ -29,6 +29,7 @@ const allTables = [
   "milvus_index_profiles",
   "import_format_routes",
   "import_tool_settings",
+  "document_asset_bindings",
   "document_chunks",
   "import_jobs",
   "share_links",
@@ -228,6 +229,174 @@ describe("retrieval service integration", () => {
     ).rejects.toBeInstanceOf(PermissionError);
   });
 
+  it("hydrates image hits back to the original source segment and safe asset metadata", async () => {
+    const seed = await seedDev({ prisma });
+    const sourceChunk = await createChunkForSeedDocument(
+      prisma,
+      seed,
+      "Original segment describes a product dashboard screenshot."
+    );
+    const asset = await prisma.documentAsset.create({
+      data: {
+        tenant_id: seed.tenantId,
+        document_id: seed.documentId,
+        object_key: "tenants/test/assets/dashboard.png",
+        filename: "dashboard.png",
+        mime_type: "image/png",
+        size_bytes: BigInt(512),
+        checksum_sha256: "image-checksum",
+        metadata: { source: "retrieval-test" },
+        created_by: seed.userId
+      }
+    });
+    const assetBindingId = randomUUID();
+    const imageChunk = await prisma.documentChunk.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        document_id: seed.documentId,
+        version_id: sourceChunk.version_id,
+        ordinal: 1,
+        heading_path: ["Welcome to OpenKB"],
+        content_text: "dashboard screenshot png product metrics",
+        content_markdown: "![dashboard](asset://dashboard.png)",
+        token_count: 8,
+        index_role: "asset_image",
+        source_chunk_id: sourceChunk.id,
+        metadata: {
+          hit_type: "image",
+          asset_id: asset.id,
+          asset_binding_id: assetBindingId,
+          asset_kind: "image",
+          asset_filename: asset.filename,
+          asset_mime_type: asset.mime_type,
+          source_chunk_id: sourceChunk.id,
+          original_chunk_id: sourceChunk.id
+        }
+      }
+    });
+    await prisma.$executeRaw`
+      INSERT INTO document_asset_bindings (
+        id, tenant_id, workspace_id, knowledge_base_id, document_id, version_id, chunk_id,
+        asset_id, kind, filename, mime_type, size_bytes, raw_url, status, metadata
+      )
+      VALUES (
+        ${assetBindingId}::uuid, ${seed.tenantId}::uuid, ${seed.workspaceId}::uuid, ${seed.knowledgeBaseId}::uuid,
+        ${seed.documentId}::uuid, ${sourceChunk.version_id}::uuid, ${sourceChunk.id}::uuid,
+        ${asset.id}::uuid, 'image', ${asset.filename}, ${asset.mime_type}, ${asset.size_bytes},
+        'asset://dashboard.png', 'active', ${JSON.stringify({ asset_chunk_id: imageChunk.id })}::jsonb
+      )
+    `;
+    await indexCurrentChunks(seed, milvus, permissions);
+
+    const response = await retrieval.search({
+      user: { user: { id: seed.userId }, tenantId: seed.tenantId },
+      query: "png metrics",
+      knowledge_base_ids: [seed.knowledgeBaseId],
+      top_k: 10,
+      filters: {}
+    });
+
+    expect(response.results[0]).toMatchObject({
+      chunk_id: imageChunk.id,
+      content: expect.stringContaining("Original segment"),
+      metadata: expect.objectContaining({
+        hit_type: "image",
+        asset_id: asset.id,
+        asset_filename: "dashboard.png",
+        asset_mime_type: "image/png",
+        doc_type: "image",
+        segment_attachment_id: expect.any(String),
+        attachment_info: expect.objectContaining({
+          id: asset.id,
+          name: "dashboard.png",
+          extension: ".png",
+          mime_type: "image/png"
+        }),
+        source_chunk_id: sourceChunk.id,
+        original_chunk_id: sourceChunk.id,
+        asset_match_text: expect.stringContaining("dashboard screenshot")
+      })
+    });
+    expect(JSON.stringify(response.results[0]?.metadata)).not.toContain("object_key");
+
+    const bindingId = String(response.results[0]?.metadata.asset_binding_id);
+    await prisma.documentAssetBinding.update({
+      where: { id: bindingId },
+      data: { status: "deleted" }
+    });
+    const afterBindingDelete = await retrieval.search({
+      user: { user: { id: seed.userId }, tenantId: seed.tenantId },
+      query: "png metrics",
+      knowledge_base_ids: [seed.knowledgeBaseId],
+      top_k: 10,
+      filters: {}
+    });
+    expect(afterBindingDelete.results.map((item) => item.chunk_id)).not.toContain(imageChunk.id);
+  });
+
+  it("does not return previews for internal asset hits that are still pending", async () => {
+    const seed = await seedDev({ prisma });
+    const sourceChunk = await createChunkForSeedDocument(
+      prisma,
+      seed,
+      "Original segment does not mention the orphan private png token."
+    );
+    const asset = await prisma.documentAsset.create({
+      data: {
+        tenant_id: seed.tenantId,
+        document_id: null,
+        object_key: "tenants/test/assets/orphan.png",
+        filename: "orphan.png",
+        mime_type: "image/png",
+        size_bytes: BigInt(512),
+        checksum_sha256: "orphan-image-checksum",
+        metadata: { source: "retrieval-test" },
+        created_by: seed.userId
+      }
+    });
+    const imageChunk = await prisma.documentChunk.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        document_id: seed.documentId,
+        version_id: sourceChunk.version_id,
+        ordinal: 1,
+        heading_path: ["Welcome to OpenKB"],
+        content_text: "orphan private png pending image asset",
+        content_markdown: "![orphan](asset://orphan.png)",
+        token_count: 7,
+        index_role: "asset_image",
+        source_chunk_id: sourceChunk.id,
+        metadata: {
+          hit_type: "image",
+          asset_id: asset.id,
+          asset_binding_id: randomUUID(),
+          asset_kind: "image",
+          asset_filename: asset.filename,
+          asset_mime_type: asset.mime_type,
+          source_chunk_id: sourceChunk.id,
+          original_chunk_id: sourceChunk.id
+        }
+      }
+    });
+    await indexCurrentChunks(seed, milvus, permissions);
+
+    const response = await retrieval.search({
+      user: { user: { id: seed.userId }, tenantId: seed.tenantId },
+      query: "orphan private png",
+      knowledge_base_ids: [seed.knowledgeBaseId],
+      top_k: 10,
+      filters: {}
+    });
+
+    expect(response.results.some((result) => result.chunk_id === imageChunk.id)).toBe(false);
+    expect(JSON.stringify(response.results)).not.toContain(asset.id);
+    expect(JSON.stringify(response.results)).not.toContain("asset_preview_url");
+  });
+
   it("reports SEARCH_INDEX_NOT_READY when the active alias is missing", async () => {
     const seed = await seedDev({ prisma });
     const missingAliasMilvus = createOpenKBMilvus({
@@ -276,7 +445,7 @@ async function createChunkForSeedDocument(
     }
   });
 
-  await prismaClient.documentChunk.create({
+  const created = await prismaClient.documentChunk.create({
     data: {
       tenant_id: seed.tenantId,
       workspace_id: seed.workspaceId,
@@ -342,6 +511,8 @@ async function createChunkForSeedDocument(
       }
     });
   }
+
+  return created;
 }
 
 async function indexCurrentChunks(
@@ -355,16 +526,19 @@ async function indexCurrentChunks(
   permissionService: PermissionService
 ) {
   const collectionName = `openkb_chunks_retrieval_${randomUUID().replace(/-/g, "_")}`;
-  const chunk = await prisma.documentChunk.findFirstOrThrow({
+  const chunks = await prisma.documentChunk.findMany({
     where: { document_id: seed.documentId },
     orderBy: { ordinal: "asc" }
   });
+  if (chunks.length === 0) {
+    throw new Error("Seed document is missing chunks.");
+  }
   const document = await prisma.document.findUniqueOrThrow({ where: { id: seed.documentId } });
   const accessPrincipals = await permissionService.getObjectAccessPrincipals(
     "document",
     seed.documentId
   );
-  const record: MilvusChunkRecord = {
+  const records: MilvusChunkRecord[] = chunks.map((chunk) => ({
     id: chunk.id,
     chunk_id: chunk.id,
     tenant_id: seed.tenantId,
@@ -382,10 +556,10 @@ async function indexCurrentChunks(
     access_principals: accessPrincipals,
     created_at: chunk.created_at.getTime(),
     updated_at: document.updated_at.getTime()
-  };
+  }));
 
   await milvusClient.createChunkCollection(collectionName);
-  await milvusClient.insertChunks(collectionName, [record]);
+  await milvusClient.insertChunks(collectionName, records);
   await milvusClient.flush(collectionName);
   await milvusClient.loadCollection(collectionName);
   await milvusClient.switchAlias("openkb_chunks_active", collectionName);

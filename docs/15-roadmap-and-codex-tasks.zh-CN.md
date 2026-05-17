@@ -314,10 +314,12 @@ Phase 20 实现落点：
 已完成：
 - Phase 22.2-22.6：基础闭环已完成，包括显式 reprocess、retrieval_model 注入、segment 管理、QA/summary 和 Web 信息层级。
 - Phase 22.8：Dify-compatible splitter 与 parity v2 工程基线已接入；旧 chunks 不自动迁移，显式 reprocess 后才使用新 splitter。
-- Phase 22.9：已收敛 raw/Milkdown/indexed 输入对照、QA Dify Adapter 语义、metadata/tags 文档 metadata 真相、segment lifecycle 证据；同模型 live retrieval parity 仍需在 Dify/OpenKB 同 corpus、同模型、同开关环境下复跑。
+- Phase 22.9：已收敛 raw/Milkdown/indexed 输入对照、QA Dify Adapter 语义、metadata/tags 文档 metadata 真相和 segment lifecycle 证据。
+- Phase 23：低风险兼容补齐已完成，chunk 参数 round-trip、parent/child overlap、默认 processing snapshot 和 doc_form 切换后的 `needs_reprocess` 行为都已进入测试基线。
+- Phase 24：QA parity 已收口，manual/CSV/mock/LLM 都进入 `document_qa_pairs`；`qa_model` reprocess 只索引 active QA pairs；Dify Adapter 返回 Dify 风格 QA 内容，Web/MCP 保持 answer-first 但保留同一套 metadata。
+- Phase 25：图片与附件检索底座已接入，`document_asset_bindings`、Markdown `asset://` 解析、asset-derived chunks、image vector/text fallback、检索回源和 Dify/Web metadata 已形成闭环；同模型 live retrieval parity 和 image-capable smoke 已完成本机验收。
 
 后续路线：
-- `docs/31-dify-parity-next-phases.zh-CN.md` 是 Phase 22.9 之后的唯一后续路线入口。
-- Phase n+1：低风险兼容补齐，聚焦 chunk 参数 UI/API、默认 process snapshot、parent/child overlap 展示与三种 doc_form 的 reprocess 一致性。
-- Phase n+2：QA parity，保持 LLM 显式触发，确保 `qa_model` import/reprocess 只索引当前 active QA pairs，并让 Dify Adapter/Web/MCP 的 QA 返回语义稳定分流。
-- Phase n+3：图片与附件检索，按 Dify 1.14.1 的 `UploadFile` + `SegmentAttachmentBinding` 逻辑对齐 OpenKB asset-to-segment 绑定、image metadata、回源和可选 image vector。
+- `docs/31-dify-parity-next-phases.zh-CN.md` 现在作为 Phase 23-25 收口记录和后续验证入口。
+- 后续重点转为发布后观察、Top-k 排序差异归因和旧派生数据手动 reprocess + Milvus rebuild runbook。
+- 多模态后续增强可以继续扩展更多图片格式、附件预览和 OCR/caption 质量，但 Phase 25 的内部图片 asset binding、image vector 与回源 metadata 已通过 smoke。

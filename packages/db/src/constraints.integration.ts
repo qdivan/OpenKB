@@ -34,6 +34,7 @@ const allTables = [
   "document_summaries",
   "document_segment_summaries",
   "document_qa_pairs",
+  "document_asset_bindings",
   "document_chunks",
   "knowledge_base_chunk_settings",
   "import_jobs",
@@ -171,6 +172,17 @@ describe("OpenKB PostgreSQL constraints", () => {
         [base.tenantId, base.documentId, randomUUID(), base.userId]
       )
     ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("allows mock QA pairs as generated QA source", async () => {
+    const base = await insertBaseRows();
+
+    await expect(
+      pool.query(
+        "INSERT INTO document_qa_pairs (tenant_id, workspace_id, knowledge_base_id, document_id, question, answer, source, status, created_by, created_at, updated_at) VALUES ($1, $2, $3, $4, 'Q?', 'A.', 'mock', 'active', $5, now(), now())",
+        [base.tenantId, base.workspaceId, base.knowledgeBaseId, base.documentId, base.userId]
+      )
+    ).resolves.toBeTruthy();
   });
 
   it("allows only one instance-default auth_settings row", async () => {

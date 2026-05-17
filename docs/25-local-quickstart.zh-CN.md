@@ -186,8 +186,8 @@ docker compose -f deploy/docker-compose/compose.yml down -v
 - Redis 已作为部署基线服务提供，但当前 workers 仍通过 PostgreSQL 轮询任务表。
 - OpenKB 默认仍可只读环境变量；如使用 `/app/admin/models`，只有 `system_admin` 可以保存实例级加密模型 secret。数据库不得保存明文 provider key，也不提供知识库级模型配置。
 - 如果 Web 登录后回到登录页，先检查 `APP_BASE_URL`、`AUTH_COOKIE_SECURE` 和浏览器访问协议是否一致。
-## Phase 22 本地验收补充
+## Phase 25 本地验收补充
 
-`/health.phase` 只说明当前构建显示的阶段，不等同于升级验收。确认 Phase 22
-环境时，还要检查 `0014`、`0015`、`0016` 迁移、表结构和 QA/Summary/Reprocess/Dify
-等新接口。
+`/health.phase` 只说明当前构建显示的阶段，不等同于升级验收。确认 Phase 25
+环境时，还要检查 `0014` 到 `0019` 迁移、表结构和 QA/Summary/Reprocess/Dify/asset
+hit metadata 等新接口。旧派生数据不会自动迁移；本地升级后需要按文档显式 reprocess，再按需执行 Milvus index rebuild。

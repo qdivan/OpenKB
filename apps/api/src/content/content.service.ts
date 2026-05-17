@@ -19,8 +19,11 @@ import {
 } from "@openkb/db";
 import { normalizeMarkdownSource, validateMarkdownSource } from "@openkb/editor";
 import {
+  buildMarkdownAssetIndexEntries,
   chunkMarkdownForIndex,
+  extractMarkdownAssetReferencesForIndex,
   type HierarchicalMarkdownChunk,
+  type MarkdownAssetIndexAsset,
   type MarkdownChunkingSettings
 } from "@openkb/markdown";
 import {
@@ -1131,7 +1134,7 @@ export class ContentService {
       throw new ContentError("OBJECT_NOT_FOUND", "Current document version was not found.", 404);
     }
     await this.prisma.$transaction(async (tx) => {
-      await this.replaceChunksForDocumentVersion(
+      const result = await this.replaceChunksForDocumentVersion(
         tx,
         me,
         document.id,
@@ -1141,7 +1144,8 @@ export class ContentService {
       );
       await this.writeAuditLog(tx, me, "document.processing.reprocess", "document", document.id, {
         version_id: version.id,
-        markdown_hash: version.markdown_hash
+        markdown_hash: version.markdown_hash,
+        qa_pairs_skipped: result.qaPairsSkipped
       });
     });
     return this.getDocument(sessionToken, document.id);
@@ -1359,7 +1363,7 @@ export class ContentService {
     }
     if (input.overwrite === true) {
       await this.prisma.documentQaPair.updateMany({
-        where: { document_id: document.id, source: "llm", status: "active" },
+        where: { document_id: document.id, source: { in: ["llm", "mock"] }, status: "active" },
         data: { status: "deleted", updated_at: new Date() }
       });
     }
@@ -1374,7 +1378,7 @@ export class ContentService {
           question: row.question,
           answer: row.answer,
           source_chunk_id: row.source_chunk_id ?? null,
-          source: "llm",
+          source: mode,
           status: "active",
           metadata: { generated_mode: mode, generation_scope: scope },
           created_by: me.user.id
@@ -1551,8 +1555,19 @@ export class ContentService {
     if (value === undefined || value === null || !String(value).trim()) {
       return null;
     }
+    const document = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: { current_version_id: true }
+    });
     const chunk = await this.prisma.documentChunk.findUnique({ where: { id: String(value) } });
-    if (!chunk || chunk.document_id !== documentId || chunk.status === "deleted") {
+    if (
+      !chunk ||
+      !document?.current_version_id ||
+      chunk.document_id !== documentId ||
+      chunk.version_id !== document.current_version_id ||
+      chunk.status !== "active" ||
+      chunk.index_role !== "content"
+    ) {
       throw new ContentError("OBJECT_NOT_FOUND", "Source segment was not found.", 404);
     }
     return chunk.id;
@@ -3058,22 +3073,19 @@ export class ContentService {
   ) {
     const document = await tx.document.findUnique({ where: { id: documentId } });
     if (!document || document.type !== "page") {
-      return;
+      return { qaPairsSkipped: 0 };
     }
     const knowledgeBase = await tx.knowledgeBase.findUnique({
       where: { id: document.knowledge_base_id }
     });
     if (!knowledgeBase) {
-      return;
+      return { qaPairsSkipped: 0 };
     }
     const settings = await this.getOrCreateChunkSettings(tx, me, knowledgeBase);
-    const qaPairs =
+    const qaPairSelection =
       settings.doc_form === "qa_model"
-        ? await tx.documentQaPair.findMany({
-            where: { document_id: document.id, status: "active" },
-            orderBy: { created_at: "asc" }
-          })
-        : [];
+        ? await loadIndexableQaPairs(tx, document.id, versionId)
+        : { pairs: [], skipped: 0 };
     const nextProcessingRevision = (document.processing_revision ?? 1) + 1;
     const currentMarkdownHash = markdownHash(markdown);
     const processingSnapshot = buildDocumentProcessingSnapshot(
@@ -3084,18 +3096,33 @@ export class ContentService {
         content_markdown_hash: currentMarkdownHash
       }
     );
-    const rows = materializeDocumentChunks(
+    const chunks = materializeDocumentChunks(
       chunkMarkdownForIndex(markdown, {
         ...toMarkdownChunkingSettings(settings, document),
-        qa_pairs: qaPairs.map((pair) => ({
+        qa_pairs: qaPairSelection.pairs.map((pair) => ({
           id: pair.id,
           question: pair.question,
           answer: pair.answer,
-          source: pair.source as "manual" | "csv" | "llm",
-          source_chunk_id: pair.source_chunk_id
+          source: pair.source as "manual" | "csv" | "llm" | "mock",
+          source_chunk_id: null,
+          generated_mode: getStringFromRecord(pair.metadata, "generated_mode")
         }))
       })
-    ).map((chunk) => {
+    );
+    const assetEntries = buildMarkdownAssetIndexEntries({
+      markdown,
+      chunks,
+      assetsById: await loadMarkdownAssetMap(tx, {
+        tenantId: document.tenant_id,
+        documentId: document.id,
+        markdown,
+        actorUserId: me.user.id,
+        allowAnyPendingAsset: isAdmin(me)
+      }),
+      createId: randomUUID,
+      nextOrdinal: nextChunkOrdinal(chunks)
+    });
+    const rows = chunks.map((chunk) => {
       const chunkMetadata = toRecord(chunk.metadata);
       return {
         id: chunk.id,
@@ -3129,14 +3156,96 @@ export class ContentService {
         created_at: now
       };
     });
+    const assetRows = assetEntries.map((entry) => ({
+      id: entry.chunk.id,
+      tenant_id: document.tenant_id,
+      workspace_id: document.workspace_id,
+      knowledge_base_id: document.knowledge_base_id,
+      document_id: document.id,
+      version_id: versionId,
+      ordinal: entry.chunk.ordinal,
+      chunk_type: "general",
+      parent_chunk_id: null,
+      settings_revision: entry.chunk.settings_revision,
+      start_line: entry.chunk.start_line,
+      end_line: entry.chunk.end_line,
+      start_char: entry.chunk.start_char,
+      end_char: entry.chunk.end_char,
+      parent_ordinal: null,
+      child_ordinal: null,
+      heading_path: entry.chunk.heading_path,
+      content_text: entry.chunk.content_text,
+      content_markdown: entry.chunk.content_markdown,
+      token_count: entry.chunk.token_count,
+      index_role: entry.chunk.index_role,
+      source_chunk_id: entry.chunk.source_chunk_id,
+      metadata: {
+        ...entry.chunk.metadata,
+        processing_revision: nextProcessingRevision,
+        content_version_id: versionId,
+        content_markdown_hash: currentMarkdownHash
+      } as Prisma.InputJsonValue,
+      created_at: now
+    }));
 
     await tx.documentSegmentSummary.updateMany({
       where: { document_id: document.id, status: "active" },
       data: { status: "deleted", updated_at: now }
     });
     await tx.documentChunk.deleteMany({ where: { version_id: versionId } });
-    if (rows.length > 0) {
-      await tx.documentChunk.createMany({ data: rows });
+    const allRows = [...rows, ...assetRows];
+    if (allRows.length > 0) {
+      await tx.documentChunk.createMany({ data: allRows });
+    }
+    if (assetEntries.length > 0) {
+      await insertDocumentAssetBindings(tx, {
+        document,
+        versionId,
+        entries: assetEntries,
+        now
+      });
+    }
+    const documentSummary = await tx.documentSummary.findUnique({
+      where: { document_id: document.id }
+    });
+    if (documentSummary?.status === "active") {
+      await tx.documentChunk.create({
+        data: {
+          tenant_id: document.tenant_id,
+          workspace_id: document.workspace_id,
+          knowledge_base_id: document.knowledge_base_id,
+          document_id: document.id,
+          version_id: versionId,
+          ordinal: nextChunkOrdinal(allRows),
+          chunk_type: "general",
+          parent_chunk_id: null,
+          settings_revision: settings.revision,
+          start_line: null,
+          end_line: null,
+          start_char: null,
+          end_char: null,
+          parent_ordinal: null,
+          child_ordinal: null,
+          heading_path: [],
+          content_text: documentSummary.summary,
+          content_markdown: documentSummary.summary,
+          token_count: estimateTextTokens(documentSummary.summary),
+          index_role: "summary",
+          source_chunk_id: null,
+          status: "active",
+          metadata: {
+            hit_type: "summary",
+            summary_hit: true,
+            summary_id: documentSummary.id,
+            summary_scope: "document",
+            summary_text: documentSummary.summary,
+            original_chunk_id: null,
+            doc_form: settings.doc_form,
+            index_role: "summary"
+          } as Prisma.InputJsonValue,
+          created_at: now
+        }
+      });
     }
     await tx.document.update({
       where: { id: document.id },
@@ -3152,6 +3261,7 @@ export class ContentService {
         updated_at: now
       }
     });
+    return { qaPairsSkipped: qaPairSelection.skipped };
   }
 
   private async getOrCreateChunkSettings(
@@ -4147,6 +4257,169 @@ function materializeDocumentChunks(chunks: HierarchicalMarkdownChunk[]): Materia
   }));
 }
 
+function nextChunkOrdinal(chunks: Array<{ ordinal: number }>): number {
+  return Math.max(-1, ...chunks.map((chunk) => chunk.ordinal)) + 1;
+}
+
+async function loadMarkdownAssetMap(
+  tx: Prisma.TransactionClient | PrismaClient,
+  input: {
+    tenantId: string;
+    documentId: string;
+    markdown: string;
+    actorUserId: string;
+    allowAnyPendingAsset?: boolean;
+  }
+): Promise<Map<string, MarkdownAssetIndexAsset>> {
+  const assetIds = [
+    ...new Set(
+      extractMarkdownAssetReferencesForIndex(input.markdown)
+        .map((reference) => reference.assetId)
+        .filter((assetId): assetId is string => Boolean(assetId))
+    )
+  ];
+  if (assetIds.length === 0) {
+    return new Map();
+  }
+
+  const assets = await tx.documentAsset.findMany({
+    where: {
+      tenant_id: input.tenantId,
+      id: { in: assetIds },
+      OR: [
+        { document_id: input.documentId },
+        {
+          document_id: null,
+          ...(input.allowAnyPendingAsset ? {} : { created_by: input.actorUserId })
+        }
+      ]
+    }
+  });
+  const attachableIds = assets
+    .filter((asset) => asset.document_id === null)
+    .map((asset) => asset.id);
+  if (attachableIds.length > 0) {
+    await tx.documentAsset.updateMany({
+      where: {
+        tenant_id: input.tenantId,
+        id: { in: attachableIds },
+        document_id: null,
+        ...(input.allowAnyPendingAsset ? {} : { created_by: input.actorUserId })
+      },
+      data: { document_id: input.documentId }
+    });
+  }
+
+  const boundAssets = await tx.documentAsset.findMany({
+    where: {
+      tenant_id: input.tenantId,
+      id: { in: assetIds },
+      document_id: input.documentId
+    }
+  });
+
+  return new Map(
+    boundAssets.map((asset) => [
+      asset.id,
+      {
+        id: asset.id,
+        filename: asset.filename,
+        mime_type: asset.mime_type,
+        size_bytes: asset.size_bytes,
+        checksum_sha256: asset.checksum_sha256,
+        metadata: asset.metadata
+      }
+    ])
+  );
+}
+
+function isAdmin(me: AuthenticatedUser): boolean {
+  return me.roles.includes("system_admin") || me.roles.includes("tenant_admin");
+}
+
+async function insertDocumentAssetBindings(
+  tx: Prisma.TransactionClient | PrismaClient,
+  input: {
+    document: {
+      tenant_id: string;
+      workspace_id: string;
+      knowledge_base_id: string;
+      id: string;
+    };
+    versionId: string;
+    entries: ReturnType<typeof buildMarkdownAssetIndexEntries>;
+    now: Date;
+  }
+): Promise<void> {
+  for (const entry of input.entries) {
+    await tx.$executeRaw`
+      INSERT INTO document_asset_bindings (
+        id,
+        tenant_id,
+        workspace_id,
+        knowledge_base_id,
+        document_id,
+        version_id,
+        chunk_id,
+        asset_id,
+        kind,
+        alt_text,
+        caption,
+        filename,
+        mime_type,
+        size_bytes,
+        checksum_sha256,
+        raw_url,
+        external_url,
+        start_line,
+        end_line,
+        start_char,
+        end_char,
+        status,
+        metadata,
+        created_at
+      )
+      VALUES (
+        ${entry.binding.id}::uuid,
+        ${input.document.tenant_id}::uuid,
+        ${input.document.workspace_id}::uuid,
+        ${input.document.knowledge_base_id}::uuid,
+        ${input.document.id}::uuid,
+        ${input.versionId}::uuid,
+        ${entry.binding.source_chunk_id}::uuid,
+        ${entry.binding.asset_id}::uuid,
+        ${entry.binding.kind},
+        ${entry.binding.alt_text},
+        ${entry.binding.caption},
+        ${entry.binding.filename},
+        ${entry.binding.mime_type},
+        ${normalizeNullableBigInt(entry.binding.size_bytes)},
+        ${entry.binding.checksum_sha256},
+        ${entry.binding.raw_url},
+        ${entry.binding.external_url},
+        ${entry.binding.start_line},
+        ${entry.binding.end_line},
+        ${entry.binding.start_char},
+        ${entry.binding.end_char},
+        'active',
+        ${JSON.stringify(entry.binding.metadata)}::jsonb,
+        ${input.now}
+      )
+    `;
+  }
+}
+
+function normalizeNullableBigInt(value: bigint | number | string | null): bigint | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "bigint") {
+    return value;
+  }
+  const parsed = BigInt(value);
+  return parsed >= 0n ? parsed : null;
+}
+
 function toMarkdownChunkingSettings(
   input: {
     mode: string;
@@ -4391,8 +4664,8 @@ function toChunkStatusWhere(status: "active" | "disabled" | "deleted" | "all" | 
   return { status: { in: ["active", "disabled"] } };
 }
 
-function normalizeQaSource(value: unknown): "manual" | "csv" | "llm" {
-  if (value === "csv" || value === "llm") {
+function normalizeQaSource(value: unknown): "manual" | "csv" | "llm" | "mock" {
+  if (value === "csv" || value === "llm" || value === "mock") {
     return value;
   }
   return "manual";
@@ -4802,10 +5075,53 @@ function getDocumentProcessingOverride(
   };
 }
 
+async function loadIndexableQaPairs(
+  tx: Prisma.TransactionClient | PrismaClient,
+  documentId: string,
+  versionId: string
+) {
+  const pairs = await tx.documentQaPair.findMany({
+    where: { document_id: documentId, status: "active" },
+    orderBy: { created_at: "asc" }
+  });
+  const sourceIds = [
+    ...new Set(
+      pairs
+        .map((pair) => pair.source_chunk_id)
+        .filter((id): id is string => typeof id === "string" && Boolean(id))
+    )
+  ];
+  const activeSourceIds = new Set(
+    sourceIds.length
+      ? (
+          await tx.documentChunk.findMany({
+            where: {
+              id: { in: sourceIds },
+              document_id: documentId,
+              version_id: versionId,
+              status: "active",
+              index_role: "content"
+            },
+            select: { id: true }
+          })
+        ).map((chunk) => chunk.id)
+      : []
+  );
+  const indexable = pairs.filter(
+    (pair) => !pair.source_chunk_id || activeSourceIds.has(pair.source_chunk_id)
+  );
+  return { pairs: indexable, skipped: pairs.length - indexable.length };
+}
+
 function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function getStringFromRecord(value: unknown, key: string): string | null {
+  const item = toRecord(value)[key];
+  return typeof item === "string" && item ? item : null;
 }
 
 function emptyToNull(value: string | null | undefined): string | null {

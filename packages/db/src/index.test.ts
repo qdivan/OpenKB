@@ -5,6 +5,7 @@ import {
   CONTENT_INVITATION_ROLES,
   CONTENT_ROLES,
   databaseStatus,
+  DOCUMENT_QA_PAIR_SOURCES,
   DOCUMENT_PROCESSING_STATUSES,
   DOCUMENT_SEGMENT_STATUSES,
   KNOWLEDGE_BASE_DOC_FORMS,
@@ -34,5 +35,6 @@ describe("@openkb/db public constants", () => {
       "failed"
     ]);
     expect(DOCUMENT_SEGMENT_STATUSES).toEqual(["active", "disabled", "deleted"]);
+    expect(DOCUMENT_QA_PAIR_SOURCES).toEqual(["manual", "csv", "llm", "mock"]);
   });
 });

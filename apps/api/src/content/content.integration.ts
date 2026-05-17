@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { createDatabaseClient } from "@openkb/db";
 import { DEV_ADMIN_PASSWORD, seedDev } from "@openkb/db/seed-dev";
@@ -36,6 +36,7 @@ const allTables = [
   "document_summaries",
   "document_segment_summaries",
   "document_qa_pairs",
+  "document_asset_bindings",
   "document_chunks",
   "import_jobs",
   "share_links",
@@ -392,6 +393,116 @@ describe("ContentService integration", () => {
           markdown_hash: "bad"
         })
       ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("only lets a document editor bind their own pending Markdown assets during reprocess", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const editorUser = await createActiveUser(seed.tenantId, "asset-editor@openkb.local");
+      const otherUser = await createActiveUser(seed.tenantId, "asset-owner@openkb.local");
+      await prisma.collaborator.create({
+        data: {
+          tenant_id: seed.tenantId,
+          object_type: "document",
+          object_id: seed.documentId,
+          subject_type: "user",
+          subject_id: editorUser.id,
+          role: "editor",
+          source: "direct",
+          created_by: seed.userId
+        }
+      });
+      const ownAssetId = randomUUID();
+      const otherAssetId = randomUUID();
+      const [ownAsset, otherAsset] = await Promise.all([
+        prisma.documentAsset.create({
+          data: {
+            id: ownAssetId,
+            tenant_id: seed.tenantId,
+            document_id: null,
+            object_key: `tenants/${seed.tenantId}/assets/${ownAssetId}/own.png`,
+            filename: "own.png",
+            mime_type: "image/png",
+            size_bytes: BigInt(128),
+            checksum_sha256: "own-checksum",
+            metadata: { source: "content-test" },
+            created_by: editorUser.id
+          }
+        }),
+        prisma.documentAsset.create({
+          data: {
+            id: otherAssetId,
+            tenant_id: seed.tenantId,
+            document_id: null,
+            object_key: `tenants/${seed.tenantId}/assets/${otherAssetId}/other.png`,
+            filename: "other.png",
+            mime_type: "image/png",
+            size_bytes: BigInt(128),
+            checksum_sha256: "other-checksum",
+            metadata: { source: "content-test" },
+            created_by: otherUser.id
+          }
+        })
+      ]);
+      const editor = await auth.login({
+        email: editorUser.email,
+        password: "OpenKB-test-123456"
+      });
+      const current = await content.getDocument(editor.sessionToken, seed.documentId);
+      const markdown = `# Asset Ownership
+
+![own asset](asset://${ownAsset.id})
+
+![other asset](asset://${otherAsset.id})`;
+
+      await content.updateDocument(editor.sessionToken, seed.documentId, {
+        base_version_id: current.currentVersion?.id ?? null,
+        markdown,
+        markdown_hash: markdownHash(markdown)
+      });
+      await content.reprocessDocument(editor.sessionToken, seed.documentId);
+
+      await expect(
+        prisma.documentAsset.findUniqueOrThrow({ where: { id: ownAsset.id } })
+      ).resolves.toMatchObject({ document_id: seed.documentId });
+      await expect(
+        prisma.documentAsset.findUniqueOrThrow({ where: { id: otherAsset.id } })
+      ).resolves.toMatchObject({ document_id: null });
+      await expect(
+        prisma.documentAssetBinding.findFirst({ where: { asset_id: ownAsset.id } })
+      ).resolves.toMatchObject({ document_id: seed.documentId });
+      await expect(
+        prisma.documentAssetBinding.findFirst({ where: { asset_id: otherAsset.id } })
+      ).resolves.toBeNull();
+      const assetChunkAssetIds = (
+        await prisma.documentChunk.findMany({
+          where: { document_id: seed.documentId, index_role: "asset_image" },
+          select: { metadata: true }
+        })
+      ).map((chunk) => (chunk.metadata as { asset_id?: string }).asset_id);
+      expect(assetChunkAssetIds).toContain(ownAsset.id);
+      expect(assetChunkAssetIds).not.toContain(otherAsset.id);
+      await expect(
+        prisma.documentChunk.findFirst({
+          where: { document_id: seed.documentId, index_role: "asset_image" },
+          select: { metadata: true }
+        })
+      ).resolves.toMatchObject({
+        metadata: expect.objectContaining({
+          doc_type: "image",
+          segment_attachment_id: expect.any(String),
+          attachment_info: expect.objectContaining({
+            id: ownAsset.id,
+            name: ownAsset.filename,
+            mime_type: ownAsset.mime_type
+          })
+        })
+      });
     } finally {
       await content.disconnect();
     }
@@ -762,6 +873,50 @@ This new version should not use stale chunks for derived QA or summary generatio
     }
   });
 
+  it("stores mock QA as first-class source and skips invalid source segments on qa_model reprocess", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const generated = await content.generateQaPairs(login.sessionToken, seed.documentId, {
+        mode: "mock",
+        scope: "segments",
+        count: 1
+      });
+      expect(generated.created).toBe(1);
+      expect(generated.items[0]).toMatchObject({
+        source: "mock",
+        metadata: { generated_mode: "mock" }
+      });
+      expect(generated.items[0]?.source_chunk_id).toEqual(expect.any(String));
+
+      await content.updateDocumentSegment(
+        login.sessionToken,
+        seed.documentId,
+        generated.items[0]!.source_chunk_id!,
+        { status: "disabled" }
+      );
+      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+        doc_form: "qa_model",
+        process_rule_mode: "automatic"
+      });
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+
+      await expect(
+        prisma.documentChunk.count({
+          where: { document_id: seed.documentId, metadata: { path: ["hit_type"], equals: "qa" } }
+        })
+      ).resolves.toBe(0);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
   it("generates document and segment summaries as derived index rows without changing markdown", async () => {
     const seed = await seedDev({ prisma });
     const content = new ContentService(auth, permissions);
@@ -806,6 +961,20 @@ This new version should not use stale chunks for derived QA or summary generatio
           where: { document_id: seed.documentId, index_role: "summary", status: "active" }
         })
       ).resolves.toBeGreaterThanOrEqual(2);
+
+      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const activeSummaryChunksAfterReprocess = await prisma.documentChunk.findMany({
+        where: { document_id: seed.documentId, index_role: "summary", status: "active" }
+      });
+      expect(
+        activeSummaryChunksAfterReprocess.some(
+          (chunk) =>
+            (chunk.metadata as { summary_id?: string; summary_scope?: string }).summary_id ===
+              documentSummary.id &&
+            (chunk.metadata as { summary_id?: string; summary_scope?: string }).summary_scope ===
+              "document"
+        )
+      ).toBe(true);
 
       const after = await content.getDocument(login.sessionToken, seed.documentId);
       expect(after.currentVersion?.markdown).toBe(originalMarkdown);

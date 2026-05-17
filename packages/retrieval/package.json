@@ -21,6 +21,7 @@
     "@openkb/db": "workspace:*",
     "@openkb/model-client": "workspace:*",
     "@openkb/milvus": "workspace:*",
-    "@openkb/permissions": "workspace:*"
+    "@openkb/permissions": "workspace:*",
+    "@openkb/storage": "workspace:*"
   }
 }

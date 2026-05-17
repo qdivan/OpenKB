@@ -309,6 +309,9 @@ importers:
       '@openkb/permissions':
         specifier: workspace:*
         version: link:../permissions
+      '@openkb/storage':
+        specifier: workspace:*
+        version: link:../storage
 
   packages/shared: {}
 
@@ -359,6 +362,9 @@ importers:
       '@openkb/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@openkb/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
 
 packages:
 

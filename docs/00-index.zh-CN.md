@@ -47,8 +47,8 @@
 - `docs/27-dify-knowledge-alignment.zh-CN.md`：Dify 1.14.1 知识库处理、分块、检索策略、QA、摘要和 segment 管理的 OpenKB 对齐计划。
 - `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`：本地 Dify 1.14.1 升级记录、真实运行验证、差异矩阵和 Phase 22 历史拆分记录。
 - `docs/29-i18n-terminology-alignment.zh-CN.md`：前端中文术语对齐基线，覆盖 Dify 知识库/检索术语和语雀式协作权限术语。
-- `docs/30-dify-parity-v2-analysis.zh-CN.md`：Dify Parity v2 报告、Dify 1.14.1 后端和 OpenKB 后端的三方差异分析基线；Phase 22.9 的 splitter、QA、metadata/tags 和 segment parity 收敛以该文档为验收基线。
-- `docs/31-dify-parity-next-phases.zh-CN.md`：Phase 22.9 之后的后续路线入口，固定低风险兼容补齐、QA parity、图片与附件检索三段顺序。
+- `docs/30-dify-parity-v2-analysis.zh-CN.md`：Dify Parity v2 报告、Dify 1.14.1 后端和 OpenKB 后端的三方差异分析基线；记录 splitter 全量一致、同模型 live retrieval parity 和 Phase 25 image smoke 证据。
+- `docs/31-dify-parity-next-phases.zh-CN.md`：Phase 23-25 的收口记录和后续验证入口；当前剩余重点是发布后观察、排序差异归因和旧派生数据手动重建 runbook。
 
 ## 辅助文档
 

@@ -70,8 +70,16 @@ export type DocumentProcessingStatus = (typeof DOCUMENT_PROCESSING_STATUSES)[num
 export const DOCUMENT_SEGMENT_STATUSES = ["active", "disabled", "deleted"] as const;
 export type DocumentSegmentStatus = (typeof DOCUMENT_SEGMENT_STATUSES)[number];
 
-export const DOCUMENT_CHUNK_INDEX_ROLES = ["content", "summary"] as const;
+export const DOCUMENT_CHUNK_INDEX_ROLES = [
+  "content",
+  "summary",
+  "asset_image",
+  "asset_attachment"
+] as const;
 export type DocumentChunkIndexRole = (typeof DOCUMENT_CHUNK_INDEX_ROLES)[number];
+
+export const DOCUMENT_QA_PAIR_SOURCES = ["manual", "csv", "llm", "mock"] as const;
+export type DocumentQaPairSource = (typeof DOCUMENT_QA_PAIR_SOURCES)[number];
 
 export const KNOWLEDGE_BASE_METADATA_FIELD_TYPES = ["string", "number", "time"] as const;
 export type KnowledgeBaseMetadataFieldType = (typeof KNOWLEDGE_BASE_METADATA_FIELD_TYPES)[number];

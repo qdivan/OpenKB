@@ -16,6 +16,12 @@ import {
   type OpenKBMilvus
 } from "@openkb/milvus";
 import { PermissionService } from "@openkb/permissions";
+import {
+  createObjectStorage,
+  getObjectStorageConfig,
+  StorageConfigError,
+  type ObjectStorage
+} from "@openkb/storage";
 
 export const RETRIEVAL_PACKAGE_NAME = "@openkb/retrieval";
 export const RETRIEVAL_INDEX_BACKEND = "milvus";
@@ -187,6 +193,7 @@ export type RetrievalServiceOptions = {
   milvus?: OpenKBMilvus;
   permissions?: PermissionService;
   modelClient?: OpenKBModelClient;
+  storage?: ObjectStorage;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -242,6 +249,34 @@ type TrustedSourceChunk = {
   version_id: string;
 };
 
+type TrustedAsset = {
+  id: string;
+  tenant_id: string;
+  document_id: string | null;
+  object_key: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: bigint;
+  checksum_sha256: string | null;
+};
+
+type TrustedAssetBinding = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  document_id: string;
+  version_id: string;
+  chunk_id: string;
+  asset_id: string | null;
+  kind: string;
+  filename: string | null;
+  mime_type: string | null;
+  size_bytes: bigint | null;
+  external_url: string | null;
+  status: string;
+};
+
 type TrustedCandidateContext = {
   chunk: TrustedCandidateChunk;
   metadata: Record<string, unknown>;
@@ -274,6 +309,8 @@ export class RetrievalService {
   private milvus: OpenKBMilvus | null;
   private readonly permissions: PermissionService;
   private readonly modelClientOverride?: OpenKBModelClient;
+  private readonly storageOverride?: ObjectStorage;
+  private storage: ObjectStorage | null | undefined;
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: RetrievalServiceOptions = {}) {
@@ -281,6 +318,7 @@ export class RetrievalService {
     this.milvus = options.milvus ?? null;
     this.permissions = options.permissions ?? new PermissionService({ prisma: this.prisma });
     this.modelClientOverride = options.modelClient;
+    this.storageOverride = options.storage;
     this.env = options.env ?? process.env;
   }
 
@@ -629,6 +667,25 @@ export class RetrievalService {
     return this.milvus;
   }
 
+  private getStorage(): ObjectStorage | null {
+    if (this.storageOverride) {
+      return this.storageOverride;
+    }
+    if (this.storage !== undefined) {
+      return this.storage;
+    }
+    try {
+      this.storage = createObjectStorage(getObjectStorageConfig(this.env));
+    } catch (error) {
+      if (error instanceof StorageConfigError) {
+        this.storage = null;
+      } else {
+        throw error;
+      }
+    }
+    return this.storage;
+  }
+
   private toSearchResponse(
     query: string,
     policy: RetrievalSearchPolicy,
@@ -825,6 +882,71 @@ export class RetrievalService {
       : [];
 
     const qaPairById = new Map(qaPairs.map((pair) => [pair.id, pair]));
+    const assetIds = unique(
+      chunks.flatMap((chunk) => {
+        const metadata = toRecord(chunk.metadata);
+        return isAssetHitType(getMetadataString(metadata, "hit_type"))
+          ? [getMetadataString(metadata, "asset_id")].filter((id): id is string => Boolean(id))
+          : [];
+      })
+    );
+    const assetBindingIds = unique(
+      chunks.flatMap((chunk) => {
+        const metadata = toRecord(chunk.metadata);
+        return isAssetHitType(getMetadataString(metadata, "hit_type"))
+          ? [getMetadataString(metadata, "asset_binding_id")].filter((id): id is string =>
+              Boolean(id)
+            )
+          : [];
+      })
+    );
+    const assets = assetIds.length
+      ? ((await this.prisma.documentAsset.findMany({
+          where: {
+            id: { in: assetIds },
+            tenant_id: input.tenantId
+          },
+          select: {
+            id: true,
+            tenant_id: true,
+            document_id: true,
+            object_key: true,
+            filename: true,
+            mime_type: true,
+            size_bytes: true,
+            checksum_sha256: true
+          }
+        })) as TrustedAsset[])
+      : [];
+    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+    const assetBindings = assetBindingIds.length
+      ? ((await this.prisma.documentAssetBinding.findMany({
+          where: {
+            id: { in: assetBindingIds },
+            tenant_id: input.tenantId,
+            status: "active",
+            ...(input.knowledgeBaseIds ? { knowledge_base_id: { in: input.knowledgeBaseIds } } : {})
+          },
+          select: {
+            id: true,
+            tenant_id: true,
+            workspace_id: true,
+            knowledge_base_id: true,
+            document_id: true,
+            version_id: true,
+            chunk_id: true,
+            asset_id: true,
+            kind: true,
+            filename: true,
+            mime_type: true,
+            size_bytes: true,
+            external_url: true,
+            status: true
+          }
+        })) as TrustedAssetBinding[])
+      : [];
+    const assetBindingById = new Map(assetBindings.map((binding) => [binding.id, binding]));
+    const previewUrlByAssetId = new Map<string, string | null>();
     const sourceChunkIds = unique([
       ...chunks.flatMap((chunk) => (chunk.source_chunk_id ? [chunk.source_chunk_id] : [])),
       ...qaPairs.flatMap((pair) => (pair.source_chunk_id ? [pair.source_chunk_id] : []))
@@ -916,6 +1038,54 @@ export class RetrievalService {
         });
         continue;
       }
+      if (isAssetHitType(hitType)) {
+        const bindingId = getMetadataString(metadata, "asset_binding_id");
+        const binding = bindingId ? assetBindingById.get(bindingId) : undefined;
+        if (
+          bindingId &&
+          (!binding ||
+            binding.status !== "active" ||
+            binding.tenant_id !== chunk.tenant_id ||
+            binding.workspace_id !== chunk.workspace_id ||
+            binding.knowledge_base_id !== chunk.knowledge_base_id ||
+            binding.document_id !== chunk.document_id ||
+            binding.version_id !== chunk.version_id ||
+            binding.chunk_id !== chunk.source_chunk_id)
+        ) {
+          continue;
+        }
+        const assetId = getMetadataString(metadata, "asset_id");
+        if (assetId) {
+          const asset = assetById.get(assetId);
+          if (
+            !asset ||
+            asset.tenant_id !== chunk.tenant_id ||
+            asset.document_id !== chunk.document_id ||
+            (binding?.asset_id && binding.asset_id !== asset.id)
+          ) {
+            continue;
+          }
+          if (!previewUrlByAssetId.has(asset.id)) {
+            const previewUrls = await this.createAssetPreviewUrls([asset]);
+            previewUrlByAssetId.set(asset.id, previewUrls.get(asset.id) ?? null);
+          }
+          trusted.set(chunk.id, {
+            chunk,
+            metadata: toTrustedAssetMetadata(
+              metadata,
+              asset,
+              previewUrlByAssetId.get(asset.id) ?? null,
+              binding
+            )
+          });
+          continue;
+        }
+        trusted.set(chunk.id, {
+          chunk,
+          metadata: toTrustedAssetMetadata(metadata, null, null, binding)
+        });
+        continue;
+      }
 
       trusted.set(chunk.id, {
         chunk,
@@ -933,7 +1103,7 @@ export class RetrievalService {
       candidates.flatMap((candidate) => {
         const metadata = toRecord(candidate.metadata);
         const hitType = getMetadataString(metadata, "hit_type");
-        if (hitType !== "summary") {
+        if (hitType !== "summary" && !isAssetHitType(hitType)) {
           return [];
         }
         const sourceChunkId =
@@ -988,6 +1158,55 @@ export class RetrievalService {
         };
       }
       if (hitType !== "summary") {
+        if (!isAssetHitType(hitType)) {
+          return candidate;
+        }
+
+        const sourceChunkId =
+          getMetadataString(metadata, "original_chunk_id") ??
+          getMetadataString(metadata, "source_chunk_id");
+        const source = sourceChunkId ? sourceById.get(sourceChunkId) : undefined;
+        if (!source) {
+          return {
+            ...candidate,
+            metadata: {
+              ...metadata,
+              hit_type: hitType,
+              asset_match_text: candidate.content_text,
+              original_chunk_id: sourceChunkId ?? null
+            }
+          };
+        }
+
+        const contentText = source.override_content_text ?? source.content_text;
+        const contentMarkdown = source.override_content_markdown ?? source.content_markdown;
+        return {
+          ...candidate,
+          heading_path: source.heading_path,
+          content_text: contentText,
+          content_markdown: contentMarkdown,
+          metadata: {
+            ...metadata,
+            hit_type: hitType,
+            asset_match_text: candidate.content_text,
+            asset_chunk_id: candidate.chunk_id,
+            original_chunk_id: source.id,
+            source_chunk_id: source.id,
+            original_chunk: {
+              chunk_id: source.id,
+              chunk_type: source.chunk_type,
+              heading_path: source.heading_path,
+              token_count: source.token_count,
+              start_line: source.start_line,
+              end_line: source.end_line,
+              start_char: source.start_char,
+              end_char: source.end_char
+            }
+          }
+        };
+      }
+
+      if (hitType !== "summary") {
         return candidate;
       }
 
@@ -1036,6 +1255,32 @@ export class RetrievalService {
         }
       };
     });
+  }
+
+  private async createAssetPreviewUrls(
+    assets: TrustedAsset[]
+  ): Promise<Map<string, string | null>> {
+    if (assets.length === 0) {
+      return new Map();
+    }
+    const storage = this.getStorage();
+    if (!storage) {
+      return new Map(assets.map((asset) => [asset.id, null]));
+    }
+
+    const pairs = await Promise.all(
+      assets.map(async (asset) => {
+        try {
+          return [
+            asset.id,
+            await storage.createPresignedGetUrl({ key: asset.object_key })
+          ] as const;
+        } catch {
+          return [asset.id, null] as const;
+        }
+      })
+    );
+    return new Map(pairs);
   }
 
   private async resolveActiveAppKnowledgeBaseIds(
@@ -2226,6 +2471,14 @@ function toTrustedChunkMetadata(chunk: TrustedCandidateChunk): Record<string, un
       source_chunk_id: chunk.source_chunk_id ?? null
     };
   }
+  if (isAssetHitType(hitType)) {
+    return {
+      ...metadata,
+      hit_type: hitType,
+      original_chunk_id: chunk.source_chunk_id ?? null,
+      source_chunk_id: chunk.source_chunk_id ?? null
+    };
+  }
   return metadata;
 }
 
@@ -2240,10 +2493,76 @@ function toTrustedQaMetadata(
     qa_question: pair.question,
     qa_answer: pair.answer,
     qa_source: pair.source,
+    qa_generated_mode: getMetadataString(toRecord(pair.metadata), "generated_mode") ?? null,
     qa_metadata: toRecord(pair.metadata),
     original_chunk_id: pair.source_chunk_id ?? null,
     source_chunk_id: pair.source_chunk_id ?? null
   };
+}
+
+function toTrustedAssetMetadata(
+  chunkMetadata: Record<string, unknown>,
+  asset: TrustedAsset | null,
+  previewUrl: string | null,
+  binding?: TrustedAssetBinding
+): Record<string, unknown> {
+  const hitType = isAssetHitType(getMetadataString(chunkMetadata, "hit_type"))
+    ? getMetadataString(chunkMetadata, "hit_type")
+    : "attachment";
+  const filename =
+    asset?.filename ?? binding?.filename ?? getMetadataString(chunkMetadata, "asset_filename");
+  const mimeType =
+    asset?.mime_type ?? binding?.mime_type ?? getMetadataString(chunkMetadata, "asset_mime_type");
+  const sizeBytes =
+    asset?.size_bytes.toString() ??
+    binding?.size_bytes?.toString() ??
+    chunkMetadata.asset_size_bytes ??
+    null;
+  const sourceUrl =
+    previewUrl ??
+    binding?.external_url ??
+    getMetadataString(chunkMetadata, "asset_external_url") ??
+    null;
+  return {
+    ...chunkMetadata,
+    hit_type: hitType,
+    doc_type: hitType === "image" ? "image" : "attachment",
+    asset_id: asset?.id ?? getMetadataString(chunkMetadata, "asset_id"),
+    asset_binding_id: binding?.id ?? getMetadataString(chunkMetadata, "asset_binding_id"),
+    segment_attachment_id:
+      binding?.id ??
+      getMetadataString(chunkMetadata, "segment_attachment_id") ??
+      getMetadataString(chunkMetadata, "asset_binding_id"),
+    asset_filename: filename,
+    asset_mime_type: mimeType,
+    asset_size_bytes: sizeBytes,
+    asset_checksum_sha256:
+      asset?.checksum_sha256 ?? getMetadataString(chunkMetadata, "asset_checksum_sha256"),
+    asset_preview_url: previewUrl,
+    source_url: sourceUrl,
+    attachment_info: {
+      id:
+        asset?.id ??
+        getMetadataString(chunkMetadata, "asset_id") ??
+        getMetadataString(chunkMetadata, "asset_external_url"),
+      name: filename,
+      extension: extensionFromFilename(filename),
+      mime_type: mimeType,
+      source_url: sourceUrl,
+      size: sizeBytes
+    },
+    original_chunk_id: getMetadataString(chunkMetadata, "source_chunk_id") ?? null,
+    source_chunk_id: getMetadataString(chunkMetadata, "source_chunk_id") ?? null
+  };
+}
+
+function extensionFromFilename(filename: string | null): string | null {
+  const extension = filename?.match(/(\.[^./\\]+)$/)?.[1];
+  return extension ? extension.slice(0, 32) : null;
+}
+
+function isAssetHitType(value: string | null): value is "image" | "attachment" {
+  return value === "image" || value === "attachment";
 }
 
 function isTrustedSourceChunkValid(

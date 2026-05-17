@@ -33,6 +33,7 @@ const allTables = [
   "milvus_index_profiles",
   "import_format_routes",
   "import_tool_settings",
+  "document_asset_bindings",
   "document_chunks",
   "import_jobs",
   "share_links",

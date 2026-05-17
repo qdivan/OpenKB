@@ -18,6 +18,8 @@ try {
   Invoke-Step { pnpm db:test:up } "db:test:up"
   Invoke-Step { pnpm db:migrate } "db:migrate"
   Invoke-Step { pnpm --filter @openkb/db build } "db build"
+  Invoke-Step { pnpm --filter @openkb/markdown build } "markdown build"
+  Invoke-Step { pnpm --filter @openkb/model-client build } "model-client build"
   Invoke-Step { pnpm --filter @openkb/email build } "email build"
   Invoke-Step { pnpm --filter @openkb/auth build } "auth build"
   Invoke-Step { pnpm --filter @openkb/permissions build } "permissions build"

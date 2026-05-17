@@ -16,6 +16,8 @@
     "db:test:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/db-test-up.ps1",
     "dev": "turbo run dev --parallel",
     "dev:local:api": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-api-local.ps1",
+    "dev:local:import-worker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-import-worker-local.ps1",
+    "dev:local:index-worker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-index-worker-local.ps1",
     "dev:local:web": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-web-local.ps1",
     "dev:seed": "pnpm --filter @openkb/db dev:seed",
     "dify:key:create": "pnpm --filter @openkb/dify-adapter dify:key:create",

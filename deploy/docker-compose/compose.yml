@@ -70,6 +70,8 @@ x-openkb-env: &openkb-env
   OPENKB_RERANK_MODEL: ${OPENKB_RERANK_MODEL:-}
   OPENKB_RERANK_TIMEOUT_MS: ${OPENKB_RERANK_TIMEOUT_MS:-15000}
   OPENKB_RERANK_API_KEY: ${OPENKB_RERANK_API_KEY:-}
+  OPENKB_IMAGE_VECTOR_MODE: ${OPENKB_IMAGE_VECTOR_MODE:-auto}
+  OPENKB_IMAGE_EMBED_MAX_BYTES: ${OPENKB_IMAGE_EMBED_MAX_BYTES:-10485760}
   OPENKB_LLM_REQUEST_FORMAT: ${OPENKB_LLM_REQUEST_FORMAT:-openai_responses}
   OPENKB_LLM_ENDPOINT: ${OPENKB_LLM_ENDPOINT:-https://api.openai.com/v1/responses}
   OPENKB_LLM_MODEL: ${OPENKB_LLM_MODEL:-}
@@ -238,7 +240,7 @@ services:
 
   api:
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm --filter @openkb/api start
     environment:
       <<: *openkb-env
@@ -259,7 +261,7 @@ services:
 
   web:
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm --filter @openkb/web exec next start -p 3000 -H 0.0.0.0
     environment:
       <<: *openkb-env
@@ -282,7 +284,7 @@ services:
 
   mcp-server:
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm --filter @openkb/mcp-server start
     environment:
       <<: *openkb-env
@@ -303,7 +305,7 @@ services:
 
   dify-adapter:
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm --filter @openkb/dify-adapter start
     environment:
       <<: *openkb-env
@@ -324,7 +326,7 @@ services:
 
   import-worker:
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm import:worker
     environment:
       <<: *openkb-env
@@ -334,7 +336,7 @@ services:
 
   index-worker:
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm index:worker
     environment:
       <<: *openkb-env
@@ -346,7 +348,7 @@ services:
   migrate:
     profiles: ["init"]
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm db:migrate
     environment: *openkb-env
     depends_on:
@@ -356,7 +358,7 @@ services:
   seed-dev:
     profiles: ["init"]
     build: *openkb-build
-    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-22}
+    image: ${OPENKB_IMAGE:-openkb}:${OPENKB_IMAGE_TAG:-phase-25}
     command: pnpm dev:seed
     environment: *openkb-env
     depends_on:

@@ -18,6 +18,7 @@
     "@openkb/model-client": "workspace:*",
     "@openkb/milvus": "workspace:^",
     "@openkb/permissions": "workspace:^",
-    "@openkb/shared": "workspace:*"
+    "@openkb/shared": "workspace:*",
+    "@openkb/storage": "workspace:*"
   }
 }

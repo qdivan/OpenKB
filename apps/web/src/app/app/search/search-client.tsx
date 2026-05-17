@@ -1,6 +1,14 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, BookOpen, FileText, LoaderCircle, Search } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  BookOpen,
+  FileText,
+  Image as ImageIcon,
+  LoaderCircle,
+  Search
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -13,6 +21,7 @@ import {
   getMe,
   isUnauthorized,
   searchKnowledge,
+  type SearchResult,
   type SearchResponse
 } from "@/lib/openkb-api";
 
@@ -219,7 +228,9 @@ export function SearchPageClient() {
                         <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">
                           {result.score.toFixed(3)}
                         </span>
+                        <HitTypeBadge result={result} />
                       </div>
+                      <AssetPreview result={result} />
                       <p className="mt-1 line-clamp-2 text-sm leading-6 text-zinc-600">
                         {result.content}
                       </p>
@@ -279,10 +290,54 @@ function SearchStatus({ icon, children }: { icon: ReactNode; children: ReactNode
   );
 }
 
+function AssetPreview({ result }: { result: SearchResult }) {
+  const hitType = metadataString(result.metadata, "hit_type");
+  const previewUrl = metadataString(result.metadata, "asset_preview_url");
+  if (hitType !== "image" || !previewUrl) {
+    return null;
+  }
+  const filename = metadataString(result.metadata, "asset_filename") ?? result.title;
+  return (
+    <div className="mt-3 flex items-start gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+      <img
+        alt={filename}
+        className="h-24 w-32 rounded object-cover"
+        loading="lazy"
+        src={previewUrl}
+      />
+      <div className="min-w-0 pt-1 text-xs text-zinc-500">
+        <div className="flex items-center gap-1 font-medium text-zinc-700">
+          <ImageIcon className="h-3.5 w-3.5" />
+          <span className="truncate">{filename}</span>
+        </div>
+        <p className="mt-1 truncate">{metadataString(result.metadata, "asset_mime_type")}</p>
+      </div>
+    </div>
+  );
+}
+
+function HitTypeBadge({ result }: { result: SearchResult }) {
+  const hitType = metadataString(result.metadata, "hit_type");
+  if (hitType !== "image" && hitType !== "attachment") {
+    return null;
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">
+      {hitType === "image" ? <ImageIcon className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+      {hitType}
+    </span>
+  );
+}
+
 function formatSearchError(error: unknown, t: (key: string) => string): string {
   if (error instanceof ApiRequestError) {
     const code = error.body.error ? `${error.body.error}: ` : "";
     return `${code}${error.body.message ?? error.message}`;
   }
   return error instanceof Error ? error.message : t("Search failed.");
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value ? value : null;
 }

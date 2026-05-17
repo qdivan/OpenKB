@@ -128,6 +128,13 @@ export type RerankDocumentScore = {
   relevance_score: number;
 };
 
+export type EmbeddingInput =
+  | string
+  | {
+      text?: string;
+      image?: string;
+    };
+
 export type ModelProbeResult = {
   configured: boolean;
   ok: boolean;
@@ -196,6 +203,33 @@ export class OpenKBModelClient {
     const embeddings: number[][] = [];
     for (const batch of batches) {
       embeddings.push(...(await this.requestEmbeddingBatch(batch)));
+    }
+    return embeddings;
+  }
+
+  async embedImages(
+    images: Array<{
+      dataUri: string;
+      text?: string;
+    }>
+  ): Promise<number[][]> {
+    if (!isEmbeddingConfigured(this.config)) {
+      throw new ModelClientError("MODEL_NOT_CONFIGURED", "Embedding endpoint is not configured.");
+    }
+    if (images.length === 0) {
+      return [];
+    }
+    const batches = chunk(images, this.config.embedding.batchSize);
+    const embeddings: number[][] = [];
+    for (const batch of batches) {
+      embeddings.push(
+        ...(await this.requestEmbeddingInputBatch(
+          batch.map((image) => ({
+            ...(image.text ? { text: image.text } : {}),
+            image: image.dataUri
+          }))
+        ))
+      );
     }
     return embeddings;
   }
@@ -296,6 +330,15 @@ export class OpenKBModelClient {
     }
   }
 
+  async resolveEmbeddingCapabilities(): Promise<ModelCapabilities> {
+    const detected = await this.detectModelCapabilities("embedding");
+    return mergeDetectedCapabilities(this.config.embedding.capabilities, detected.value, {
+      dimensions: this.config.embedding.dim,
+      supports_batch: true,
+      input_modalities: ["text"]
+    });
+  }
+
   async probeRerank(): Promise<ModelProbeResult> {
     if (!isRerankConfigured(this.config)) {
       return { configured: false, ok: false, error: "Rerank endpoint is not configured." };
@@ -374,6 +417,10 @@ export class OpenKBModelClient {
   }
 
   private async requestEmbeddingBatch(texts: string[]): Promise<number[][]> {
+    return this.requestEmbeddingInputBatch(texts);
+  }
+
+  private async requestEmbeddingInputBatch(inputs: EmbeddingInput[]): Promise<number[][]> {
     const body =
       this.config.embedding.provider === "dashscope"
         ? await postJson(
@@ -382,7 +429,7 @@ export class OpenKBModelClient {
             {
               model: this.config.embedding.model,
               input: {
-                contents: texts.map((text) => ({ text }))
+                contents: inputs.flatMap((input) => toDashScopeEmbeddingContents(input))
               },
               parameters: {
                 dimension: this.config.embedding.dim
@@ -396,14 +443,14 @@ export class OpenKBModelClient {
             this.config.embedding.endpoint,
             {
               model: this.config.embedding.model,
-              input: texts
+              input: inputs.map(toOpenAICompatibleEmbeddingInput)
             },
             this.config.embedding.timeoutMs,
             this.config.embedding.apiKey
           );
     return this.config.embedding.provider === "dashscope"
-      ? parseDashScopeEmbeddingResponse(body, texts.length, this.config.embedding.dim)
-      : parseEmbeddingResponse(body, texts.length, this.config.embedding.dim);
+      ? parseDashScopeEmbeddingResponse(body, inputs.length, this.config.embedding.dim)
+      : parseEmbeddingResponse(body, inputs.length, this.config.embedding.dim);
   }
 
   private async detectModelCapabilities(
@@ -809,32 +856,63 @@ export function parseOpenAICompatibleModelCapabilityDetection(
     return { capabilities: emptyCapabilities(kind), detected: false };
   }
 
+  const nestedCapabilities = toRecord(match.capabilities);
+  const inferredInputModalities = inferInputModalities(match, kind);
+  const inputModalities =
+    match.input_modalities ??
+    match.modalities ??
+    nestedCapabilities.input_modalities ??
+    nestedCapabilities.modalities;
+  const dimensions =
+    firstPositiveNumber(match.dimensions, match.dimension, match.embedding_dim) ??
+    firstPositiveNumber(
+      nestedCapabilities.dimensions,
+      nestedCapabilities.dimension,
+      nestedCapabilities.embedding_dim
+    );
+  const maxTokens =
+    firstPositiveNumber(match.max_tokens, match.context_length, match.max_input_tokens) ??
+    firstPositiveNumber(
+      nestedCapabilities.max_tokens,
+      nestedCapabilities.context_length,
+      nestedCapabilities.max_input_tokens
+    );
+  const languages =
+    match.language ??
+    match.languages ??
+    nestedCapabilities.language ??
+    nestedCapabilities.languages;
+  const providerModelType =
+    firstString(match.model_type, match.type) ??
+    firstString(nestedCapabilities.model_type, nestedCapabilities.type, kind);
+  const supportsBatch =
+    typeof match.supports_batch === "boolean"
+      ? match.supports_batch
+      : typeof nestedCapabilities.supports_batch === "boolean"
+        ? nestedCapabilities.supports_batch
+        : kind === "embedding"
+          ? true
+          : null;
+
   return {
     capabilities: normalizeModelCapabilities({
-      input_modalities: inferInputModalities(match, kind),
-      dimensions: firstPositiveNumber(match.dimensions, match.dimension, match.embedding_dim),
-      max_tokens: firstPositiveNumber(
-        match.max_tokens,
-        match.context_length,
-        match.max_input_tokens
-      ),
-      languages: normalizeStringArray(match.language ?? match.languages),
-      provider_model_type: firstString(match.model_type, match.type, kind),
-      supports_batch: kind === "embedding" ? true : null,
+      input_modalities: inputModalities ?? inferredInputModalities,
+      dimensions,
+      max_tokens: maxTokens,
+      languages: normalizeStringArray(languages),
+      provider_model_type: providerModelType,
+      supports_batch: supportsBatch,
       raw_provider: compactRecord({
         id: firstString(match.id),
         owned_by: firstString(match.owned_by),
         model_name: firstString(match.model_name),
         model_family: firstString(match.model_family),
-        model_type: firstString(match.model_type),
+        model_type: providerModelType,
         type: firstString(match.type),
-        dimensions: firstPositiveNumber(match.dimensions, match.dimension, match.embedding_dim),
-        max_tokens: firstPositiveNumber(
-          match.max_tokens,
-          match.context_length,
-          match.max_input_tokens
-        ),
-        language: normalizeStringArray(match.language ?? match.languages)
+        dimensions,
+        max_tokens: maxTokens,
+        language: normalizeStringArray(languages),
+        capabilities: Object.keys(nestedCapabilities).length > 0 ? nestedCapabilities : null
       })
     }),
     detected: true
@@ -1322,6 +1400,29 @@ function mergeDetectedCapabilities(
     },
     fallback
   );
+}
+
+function toDashScopeEmbeddingContents(input: EmbeddingInput): Array<Record<string, string>> {
+  if (typeof input === "string") {
+    return [{ text: input }];
+  }
+  if (input.image) {
+    return [{ image: input.image }];
+  }
+  return [{ text: input.text ?? "" }];
+}
+
+function toOpenAICompatibleEmbeddingInput(input: EmbeddingInput): unknown {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input.image) {
+    return {
+      ...(input.text ? { text: input.text } : {}),
+      image: input.image
+    };
+  }
+  return input.text ?? "";
 }
 
 function inferInputModalities(

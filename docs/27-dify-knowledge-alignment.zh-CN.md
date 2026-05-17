@@ -1,10 +1,10 @@
 # 27 Dify 1.14.1 知识库处理与检索逻辑对齐
 
-> 当前规范：本文记录 OpenKB 对齐 Dify 1.14.1 知识库处理与检索逻辑的产品/技术计划。已验证的本地 Dify 1.14.1 升级记录见 `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`；分块与检索 parity 差异基线见 `docs/30-dify-parity-v2-analysis.zh-CN.md`；Phase 22.9 之后的后续路线见 `docs/31-dify-parity-next-phases.zh-CN.md`。若本文中状态与 docs/30 冲突，以 docs/30 的工程基线为准。
+> 当前规范：本文记录 OpenKB 对齐 Dify 1.14.1 知识库处理与检索逻辑的产品/技术计划。已验证的本地 Dify 1.14.1 升级记录见 `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`；分块与检索 parity 差异基线见 `docs/30-dify-parity-v2-analysis.zh-CN.md`；Phase 23-25 收口记录见 `docs/31-dify-parity-next-phases.zh-CN.md`。若本文中状态与 docs/30 冲突，以 docs/30 的工程基线为准。
 
 本文件记录 OpenKB 对照 Dify `1.14.1` 源码后的知识库处理、分块、检索和 segment 管理映射。Dify 源码只作为公开实现参照，临时放在仓库外目录，不进入 OpenKB git。
 
-> 状态收口：Phase 22.2-22.6 的基础能力、22.8 的 Dify-compatible splitter、22.9 的主要 parity 收敛已经进入当前主线。后续不再在本文追加新的执行计划，统一写入 `docs/31-dify-parity-next-phases.zh-CN.md`。
+> 状态收口：Phase 22.2-22.6 的基础能力、22.8 的 Dify-compatible splitter、22.9 的主要 parity 收敛、Phase 23 的配置一致性、Phase 24 的 QA parity 和 Phase 25 的图片/附件检索底座已经进入当前主线。后续验证入口统一写入 `docs/31-dify-parity-next-phases.zh-CN.md`。
 
 ## 对齐原则
 
@@ -22,7 +22,7 @@
 | --- | --- | --- | --- |
 | `doc_form=text_model` | 普通知识库，普通段落切片 | KB `knowledge_base_chunk_settings.doc_form`；生成 `general` chunks | 已实现基础 schema 和 chunking |
 | `doc_form=hierarchical_model` | 父子分块知识库 | KB doc_form + 文档 `process_rule_snapshot.parent_mode` | 已实现 paragraph/full-doc 父子分块 |
-| `doc_form=qa_model` | QA 知识库，问题入索引，答案返回 | `document_qa_pairs` + QA chunks metadata `qa_question/qa_answer` | 已实现手动/CSV/mock/LLM 显式生成和 chunking；Phase n+2 继续补 QA parity |
+| `doc_form=qa_model` | QA 知识库，问题入索引，答案返回 | `document_qa_pairs` + QA chunks metadata `qa_question/qa_answer` | Phase 24 已收口 manual/CSV/mock/LLM、active QA pair 索引和 Dify/Web/MCP 返回语义 |
 | `indexing_technique=economy` | 低成本索引，关键词/全文检索 | retrieval mode 解析为 BM25 | 已实现策略映射 |
 | `indexing_technique=high_quality` | 高质量索引，embedding/hybrid/rerank | retrieval mode 解析为 dense/hybrid/rerank | 已实现策略映射，依赖 Admin Models 与索引 profile |
 | `process_rule.mode=automatic` | 自动分段 | `process_rule_mode` + Dify 1.14.1 recursive splitter 默认值 | Phase 22.8 已作为新 reprocess 默认；Phase 22.9 已补 parity fixture 输出 |
@@ -78,7 +78,7 @@ KB 设置页面保持 OpenKB 自己的紧凑工作台风格，但信息层级按
 
 ## 已完成分阶段实现
 
-以下内容用于追溯 Phase 22 的实现路径。Phase 22.9 之后的新计划统一写入 `docs/31-dify-parity-next-phases.zh-CN.md`。
+以下内容用于追溯 Phase 22 的实现路径。Phase 23-25 的收口记录和后续验证统一写入 `docs/31-dify-parity-next-phases.zh-CN.md`。
 
 ### Phase 22.2 / 22.8 分块与重处理
 

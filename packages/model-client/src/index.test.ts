@@ -94,6 +94,72 @@ describe("@openkb/model-client", () => {
     ]);
   });
 
+  it("sends image data URIs through OpenAI-compatible embedding input objects", async () => {
+    const requests: unknown[] = [];
+    const client = new OpenKBModelClient(
+      {
+        embedding: {
+          provider: "openai_compatible",
+          endpoint: "http://proxy.test/v1/embeddings",
+          model: "qwen3-vl-embedding",
+          source: "env",
+          dim: 2,
+          batchSize: 8,
+          timeoutMs: 1000,
+          capabilities: {
+            input_modalities: ["text", "image"],
+            dimensions: 2,
+            max_tokens: null,
+            languages: [],
+            provider_model_type: "embedding",
+            supports_batch: true,
+            raw_provider: {}
+          }
+        },
+        rerank: {
+          provider: "openai_compatible",
+          source: "none",
+          timeoutMs: 1000
+        },
+        language: {
+          provider: "openai_responses",
+          source: "none",
+          timeoutMs: 1000,
+          maxOutputTokens: 20,
+          temperature: 0
+        }
+      },
+      async (_url, init) => {
+        requests.push(JSON.parse(init.body ?? "{}"));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              { index: 0, embedding: [0.1, 0.2] },
+              { index: 1, embedding: [0.3, 0.4] }
+            ]
+          }),
+          text: async () => ""
+        };
+      }
+    );
+
+    await expect(
+      client.embedImages([
+        { dataUri: "data:image/png;base64,AAAA" },
+        { dataUri: "data:image/jpeg;base64,BBBB" }
+      ])
+    ).resolves.toEqual([
+      [0.1, 0.2],
+      [0.3, 0.4]
+    ]);
+    expect(requests[0]).toMatchObject({
+      model: "qwen3-vl-embedding",
+      input: [{ image: "data:image/png;base64,AAAA" }, { image: "data:image/jpeg;base64,BBBB" }]
+    });
+  });
+
   it("parses Xinference/OpenAI-compatible model capability metadata", () => {
     expect(getModelListEndpoint("http://model/v1/embeddings")).toBe("http://model/v1/models");
     expect(
@@ -139,6 +205,49 @@ describe("@openkb/model-client", () => {
       capabilities: {
         input_modalities: ["text"],
         dimensions: null
+      }
+    });
+  });
+
+  it("parses nested OpenAI-compatible model capabilities before falling back to model-name inference", () => {
+    expect(
+      parseOpenAICompatibleModelCapabilityDetection(
+        {
+          data: [
+            {
+              id: "custom-embedding-model",
+              object: "model",
+              capabilities: {
+                input_modalities: ["text", "image"],
+                dimensions: 1024,
+                max_tokens: 8192,
+                supports_batch: true,
+                languages: ["zh", "en"],
+                model_type: "embedding"
+              }
+            }
+          ]
+        },
+        "custom-embedding-model",
+        "embedding"
+      )
+    ).toMatchObject({
+      detected: true,
+      capabilities: {
+        input_modalities: ["text", "image"],
+        dimensions: 1024,
+        max_tokens: 8192,
+        supports_batch: true,
+        languages: ["zh", "en"],
+        provider_model_type: "embedding",
+        raw_provider: {
+          id: "custom-embedding-model",
+          model_type: "embedding",
+          capabilities: {
+            input_modalities: ["text", "image"],
+            dimensions: 1024
+          }
+        }
       }
     });
   });

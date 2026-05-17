@@ -59,9 +59,11 @@ milvus:
   uri: milvus.example.internal:19530
 models:
   embedding:
+    requestFormat: openai_compatible
     endpoint: http://embedding.internal/v1/embeddings
     model: qwen3-vl-embedding-2b
   rerank:
+    requestFormat: openai_compatible
     endpoint: http://rerank.internal/v1/rerank
     model: qwen3-vl-reranker-2b
 ```
@@ -101,7 +103,7 @@ optionalModels:
 
 Optional model services are placeholders for explicit operator overlays. The chart must not contain embedding/rerank provider API keys, and OpenKB must not save those credentials in its database.
 
-When `models.embedding.endpoint` and `models.embedding.model` are empty, OpenKB uses BM25 even if `retrieval.defaultMode` is `hybrid`. After enabling model endpoints, rebuild the Milvus index and switch mode in `/app/admin/retrieval`.
+When `models.embedding.endpoint` and `models.embedding.model` are empty, OpenKB uses BM25 even if `retrieval.defaultMode` is `hybrid`. Native providers such as DashScope must set the matching `models.embedding.requestFormat` and `models.rerank.requestFormat`; endpoint and model alone are not enough when the payload shape is not OpenAI-compatible. After enabling model endpoints, rebuild the Milvus index and switch mode in `/app/admin/retrieval`.
 
 ## Migrations
 
@@ -111,7 +113,7 @@ Example pattern:
 
 ```bash
 kubectl run openkb-migrate --rm -it --restart=Never \
-  --image=openkb:phase-22 \
+  --image=openkb:phase-25 \
   --env-from=configmap/openkb-config \
   --env-from=secret/openkb-secret \
   -- pnpm db:migrate

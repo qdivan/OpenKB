@@ -1,6 +1,6 @@
 # 30 — Dify Parity v2 深度分析基线
 
-本文是 `openkb-dify-parity-v2-20260515-000821` 报告、Dify 1.14.1 后端源码和 OpenKB 当前实现的三方对照基线。Phase 22.8 已把 Dify-compatible splitter 接入显式 reprocess 默认路径；Phase 22.9 已收敛输入规范化、QA 返回语义、metadata/tags、segment 生命周期和复跑证据。Phase 22.9 之后的低风险兼容补齐、QA parity、图片与附件检索路线见 `docs/31-dify-parity-next-phases.zh-CN.md`。
+本文是 `openkb-dify-parity-v2-20260515-000821` 报告、Dify 1.14.1 后端源码和 OpenKB 当前实现的三方对照基线。Phase 22.8 已把 Dify-compatible splitter 接入显式 reprocess 默认路径；Phase 22.9 已收敛输入规范化、QA 返回语义、metadata/tags、segment 生命周期和复跑证据；Phase 23-25 已继续补齐配置一致性、QA parity、图片与附件检索底座。后续验证入口见 `docs/31-dify-parity-next-phases.zh-CN.md`。
 
 大型 JSON、截图、raw response 和 live parity 结果仍保存在本机忽略目录，不进入 git：
 
@@ -15,7 +15,7 @@
 - Dify 1.14.1 的核心切分行为是 recursive splitter：automatic 使用 `EnhanceRecursiveCharacterTextSplitter`；custom/hierarchical 使用 `FixedRecursiveCharacterTextSplitter`，再按 `\n\n`、`。`、`. `、空格、字符递归回退。
 - Phase 22.8 已将 Dify-shaped `process_rule` 的默认切分路径改为 Dify 1.14.1-compatible splitter。旧 chunks 不自动迁移，只有新建或显式 reprocess 后才使用新边界。
 - Phase 22.9 已补齐 QA 对外语义、tags/document metadata post-filter、parity 脚本的 raw/Milkdown/indexed/splitter 多阶段输出。
-- 同模型检索基线仍是环境阻塞项：Dify 和 OpenKB 必须使用同一 embedding/rerank/hybrid 配置后，才能把 top-k/rerank 差异归因到检索逻辑，而不是模型环境。
+- 同模型检索基线已完成 Phase 25 稳定版复跑：Dify 和 OpenKB 使用同一 100 篇 corpus、同一 qwen3-vl embedding/rerank、同一 hybrid/rerank 开关后，240 条查询全部完成，不再是 `blocked_missing_live_inputs`。
 
 ## 2026-05-15 公开 Markdown 100 篇实测
 
@@ -68,37 +68,66 @@ Corpus 共 100 篇，长度覆盖 200 到 10000 字，来源为公开文档仓�
 - QA 模式在生成的 question/answer rows 上完全一致；这验证的是 QA 索引行语义，不代表 LLM 生成质量。
 - Markdown 保真检查 900 行失败数为 0。英文句号切分不再拆开 ordered list 标记，非 QA 模式也不剥离 heading、blockquote、code fence、list、link/image 等 Markdown 结构。
 
-### 检索复跑状态
+### Phase 25 同模型 live retrieval parity
 
-当前已经补上 live retrieval parity 复跑脚本，但没有把缺输入的结果伪装成通过。脚本会生成 runtime-only import corpus、调用 Dify console hit-testing 与 OpenKB `/api/search`，并输出 top1/top3/top5 overlap、MRR/nDCG、score/rerank 差异和归因；如果缺 dataset、cookie、同 corpus/index 证据或模型不一致，则只写 blocked 报告。
+Phase 25 稳定收口时已经完成一轮真实同模型检索复跑。脚本生成 runtime-only import corpus，调用 Dify 1.14.1 console hit-testing 与 OpenKB `/api/search`，所有 raw response 和 normalized row 只保存在本机忽略目录。
 
-最新本机阻塞验证证据目录：
+证据目录：
 
 ```text
-.codex-runtime/parity-runs/codex-live-blocked-check-4/retrieval/
+.codex-runtime/parity-runs/20260517T135454Z/retrieval/
+.codex-runtime/parity-runs/20260517T135537Z/retrieval/
 ```
 
-环境探测结果：
+环境状态：
 
 | 项目 | 状态 |
 | --- | --- |
-| OpenKB API `http://localhost:4101/health` | 2026-05-16 本机复跑时未启动，probe 返回 `fetch failed` |
-| OpenKB Web `http://localhost:3100/` | 2026-05-16 本机复跑时未启动，probe 返回 `fetch failed` |
-| OpenKB Dify Adapter `http://localhost:4200/health` | 2026-05-16 本机复跑时未启动，live run 因此阻塞 |
-| Dify Web `http://localhost:18080/` / `http://localhost:3000/` | 2026-05-16 本机复跑时未启动或不可达 |
-| Dify API `http://localhost:8080/` | 需要认证；本地 Dify Web/API 通过 nginx `18080` 可用 |
-| Embedding / rerank env | `.env` 已配置 DashScope `qwen3-vl-embedding` / `qwen3-vl-rerank`，探测只记录模型名和 key 是否存在，不输出 key |
-| Dify dataset/API token | 当前 shell 未设置 |
-| OpenKB search session | 当前 shell 未设置 |
-| 同 corpus/index 证据 | 当前 shell 未确认；live 模式要求 `PARITY_CONFIRM_SAME_CORPUS_INDEXED=true` 或 `--confirm-same-corpus-indexed` |
+| OpenKB API | `http://localhost:4101/health` 可用，phase 为 `phase-25-stable-convergence` |
+| OpenKB Web | `http://localhost:3100/` 可用 |
+| OpenKB Dify Adapter | `http://localhost:4200/health` 可用 |
+| Dify 1.14.1 | `http://localhost:18080/` 可用 |
+| Corpus | 100 篇公开 Markdown，导入两边并完成 Dify indexing / OpenKB reprocess + Milvus rebuild |
+| Embedding | `qwen3-vl-embedding`，768 维 |
+| Rerank | `qwen3-vl-rerank` |
+| Retrieval | `hybrid_search`，`top_k=5`，`score_threshold=0`，rerank 开启，keyword/vector 权重 0.5/0.5 |
 
-因此，“embedding 和 rerank 模型一样后检索是否一致”仍是环境阻塞项。当前阻塞在本机服务未启动、Dify dataset/API token、OpenKB search session，以及两边尚未确认导入同一批 corpus/index。下一次 live retrieval parity 需要同时满足：
+检索指标：
 
-1. Dify dataset/API token 可用，并指向同一批导入数据。
-2. OpenKB search session 或本地测试 harness 可用。
-3. 两边已经导入同一批 corpus，并完成各自 index/reprocess。
-4. 两边明确记录同一 embedding model、rerank model、维度、top_k、score_threshold、hybrid/rerank 开关。
-5. 运行 `scripts/parity/run-dify-openkb-parity.mjs --live-retrieval --corpus-dir <corpus> --confirm-same-corpus-indexed`，并把 raw response 继续留在 `.codex-runtime`。
+| 指标 | 数值 |
+| --- | ---: |
+| 查询数 | 240 |
+| 成功查询 | 240 |
+| Top1 identity 一致 | 151 / 240 |
+| Top1 identity 一致率 | 0.6292 |
+| 平均 top3 identity overlap | 0.3764 |
+| 平均 top5 identity overlap | 0.3023 |
+| Dify MRR | 0.7896 |
+| OpenKB MRR | 0.7883 |
+| Dify nDCG | 0.7988 |
+| OpenKB nDCG | 0.8178 |
+
+按查询类型拆分：
+
+| 类型 | 查询数 | Top1 一致率 | 平均 top3 overlap | 平均 top5 overlap | Dify MRR | OpenKB MRR |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| exact_marker | 80 | 0.8250 | 0.3958 | 0.2698 | 0.9188 | 0.9479 |
+| semantic | 80 | 0.4500 | 0.3354 | 0.2879 | 0.7208 | 0.6398 |
+| ambiguous | 80 | 0.6125 | 0.3979 | 0.3492 | 0.7292 | 0.7771 |
+
+归因摘要：
+
+| 归因 | 查询数 |
+| --- | ---: |
+| same_top | 151 |
+| ranking_difference | 70 |
+| dify_missed_expected | 19 |
+
+判断：
+
+- live retrieval 不再被缺 dataset、cookie、CSRF、同 corpus/index 或模型不一致阻塞。
+- splitter 边界已经完全对齐后，剩余差异主要来自 Dify console hit-testing 与 OpenKB `/api/search` 的排序/融合实现差异、Dify 内部命中 identity 映射差异，以及部分 exact marker 在 Dify 侧未命中期望文档。
+- MRR 非常接近，说明同模型同 corpus 下两边总体相关性已经进入同一量级；Top-k overlap 仍是后续优化项，不应把 Phase 25 标成“完全一致”。
 
 ## 原始报告摘要
 
@@ -193,7 +222,7 @@ OpenKB 的优势仍是权限与派生命中解释更稳：summary、QA、source 
 | P2 | 同模型 embedding/rerank/hybrid baseline | 脚本已实现，环境仍阻塞 | `--live-retrieval` 已能生成 import corpus、调用 Dify/OpenKB 检索入口并计算 overlap/MRR/nDCG；当前仍缺 Dify dataset/API token、OpenKB search session、同 corpus 导入/index 证据和已启动服务 |
 | P3 | Segment lifecycle 对齐 | 已验证基础矩阵 | active/disabled/deleted、override/reset、reprocess 后不迁移旧 override/segment summary；结果仍只返回 PostgreSQL 终检通过的 active chunks |
 
-同模型 live retrieval parity 已有可复跑脚本入口；它作为 `docs/31` 中 Phase n+1 的验证前置项保留，要求 Dify/OpenKB 使用同一 corpus、同一 embedding/rerank、同一 hybrid/rerank 开关后复跑。缺输入时必须保持 blocked，不得把环境不齐的结果记为通过。
+同模型 live retrieval parity 已有可复跑脚本入口；它作为 Phase 25 稳定收口的硬验收项保留，要求 Dify/OpenKB 使用同一 corpus、同一 embedding/rerank、同一 hybrid/rerank 开关后复跑。缺输入时必须保持 blocked，不得把环境不齐的结果记为通过。
 
 ## 复跑基线
 

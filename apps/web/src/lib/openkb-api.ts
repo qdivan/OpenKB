@@ -919,7 +919,7 @@ export type DocumentChunk = {
   document_id: string;
   version_id: string;
   ordinal: number;
-  index_role?: "content" | "summary";
+  index_role?: "content" | "summary" | "asset_image" | "asset_attachment";
   source_chunk_id?: string | null;
   chunk_type: "general" | "parent" | "child";
   parent_chunk_id: string | null;
@@ -969,7 +969,7 @@ export type DocumentQaPair = {
   document_id: string;
   question: string;
   answer: string;
-  source: "manual" | "csv" | "llm";
+  source: "manual" | "csv" | "llm" | "mock";
   source_chunk_id: string | null;
   status: "active" | "disabled" | "deleted";
   metadata: unknown;
@@ -1443,7 +1443,7 @@ export function createDocumentQaPair(
   input: {
     question: string;
     answer: string;
-    source?: "manual" | "csv" | "llm";
+    source?: "manual" | "csv" | "llm" | "mock";
     source_chunk_id?: string | null;
     metadata?: unknown;
   }

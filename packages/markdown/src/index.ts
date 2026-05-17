@@ -65,8 +65,98 @@ export type MarkdownQaPair = {
   id?: string;
   question: string;
   answer: string;
-  source?: "manual" | "csv" | "llm";
+  source?: "manual" | "csv" | "llm" | "mock";
   source_chunk_id?: string | null;
+  generated_mode?: string | null;
+};
+
+export type MarkdownAssetReferenceKind = "image" | "attachment" | "external_image";
+
+export type MarkdownAssetIndexReference = {
+  ordinal: number;
+  kind: MarkdownAssetReferenceKind;
+  assetId: string | null;
+  rawUrl: string;
+  externalUrl: string | null;
+  label: string;
+  altText: string | null;
+  caption: string | null;
+  start_line: number;
+  end_line: number;
+  start_char: number;
+  end_char: number;
+};
+
+export type MarkdownAssetIndexAsset = {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes?: bigint | number | string | null;
+  checksum_sha256?: string | null;
+  metadata?: unknown;
+};
+
+export type MarkdownAssetIndexSourceChunk = {
+  id: string;
+  ordinal: number;
+  chunk_type: MarkdownChunkType;
+  parent_chunk_id: string | null;
+  settings_revision?: number;
+  start_line: number | null;
+  end_line: number | null;
+  start_char: number | null;
+  end_char: number | null;
+  parent_ordinal: number | null;
+  child_ordinal: number | null;
+  heading_path: string[];
+  content_text: string;
+};
+
+export type MarkdownAssetIndexEntry = {
+  binding: {
+    id: string;
+    kind: MarkdownAssetReferenceKind;
+    source_chunk_id: string;
+    matched_chunk_id: string;
+    asset_id: string | null;
+    alt_text: string | null;
+    caption: string | null;
+    filename: string | null;
+    mime_type: string | null;
+    size_bytes: bigint | number | string | null;
+    checksum_sha256: string | null;
+    raw_url: string;
+    external_url: string | null;
+    start_line: number;
+    end_line: number;
+    start_char: number;
+    end_char: number;
+    metadata: Record<string, unknown>;
+  };
+  chunk: {
+    id: string;
+    ordinal: number;
+    index_role: "asset_image" | "asset_attachment";
+    source_chunk_id: string;
+    settings_revision: number;
+    start_line: number;
+    end_line: number;
+    start_char: number;
+    end_char: number;
+    heading_path: string[];
+    content_text: string;
+    content_markdown: string;
+    token_count: number;
+    metadata: Record<string, unknown>;
+  };
+};
+
+export type BuildMarkdownAssetIndexEntriesInput = {
+  markdown: string;
+  chunks: MarkdownAssetIndexSourceChunk[];
+  assetsById: Map<string, MarkdownAssetIndexAsset>;
+  createId: () => string;
+  nextOrdinal?: number;
 };
 
 export type MarkdownChunkingSettings = {
@@ -144,6 +234,9 @@ const unsupportedExtensionLabels: Record<string, string> = {
   ".gif": "Images require OCR or an image metadata adapter.",
   ".webp": "Images require OCR or an image metadata adapter."
 };
+
+const LINK_DESTINATION_PATTERN = /(!?)\[([^\]\n]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+const ASSET_URI_PATTERN = /^asset:\/\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
 
 export function convertImportFile(input: ConvertImportInput): ImportConversionResult {
   const converter = resolveImportConverter(input);
@@ -392,6 +485,7 @@ export function chunkQaPairsForIndex(
     .map((pair, index) => {
       const contentMarkdown = `**Q:** ${pair.question}\n\n**A:** ${pair.answer}`;
       const contentText = `${pair.question}\n${pair.answer}`;
+      const generatedMode = pair.generated_mode ?? (pair.source === "mock" ? "mock" : null);
       return {
         ordinal: index,
         heading_path: [],
@@ -407,6 +501,7 @@ export function chunkQaPairsForIndex(
           qa_question: pair.question,
           qa_answer: pair.answer,
           qa_source: pair.source ?? "manual",
+          qa_generated_mode: generatedMode,
           original_chunk_id: pair.source_chunk_id ?? null,
           source_chunk_id: pair.source_chunk_id ?? null,
           doc_form: "qa_model",
@@ -423,6 +518,205 @@ export function chunkQaPairsForIndex(
         parent_local_id: null
       };
     });
+}
+
+export function extractMarkdownAssetReferencesForIndex(
+  markdownInput: string
+): MarkdownAssetIndexReference[] {
+  const markdown = normalizeMarkdownSource(markdownInput);
+  const references: MarkdownAssetIndexReference[] = [];
+  const lines = markdown.split("\n");
+  let inFence = false;
+  let offset = 0;
+
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1;
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      offset += line.length + 1;
+      return;
+    }
+    if (inFence) {
+      offset += line.length + 1;
+      return;
+    }
+
+    LINK_DESTINATION_PATTERN.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = LINK_DESTINATION_PATTERN.exec(line))) {
+      const isImage = match[1] === "!";
+      const label = normalizeAssetLabel(match[2] ?? "");
+      const rawUrl = match[3] ?? "";
+      const asset = ASSET_URI_PATTERN.exec(rawUrl);
+      const isExternalImage = isImage && /^https?:\/\//i.test(rawUrl);
+      if (!asset && !isExternalImage) {
+        continue;
+      }
+
+      const start = offset + match.index;
+      const end = start + match[0].length;
+      const kind: MarkdownAssetReferenceKind = asset
+        ? isImage
+          ? "image"
+          : "attachment"
+        : "external_image";
+      references.push({
+        ordinal: references.length,
+        kind,
+        assetId: asset?.[1] ?? null,
+        rawUrl,
+        externalUrl: isExternalImage ? rawUrl : null,
+        label,
+        altText: isImage ? label || null : null,
+        caption: label || null,
+        start_line: lineNumber,
+        end_line: lineNumber,
+        start_char: start,
+        end_char: end
+      });
+    }
+
+    offset += line.length + 1;
+  });
+
+  return references;
+}
+
+export function buildMarkdownAssetIndexEntries(
+  input: BuildMarkdownAssetIndexEntriesInput
+): MarkdownAssetIndexEntry[] {
+  const references = extractMarkdownAssetReferencesForIndex(input.markdown);
+  if (references.length === 0 || input.chunks.length === 0) {
+    return [];
+  }
+
+  const parentById = new Map(input.chunks.map((chunk) => [chunk.id, chunk]));
+  const nextOrdinal =
+    input.nextOrdinal ?? Math.max(-1, ...input.chunks.map((chunk) => chunk.ordinal)) + 1;
+  const entries: MarkdownAssetIndexEntry[] = [];
+
+  for (const reference of references) {
+    const matched = findBestAssetSourceChunk(reference, input.chunks);
+    if (!matched) {
+      continue;
+    }
+
+    const source =
+      matched.chunk_type === "child" && matched.parent_chunk_id
+        ? (parentById.get(matched.parent_chunk_id) ?? matched)
+        : matched;
+    const asset = reference.assetId ? input.assetsById.get(reference.assetId) : null;
+    if (reference.assetId && !asset) {
+      continue;
+    }
+
+    const bindingId = input.createId();
+    const chunkId = input.createId();
+    const hitType = reference.kind === "attachment" ? "attachment" : "image";
+    const indexRole = reference.kind === "attachment" ? "asset_attachment" : "asset_image";
+    const filename = asset?.filename ?? filenameFromUrl(reference.externalUrl) ?? null;
+    const mimeType = asset?.mime_type ?? (reference.kind === "external_image" ? "image/*" : null);
+    const contentText = buildAssetSearchText(reference, source, filename, mimeType);
+    const parentChunkId = source.chunk_type === "parent" ? source.id : source.parent_chunk_id;
+    const childContext =
+      matched.id !== source.id
+        ? {
+            chunk_id: matched.id,
+            chunk_type: matched.chunk_type,
+            parent_chunk_id: matched.parent_chunk_id,
+            heading_path: matched.heading_path,
+            start_line: matched.start_line,
+            end_line: matched.end_line,
+            start_char: matched.start_char,
+            end_char: matched.end_char
+          }
+        : null;
+    const attachmentInfo = compactRecord({
+      id: asset?.id ?? reference.externalUrl,
+      name: filename,
+      extension: extensionFromFilename(filename),
+      mime_type: mimeType,
+      source_url: null,
+      size: asset?.size_bytes !== undefined ? String(asset.size_bytes) : null
+    });
+    const metadata = compactRecord({
+      hit_type: hitType,
+      doc_type: hitType === "image" ? "image" : "attachment",
+      asset_kind: reference.kind,
+      asset_id: asset?.id ?? null,
+      asset_binding_id: bindingId,
+      segment_attachment_id: bindingId,
+      asset_filename: filename,
+      asset_mime_type: mimeType,
+      asset_size_bytes: asset?.size_bytes !== undefined ? String(asset.size_bytes) : null,
+      asset_checksum_sha256: asset?.checksum_sha256 ?? null,
+      asset_alt_text: reference.altText,
+      asset_caption: reference.caption,
+      asset_raw_url: reference.rawUrl,
+      asset_external_url: reference.externalUrl,
+      asset_preview_url: null,
+      source_url: null,
+      attachment_info: attachmentInfo,
+      image_vector_enabled: false,
+      image_vector_source: null,
+      image_vector_fallback_reason: null,
+      source_chunk_id: source.id,
+      original_chunk_id: source.id,
+      parent_chunk_id: parentChunkId,
+      matched_chunk_id: matched.id,
+      matched_child_chunk: childContext,
+      start_line: reference.start_line,
+      end_line: reference.end_line,
+      start_char: reference.start_char,
+      end_char: reference.end_char,
+      index_role: indexRole
+    });
+
+    entries.push({
+      binding: {
+        id: bindingId,
+        kind: reference.kind,
+        source_chunk_id: source.id,
+        matched_chunk_id: matched.id,
+        asset_id: asset?.id ?? null,
+        alt_text: reference.altText,
+        caption: reference.caption,
+        filename,
+        mime_type: mimeType,
+        size_bytes: asset?.size_bytes ?? null,
+        checksum_sha256: asset?.checksum_sha256 ?? null,
+        raw_url: reference.rawUrl,
+        external_url: reference.externalUrl,
+        start_line: reference.start_line,
+        end_line: reference.end_line,
+        start_char: reference.start_char,
+        end_char: reference.end_char,
+        metadata
+      },
+      chunk: {
+        id: chunkId,
+        ordinal: nextOrdinal + entries.length,
+        index_role: indexRole,
+        source_chunk_id: source.id,
+        settings_revision: source.settings_revision ?? 1,
+        start_line: reference.start_line,
+        end_line: reference.end_line,
+        start_char: reference.start_char,
+        end_char: reference.end_char,
+        heading_path: source.heading_path,
+        content_text: contentText,
+        content_markdown: reference.rawUrl.startsWith("asset://")
+          ? reference.kind === "attachment"
+            ? `[${reference.label || filename || "Attachment"}](${reference.rawUrl})`
+            : `![${reference.altText || filename || "Image"}](${reference.rawUrl})`
+          : `![${reference.altText || "External image"}](${reference.rawUrl})`,
+        token_count: estimateTokenCount(contentText),
+        metadata
+      }
+    });
+  }
+
+  return entries;
 }
 
 type ResolvedDifyProcessRule = {
@@ -1355,6 +1649,92 @@ function toRecord(value: unknown): Record<string, unknown> {
 function normalizeChunkDelimiter(value: string | undefined): string {
   const normalized = value?.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
   return normalized && normalized.length > 0 ? normalized : "\n\n";
+}
+
+function normalizeAssetLabel(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function findBestAssetSourceChunk(
+  reference: MarkdownAssetIndexReference,
+  chunks: MarkdownAssetIndexSourceChunk[]
+): MarkdownAssetIndexSourceChunk | null {
+  const matches = chunks
+    .filter((chunk) => chunkContainsReference(chunk, reference))
+    .sort((left, right) => {
+      const leftSpecificity =
+        left.chunk_type === "child" ? 0 : left.chunk_type === "general" ? 1 : 2;
+      const rightSpecificity =
+        right.chunk_type === "child" ? 0 : right.chunk_type === "general" ? 1 : 2;
+      if (leftSpecificity !== rightSpecificity) {
+        return leftSpecificity - rightSpecificity;
+      }
+      return chunkSpan(left) - chunkSpan(right);
+    });
+
+  return matches[0] ?? null;
+}
+
+function chunkContainsReference(
+  chunk: MarkdownAssetIndexSourceChunk,
+  reference: MarkdownAssetIndexReference
+): boolean {
+  if (typeof chunk.start_char === "number" && typeof chunk.end_char === "number") {
+    return reference.start_char >= chunk.start_char && reference.end_char <= chunk.end_char;
+  }
+  if (typeof chunk.start_line === "number" && typeof chunk.end_line === "number") {
+    return reference.start_line >= chunk.start_line && reference.end_line <= chunk.end_line;
+  }
+  return false;
+}
+
+function chunkSpan(chunk: MarkdownAssetIndexSourceChunk): number {
+  if (typeof chunk.start_char === "number" && typeof chunk.end_char === "number") {
+    return Math.max(0, chunk.end_char - chunk.start_char);
+  }
+  if (typeof chunk.start_line === "number" && typeof chunk.end_line === "number") {
+    return Math.max(0, chunk.end_line - chunk.start_line);
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function buildAssetSearchText(
+  reference: MarkdownAssetIndexReference,
+  source: MarkdownAssetIndexSourceChunk,
+  filename: string | null,
+  mimeType: string | null
+): string {
+  const parts = [
+    reference.altText,
+    reference.caption,
+    filename,
+    mimeType,
+    source.heading_path.join(" / "),
+    reference.kind === "external_image" ? reference.externalUrl : null
+  ].filter((part): part is string => typeof part === "string" && part.trim().length > 0);
+  return Array.from(new Set(parts.map((part) => part.trim()))).join("\n");
+}
+
+function filenameFromUrl(url: string | null): string | null {
+  if (!url) {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    const filename = parsed.pathname.split("/").filter(Boolean).pop();
+    return filename ? decodeURIComponent(filename).slice(0, 180) : null;
+  } catch {
+    return null;
+  }
+}
+
+function extensionFromFilename(filename: string | null): string | null {
+  const extension = filename?.match(/(\.[^./\\]+)$/)?.[1];
+  return extension ? extension.slice(0, 32) : null;
+}
+
+function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
 function convertMarkdown(content: string, filename: string): ImportConversionResult {

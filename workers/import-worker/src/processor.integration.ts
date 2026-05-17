@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +35,7 @@ const allTables = [
   "document_summaries",
   "document_segment_summaries",
   "document_qa_pairs",
+  "document_asset_bindings",
   "document_chunks",
   "import_jobs",
   "share_links",
@@ -447,7 +448,156 @@ fs.writeFileSync(output, "# Mock DOCX\\n\\n![Figure](media/figure.png)");
       prisma.documentSegmentSummary.findUnique({ where: { chunk_id: sourceChunk.id } })
     ).resolves.toMatchObject({ status: "deleted" });
   });
+
+  it("rebuilds KB chunks when document summary and asset-derived chunks share a version", async () => {
+    const seed = await seedDev({ prisma });
+    const asset = await createPendingImageAsset(prisma, {
+      tenantId: seed.tenantId,
+      userId: seed.userId,
+      filename: "summary-asset.png"
+    });
+    const document = await prisma.document.findUniqueOrThrow({
+      where: { id: seed.documentId },
+      select: { current_version_id: true }
+    });
+    await prisma.documentVersion.update({
+      where: { id: document.current_version_id! },
+      data: {
+        markdown: `# Summary asset rebuild\n\nThis document keeps a summary and an image reference.\n\n![summary asset](asset://${asset.id})`,
+        markdown_hash: "summary-asset-rebuild-hash"
+      }
+    });
+    const documentSummary = await prisma.documentSummary.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        document_id: seed.documentId,
+        summary: "Document summary should survive alongside asset-derived chunks.",
+        status: "active",
+        created_by: seed.userId
+      }
+    });
+    const job = await prisma.chunkRebuildJob.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        settings_revision: 1,
+        status: "pending",
+        requested_by: seed.userId,
+        metadata: {}
+      }
+    });
+
+    expect(await runImportOnce({ prisma, storage })).toMatchObject({
+      processed: true,
+      job_id: job.id,
+      status: "succeeded"
+    });
+
+    const chunks = await prisma.documentChunk.findMany({
+      where: { document_id: seed.documentId, status: "active" },
+      orderBy: { ordinal: "asc" }
+    });
+    expect(
+      chunks.some(
+        (chunk) =>
+          chunk.index_role === "asset_image" &&
+          (chunk.metadata as { asset_id?: string }).asset_id === asset.id
+      )
+    ).toBe(true);
+    expect(
+      chunks.some(
+        (chunk) =>
+          chunk.index_role === "summary" &&
+          (chunk.metadata as { summary_id?: string }).summary_id === documentSummary.id
+      )
+    ).toBe(true);
+    const ordinals = chunks.map((chunk) => chunk.ordinal);
+    expect(new Set(ordinals).size).toBe(ordinals.length);
+  });
+
+  it("does not bind pending Markdown assets created by another user during chunk rebuild", async () => {
+    const seed = await seedDev({ prisma });
+    const otherUser = await prisma.user.create({
+      data: {
+        email: "other-asset-owner@example.com",
+        password_hash: "test-only",
+        display_name: "Other Asset Owner",
+        status: "active",
+        email_verified_at: new Date()
+      }
+    });
+    await prisma.tenantMembership.create({
+      data: {
+        tenant_id: seed.tenantId,
+        user_id: otherUser.id,
+        role: "member"
+      }
+    });
+    const ownAsset = await createPendingImageAsset(prisma, {
+      tenantId: seed.tenantId,
+      userId: seed.userId,
+      filename: "own.png"
+    });
+    const otherAsset = await createPendingImageAsset(prisma, {
+      tenantId: seed.tenantId,
+      userId: otherUser.id,
+      filename: "other.png"
+    });
+    const document = await prisma.document.findUniqueOrThrow({ where: { id: seed.documentId } });
+    if (!document.current_version_id) {
+      throw new Error("Seed document is missing current_version_id.");
+    }
+    const markdown = `# Worker Asset Ownership
+
+![own asset](asset://${ownAsset.id})
+
+![other asset](asset://${otherAsset.id})`;
+    await prisma.documentVersion.update({
+      where: { id: document.current_version_id },
+      data: {
+        markdown,
+        markdown_hash: markdownHash(markdown)
+      }
+    });
+    const job = await prisma.chunkRebuildJob.create({
+      data: {
+        tenant_id: seed.tenantId,
+        workspace_id: seed.workspaceId,
+        knowledge_base_id: seed.knowledgeBaseId,
+        settings_revision: 1,
+        status: "pending",
+        requested_by: seed.userId,
+        metadata: {}
+      }
+    });
+
+    expect(await runImportOnce({ prisma, storage })).toMatchObject({
+      processed: true,
+      job_id: job.id,
+      status: "succeeded"
+    });
+
+    await expect(
+      prisma.documentAsset.findUniqueOrThrow({ where: { id: ownAsset.id } })
+    ).resolves.toMatchObject({ document_id: seed.documentId });
+    await expect(
+      prisma.documentAsset.findUniqueOrThrow({ where: { id: otherAsset.id } })
+    ).resolves.toMatchObject({ document_id: null });
+    await expect(
+      prisma.documentAssetBinding.findFirst({ where: { asset_id: ownAsset.id } })
+    ).resolves.toMatchObject({ document_id: seed.documentId });
+    await expect(
+      prisma.documentAssetBinding.findFirst({ where: { asset_id: otherAsset.id } })
+    ).resolves.toBeNull();
+  });
 });
+
+function markdownHash(markdown: string): string {
+  return createHash("sha256").update(markdown).digest("hex");
+}
 
 async function createSourceAsset(
   prismaClient: PrismaClient,
@@ -485,6 +635,31 @@ async function createSourceAsset(
       metadata: {
         knowledge_base_id: input.knowledgeBaseId
       },
+      created_by: input.userId
+    }
+  });
+}
+
+function createPendingImageAsset(
+  prismaClient: PrismaClient,
+  input: {
+    tenantId: string;
+    userId: string;
+    filename: string;
+  }
+) {
+  const id = randomUUID();
+  return prismaClient.documentAsset.create({
+    data: {
+      id,
+      tenant_id: input.tenantId,
+      document_id: null,
+      object_key: `tenants/${input.tenantId}/assets/${id}/${input.filename}`,
+      filename: input.filename,
+      mime_type: "image/png",
+      size_bytes: BigInt(64),
+      checksum_sha256: `${id}-checksum`,
+      metadata: { source: "import-worker-test" },
       created_by: input.userId
     }
   });

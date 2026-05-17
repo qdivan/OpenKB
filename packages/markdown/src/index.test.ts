@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildMarkdownAssetIndexEntries,
   chunkMarkdown,
   chunkMarkdownForIndex,
   convertImportFile,
+  extractMarkdownAssetReferencesForIndex,
   MarkdownConversionError,
   resolveImportConverter
 } from "./index";
@@ -170,7 +172,8 @@ Child chunks keep searchable text.`,
           id: "qa-1",
           question: "Who visited the cottage?",
           answer: "Liu Bei visited Zhuge Liang.",
-          source: "manual"
+          source: "mock",
+          generated_mode: "mock"
         }
       ]
     });
@@ -184,7 +187,9 @@ Child chunks keep searchable text.`,
         doc_form: "qa_model",
         qa_pair_id: "qa-1",
         qa_question: "Who visited the cottage?",
-        qa_answer: "Liu Bei visited Zhuge Liang."
+        qa_answer: "Liu Bei visited Zhuge Liang.",
+        qa_source: "mock",
+        qa_generated_mode: "mock"
       })
     });
   });
@@ -231,6 +236,100 @@ Child chunks keep searchable text.`,
 
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.every((chunk) => chunk.settings_revision === 2)).toBe(true);
+  });
+
+  it("extracts asset images, asset attachments, and external images for derived indexes", () => {
+    const references = extractMarkdownAssetReferencesForIndex(`# Assets
+
+![Diagram](asset://asset_123)
+[Spec PDF](asset://asset_pdf)
+![External](https://img.example.com/a.png)
+
+\`\`\`md
+![ignored](asset://asset_ignored)
+\`\`\``);
+
+    expect(references).toEqual([
+      expect.objectContaining({
+        ordinal: 0,
+        kind: "image",
+        assetId: "asset_123",
+        altText: "Diagram",
+        rawUrl: "asset://asset_123",
+        start_line: 3
+      }),
+      expect.objectContaining({
+        ordinal: 1,
+        kind: "attachment",
+        assetId: "asset_pdf",
+        caption: "Spec PDF",
+        rawUrl: "asset://asset_pdf",
+        start_line: 4
+      }),
+      expect.objectContaining({
+        ordinal: 2,
+        kind: "external_image",
+        assetId: null,
+        externalUrl: "https://img.example.com/a.png",
+        altText: "External",
+        start_line: 5
+      })
+    ]);
+    expect(references.every((reference) => reference.start_char < reference.end_char)).toBe(true);
+
+    const entries = buildMarkdownAssetIndexEntries({
+      markdown: "# Assets\n\n![Diagram](asset://asset_123)",
+      chunks: [
+        {
+          id: "segment_1",
+          ordinal: 0,
+          chunk_type: "general",
+          parent_chunk_id: null,
+          settings_revision: 7,
+          start_line: 1,
+          end_line: 3,
+          start_char: 0,
+          end_char: 40,
+          parent_ordinal: null,
+          child_ordinal: null,
+          heading_path: ["Assets"],
+          content_text: "Assets Diagram"
+        }
+      ],
+      assetsById: new Map([
+        [
+          "asset_123",
+          {
+            id: "asset_123",
+            filename: "diagram.png",
+            mime_type: "image/png",
+            size_bytes: 1234,
+            checksum_sha256: "sha"
+          }
+        ]
+      ]),
+      createId: (() => {
+        let next = 0;
+        return () => `id_${++next}`;
+      })()
+    });
+    expect(entries[0]?.binding).toMatchObject({
+      source_chunk_id: "segment_1",
+      asset_id: "asset_123",
+      kind: "image"
+    });
+    expect(entries[0]?.chunk.metadata).toMatchObject({
+      hit_type: "image",
+      doc_type: "image",
+      segment_attachment_id: entries[0]?.binding.id,
+      attachment_info: {
+        id: "asset_123",
+        name: "diagram.png",
+        extension: ".png",
+        mime_type: "image/png",
+        size: "1234"
+      }
+    });
   });
 
   it("uses Dify-compatible recursive automatic splitting and code point length", () => {

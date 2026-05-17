@@ -1,6 +1,6 @@
 # 13 — 部署
 
-本文是当前 OpenKB `v0.3.x / Phase 22.9` 的部署说明。它覆盖 Docker Compose、Helm、环境变量、健康检查和升级验收。历史阶段说明请看 `docs/15-roadmap-and-codex-tasks.zh-CN.md`，不要再把 Phase 11 的最小部署闭环当作当前状态。
+本文是当前 OpenKB `v0.3.x / Phase 25` 的部署说明。它覆盖 Docker Compose、Helm、环境变量、健康检查和升级验收。历史阶段说明请看 `docs/15-roadmap-and-codex-tasks.zh-CN.md`，不要再把 Phase 11 的最小部署闭环当作当前状态。
 
 ## 1. 组件
 
@@ -70,15 +70,16 @@ curl http://localhost:4200/health
 
 `/health.phase` 只是展示当前构建标识，不能作为升级验收的唯一依据。
 
-## 3. Phase 22 升级验收
+## 3. Phase 25 升级验收
 
 部署验收应同时确认镜像 tag/commit、数据库迁移、表结构和关键接口：
 
-- `_prisma_migrations` 已完成 `0014_account_setup_admin_visibility`、`0015_dify_knowledge_alignment`、`0016_qa_summary_generation`。
-- 表结构包含 `document_qa_pairs`、`document_segment_summaries`、`document_summaries`，以及 `document_chunks.index_role`、`document_chunks.source_chunk_id`。
-- 关键接口可用：KB chunk settings、document processing、document reprocess、segment management、QA、summaries、search、Dify `/retrieval`。
-- Docker Compose/Helm 已透传 Phase 20-22 的 SMTP、CSRF、MCP OAuth、模型、导入工具、metrics 和 backup 环境变量。
-- Dify parity 修复以 `docs/30-dify-parity-v2-analysis.zh-CN.md` 为基线；旧 chunks 不自动迁移，显式 reprocess 后才使用 Dify 1.14.1-compatible splitter；QA、metadata/tags 与 segment 生命周期也按该基线验收。
+- `_prisma_migrations` 已完成 `0014_account_setup_admin_visibility`、`0015_dify_knowledge_alignment`、`0016_qa_summary_generation`、`0017_dashscope_model_provider`、`0018_asset_bindings`、`0019_qa_mock_source`。
+- 表结构包含 `document_qa_pairs`、`document_segment_summaries`、`document_summaries`、`document_asset_bindings`，以及 `document_chunks.index_role`、`document_chunks.source_chunk_id` 和 asset-derived chunk roles。
+- 关键接口可用：KB chunk settings、document processing、document reprocess、segment management、QA、summaries、search、Dify `/retrieval`、asset/image hit metadata。
+- Docker Compose/Helm 已透传 Phase 20-25 的 SMTP、CSRF、MCP OAuth、模型、导入工具、metrics、backup、embedding/rerank request format 和 image-vector 环境变量。
+- Dify parity 修复以 `docs/30-dify-parity-v2-analysis.zh-CN.md` 为基线；旧 chunks 不自动迁移，显式 reprocess 后才使用 Dify 1.14.1-compatible splitter；QA、metadata/tags、segment 生命周期和图片/附件回源也按该基线验收。
+- 升级旧数据后，管理员需要显式 reprocess 目标文档，再执行 Milvus blue-green index rebuild；迁移不会自动重写派生 chunks、QA、summary 或 asset binding。
 
 ## 4. 模型与检索配置
 

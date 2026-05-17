@@ -1,6 +1,6 @@
 image:
   repository: openkb
-  tag: phase-22
+  tag: phase-25
   pullPolicy: IfNotPresent
 
 web:
@@ -65,15 +65,20 @@ retrieval:
 
 models:
   embedding:
+    requestFormat: openai_compatible
     endpoint: ""
     model: ""
     dim: "2048"
     batchSize: "16"
     timeoutMs: "30000"
   rerank:
+    requestFormat: openai_compatible
     endpoint: ""
     model: ""
     timeoutMs: "15000"
+  imageVector:
+    mode: auto
+    maxBytes: "10485760"
 
 postgres:
   enabled: true

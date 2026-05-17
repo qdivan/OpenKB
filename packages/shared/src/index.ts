@@ -1,6 +1,6 @@
 export const OPENKB_PROJECT_NAME = "OpenKB";
 export const OPENKB_VERSION = "0.3.3";
-export const OPENKB_PHASE = "phase-22-dify-knowledge-alignment";
+export const OPENKB_PHASE = "phase-25-stable-convergence";
 
 export type ServiceHealth = {
   status: "ok";

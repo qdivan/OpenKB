@@ -30,6 +30,7 @@ const allTables = [
   "import_tool_settings",
   "document_metadata_values",
   "knowledge_base_metadata_fields",
+  "document_asset_bindings",
   "document_chunks",
   "import_jobs",
   "share_links",

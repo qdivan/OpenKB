@@ -2,9 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import {
+  buildMarkdownAssetIndexEntries,
   chunkMarkdownForIndex,
+  extractMarkdownAssetReferencesForIndex,
   MarkdownConversionError,
   type HierarchicalMarkdownChunk,
+  type MarkdownAssetIndexAsset,
   type ImportConversionWarning,
   type MarkdownChunkingSettings
 } from "@openkb/markdown";
@@ -262,19 +265,29 @@ async function processClaimedImportJob(
         knowledgeBaseId: knowledgeBase.id,
         userId: job.created_by
       });
-      const chunks = chunkMarkdownForIndex(markdown, {
-        mode: settings.mode === "general" ? "general" : "parent_child",
-        doc_form: normalizeDocForm(settings.doc_form, settings.mode),
-        indexing_technique: settings.indexing_technique === "economy" ? "economy" : "high_quality",
-        process_rule_mode: normalizeProcessRuleMode(settings.process_rule_mode),
-        process_rule: settings.process_rule,
-        parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
-        parent_delimiter: settings.parent_delimiter,
-        child_delimiter: settings.child_delimiter,
-        parent_max_characters: settings.parent_max_characters,
-        child_max_characters: settings.child_max_characters,
-        child_overlap_characters: settings.child_overlap_characters,
-        settings_revision: settings.revision
+      const chunks = materializeDocumentChunks(
+        chunkMarkdownForIndex(markdown, {
+          mode: settings.mode === "general" ? "general" : "parent_child",
+          doc_form: normalizeDocForm(settings.doc_form, settings.mode),
+          indexing_technique:
+            settings.indexing_technique === "economy" ? "economy" : "high_quality",
+          process_rule_mode: normalizeProcessRuleMode(settings.process_rule_mode),
+          process_rule: settings.process_rule,
+          parent_mode: settings.parent_mode === "full_doc" ? "full_doc" : "paragraph",
+          parent_delimiter: settings.parent_delimiter,
+          child_delimiter: settings.child_delimiter,
+          parent_max_characters: settings.parent_max_characters,
+          child_max_characters: settings.child_max_characters,
+          child_overlap_characters: settings.child_overlap_characters,
+          settings_revision: settings.revision
+        })
+      );
+      const assetEntries = buildMarkdownAssetIndexEntries({
+        markdown,
+        chunks,
+        assetsById: buildImportAssetMap(asset, preparedAssets),
+        createId: randomUUID,
+        nextOrdinal: nextChunkOrdinal(chunks)
       });
 
       await tx.document.update({
@@ -316,34 +329,66 @@ async function processClaimedImportJob(
         }
       });
       await tx.documentChunk.createMany({
-        data: materializeDocumentChunks(chunks).map((chunk) => ({
-          id: chunk.id,
-          tenant_id: job.tenant_id,
-          workspace_id: knowledgeBase.workspace_id,
-          knowledge_base_id: knowledgeBase.id,
-          document_id: document.id,
-          version_id: version.id,
-          ordinal: chunk.ordinal,
-          chunk_type: chunk.chunk_type,
-          parent_chunk_id: chunk.parent_chunk_id,
-          settings_revision: settings.revision,
-          start_line: chunk.start_line,
-          end_line: chunk.end_line,
-          start_char: chunk.start_char,
-          end_char: chunk.end_char,
-          parent_ordinal: chunk.parent_ordinal,
-          child_ordinal: chunk.child_ordinal,
-          heading_path: chunk.heading_path,
-          content_text: chunk.content_text,
-          content_markdown: chunk.content_markdown,
-          token_count: chunk.token_count,
-          status: "active",
-          metadata: {
-            ...chunk.metadata,
-            import_job_id: job.id,
-            converter: conversion.converter
-          }
-        }))
+        data: [
+          ...chunks.map((chunk) => ({
+            id: chunk.id,
+            tenant_id: job.tenant_id,
+            workspace_id: knowledgeBase.workspace_id,
+            knowledge_base_id: knowledgeBase.id,
+            document_id: document.id,
+            version_id: version.id,
+            ordinal: chunk.ordinal,
+            chunk_type: chunk.chunk_type,
+            parent_chunk_id: chunk.parent_chunk_id,
+            settings_revision: settings.revision,
+            start_line: chunk.start_line,
+            end_line: chunk.end_line,
+            start_char: chunk.start_char,
+            end_char: chunk.end_char,
+            parent_ordinal: chunk.parent_ordinal,
+            child_ordinal: chunk.child_ordinal,
+            heading_path: chunk.heading_path,
+            content_text: chunk.content_text,
+            content_markdown: chunk.content_markdown,
+            token_count: chunk.token_count,
+            status: "active",
+            metadata: {
+              ...chunk.metadata,
+              import_job_id: job.id,
+              converter: conversion.converter
+            }
+          })),
+          ...assetEntries.map((entry) => ({
+            id: entry.chunk.id,
+            tenant_id: job.tenant_id,
+            workspace_id: knowledgeBase.workspace_id,
+            knowledge_base_id: knowledgeBase.id,
+            document_id: document.id,
+            version_id: version.id,
+            ordinal: entry.chunk.ordinal,
+            chunk_type: "general",
+            parent_chunk_id: null,
+            settings_revision: entry.chunk.settings_revision,
+            start_line: entry.chunk.start_line,
+            end_line: entry.chunk.end_line,
+            start_char: entry.chunk.start_char,
+            end_char: entry.chunk.end_char,
+            parent_ordinal: null,
+            child_ordinal: null,
+            heading_path: entry.chunk.heading_path,
+            content_text: entry.chunk.content_text,
+            content_markdown: entry.chunk.content_markdown,
+            token_count: entry.chunk.token_count,
+            index_role: entry.chunk.index_role,
+            source_chunk_id: entry.chunk.source_chunk_id,
+            status: "active",
+            metadata: {
+              ...entry.chunk.metadata,
+              import_job_id: job.id,
+              converter: conversion.converter
+            }
+          }))
+        ]
       });
       await tx.documentAsset.update({
         where: { id: asset.id },
@@ -372,6 +417,14 @@ async function processClaimedImportJob(
             created_by: job.created_by,
             created_at: now
           }))
+        });
+      }
+      if (assetEntries.length > 0) {
+        await insertDocumentAssetBindings(tx, {
+          document,
+          versionId: version.id,
+          entries: assetEntries,
+          now
         });
       }
       await tx.importJob.update({
@@ -467,10 +520,7 @@ async function processClaimedChunkRebuildJob(prisma: PrismaClient, jobId: string
       const markdownSettings = toMarkdownChunkingSettings(settings, document);
       const qaPairs =
         markdownSettings.doc_form === "qa_model"
-          ? await tx.documentQaPair.findMany({
-              where: { document_id: document.id, status: "active" },
-              orderBy: { created_at: "asc" }
-            })
+          ? await loadIndexableQaPairs(tx, document.id, version.id)
           : [];
       const chunks = materializeDocumentChunks(
         chunkMarkdownForIndex(version.markdown, {
@@ -479,46 +529,101 @@ async function processClaimedChunkRebuildJob(prisma: PrismaClient, jobId: string
             id: pair.id,
             question: pair.question,
             answer: pair.answer,
-            source: pair.source as "manual" | "csv" | "llm",
-            source_chunk_id: pair.source_chunk_id
+            source: pair.source as "manual" | "csv" | "llm" | "mock",
+            source_chunk_id: null,
+            generated_mode: getStringFromRecord(pair.metadata, "generated_mode")
           }))
         })
       );
-      chunkCount += chunks.length;
-      if (chunks.length > 0) {
+      const assetEntries = buildMarkdownAssetIndexEntries({
+        markdown: version.markdown,
+        chunks,
+        assetsById: await loadMarkdownAssetMap(tx, {
+          tenantId: document.tenant_id,
+          documentId: document.id,
+          markdown: version.markdown,
+          actorUserId: job.requested_by
+        }),
+        createId: randomUUID,
+        nextOrdinal: nextChunkOrdinal(chunks)
+      });
+      chunkCount += chunks.length + assetEntries.length;
+      if (chunks.length > 0 || assetEntries.length > 0) {
         await tx.documentChunk.createMany({
-          data: chunks.map((chunk) => ({
-            id: chunk.id,
-            tenant_id: document.tenant_id,
-            workspace_id: document.workspace_id,
-            knowledge_base_id: document.knowledge_base_id,
-            document_id: document.id,
-            version_id: version.id,
-            ordinal: chunk.ordinal,
-            chunk_type: chunk.chunk_type,
-            parent_chunk_id: chunk.parent_chunk_id,
-            settings_revision: settings.revision,
-            start_line: chunk.start_line,
-            end_line: chunk.end_line,
-            start_char: chunk.start_char,
-            end_char: chunk.end_char,
-            parent_ordinal: chunk.parent_ordinal,
-            child_ordinal: chunk.child_ordinal,
-            heading_path: chunk.heading_path,
-            content_text: chunk.content_text,
-            content_markdown: chunk.content_markdown,
-            token_count: chunk.token_count,
-            index_role: "content",
-            source_chunk_id: null,
-            status: "active",
-            metadata: {
-              ...(toRecord(chunk.metadata) as Record<string, unknown>),
-              processing_revision: (document.processing_revision ?? 1) + 1,
-              content_version_id: version.id,
-              content_markdown_hash: version.markdown_hash
-            } as Prisma.InputJsonValue,
-            created_at: now
-          }))
+          data: [
+            ...chunks.map((chunk) => ({
+              id: chunk.id,
+              tenant_id: document.tenant_id,
+              workspace_id: document.workspace_id,
+              knowledge_base_id: document.knowledge_base_id,
+              document_id: document.id,
+              version_id: version.id,
+              ordinal: chunk.ordinal,
+              chunk_type: chunk.chunk_type,
+              parent_chunk_id: chunk.parent_chunk_id,
+              settings_revision: settings.revision,
+              start_line: chunk.start_line,
+              end_line: chunk.end_line,
+              start_char: chunk.start_char,
+              end_char: chunk.end_char,
+              parent_ordinal: chunk.parent_ordinal,
+              child_ordinal: chunk.child_ordinal,
+              heading_path: chunk.heading_path,
+              content_text: chunk.content_text,
+              content_markdown: chunk.content_markdown,
+              token_count: chunk.token_count,
+              index_role: "content",
+              source_chunk_id: null,
+              status: "active",
+              metadata: {
+                ...(toRecord(chunk.metadata) as Record<string, unknown>),
+                processing_revision: (document.processing_revision ?? 1) + 1,
+                content_version_id: version.id,
+                content_markdown_hash: version.markdown_hash
+              } as Prisma.InputJsonValue,
+              created_at: now
+            })),
+            ...assetEntries.map((entry) => ({
+              id: entry.chunk.id,
+              tenant_id: document.tenant_id,
+              workspace_id: document.workspace_id,
+              knowledge_base_id: document.knowledge_base_id,
+              document_id: document.id,
+              version_id: version.id,
+              ordinal: entry.chunk.ordinal,
+              chunk_type: "general",
+              parent_chunk_id: null,
+              settings_revision: entry.chunk.settings_revision,
+              start_line: entry.chunk.start_line,
+              end_line: entry.chunk.end_line,
+              start_char: entry.chunk.start_char,
+              end_char: entry.chunk.end_char,
+              parent_ordinal: null,
+              child_ordinal: null,
+              heading_path: entry.chunk.heading_path,
+              content_text: entry.chunk.content_text,
+              content_markdown: entry.chunk.content_markdown,
+              token_count: entry.chunk.token_count,
+              index_role: entry.chunk.index_role,
+              source_chunk_id: entry.chunk.source_chunk_id,
+              status: "active",
+              metadata: {
+                ...entry.chunk.metadata,
+                processing_revision: (document.processing_revision ?? 1) + 1,
+                content_version_id: version.id,
+                content_markdown_hash: version.markdown_hash
+              } as Prisma.InputJsonValue,
+              created_at: now
+            }))
+          ]
+        });
+      }
+      if (assetEntries.length > 0) {
+        await insertDocumentAssetBindings(tx, {
+          document,
+          versionId: version.id,
+          entries: assetEntries,
+          now
         });
       }
       const documentSummary = await tx.documentSummary.findUnique({
@@ -530,7 +635,7 @@ async function processClaimedChunkRebuildJob(prisma: PrismaClient, jobId: string
           version,
           summary: documentSummary.summary,
           summaryId: documentSummary.id,
-          ordinal: nextChunkOrdinal(chunks),
+          ordinal: nextChunkOrdinal([...chunks, ...assetEntries.map((entry) => entry.chunk)]),
           settingsRevision: settings.revision,
           now
         });
@@ -739,6 +844,193 @@ function replaceExtractedAssetPlaceholders(
     (current, asset) => current.split(`asset://${asset.placeholderId}`).join(`asset://${asset.id}`),
     markdown
   );
+}
+
+function buildImportAssetMap(
+  sourceAsset: {
+    id: string;
+    filename: string;
+    mime_type: string;
+    size_bytes: bigint;
+    checksum_sha256: string | null;
+    metadata: Prisma.JsonValue;
+  },
+  assets: PersistedExtractedAsset[]
+): Map<string, MarkdownAssetIndexAsset> {
+  return new Map<string, MarkdownAssetIndexAsset>([
+    [
+      sourceAsset.id,
+      {
+        id: sourceAsset.id,
+        filename: sourceAsset.filename,
+        mime_type: sourceAsset.mime_type,
+        size_bytes: sourceAsset.size_bytes,
+        checksum_sha256: sourceAsset.checksum_sha256,
+        metadata: sourceAsset.metadata
+      }
+    ],
+    ...assets.map(
+      (asset) =>
+        [
+          asset.id,
+          {
+            id: asset.id,
+            filename: asset.filename,
+            mime_type: asset.contentType,
+            size_bytes: asset.sizeBytes,
+            checksum_sha256: asset.checksumSha256,
+            metadata: { kind: asset.kind, source: "import_extracted_asset" }
+          } satisfies MarkdownAssetIndexAsset
+        ] as const
+    )
+  ]);
+}
+
+async function loadMarkdownAssetMap(
+  tx: Prisma.TransactionClient,
+  input: {
+    tenantId: string;
+    documentId: string;
+    markdown: string;
+    actorUserId: string;
+  }
+): Promise<Map<string, MarkdownAssetIndexAsset>> {
+  const assetIds = [
+    ...new Set(
+      extractMarkdownAssetReferencesForIndex(input.markdown)
+        .map((reference) => reference.assetId)
+        .filter((assetId): assetId is string => Boolean(assetId))
+    )
+  ];
+  if (assetIds.length === 0) {
+    return new Map();
+  }
+  const assets = await tx.documentAsset.findMany({
+    where: {
+      tenant_id: input.tenantId,
+      id: { in: assetIds },
+      OR: [{ document_id: input.documentId }, { document_id: null, created_by: input.actorUserId }]
+    }
+  });
+  const attachableIds = assets
+    .filter((asset) => asset.document_id === null)
+    .map((asset) => asset.id);
+  if (attachableIds.length > 0) {
+    await tx.documentAsset.updateMany({
+      where: {
+        tenant_id: input.tenantId,
+        id: { in: attachableIds },
+        document_id: null,
+        created_by: input.actorUserId
+      },
+      data: { document_id: input.documentId }
+    });
+  }
+
+  const boundAssets = await tx.documentAsset.findMany({
+    where: {
+      tenant_id: input.tenantId,
+      id: { in: assetIds },
+      document_id: input.documentId
+    }
+  });
+
+  return new Map(
+    boundAssets.map((asset) => [
+      asset.id,
+      {
+        id: asset.id,
+        filename: asset.filename,
+        mime_type: asset.mime_type,
+        size_bytes: asset.size_bytes,
+        checksum_sha256: asset.checksum_sha256,
+        metadata: asset.metadata
+      }
+    ])
+  );
+}
+
+async function insertDocumentAssetBindings(
+  tx: Prisma.TransactionClient,
+  input: {
+    document: {
+      tenant_id: string;
+      workspace_id: string;
+      knowledge_base_id: string;
+      id: string;
+    };
+    versionId: string;
+    entries: ReturnType<typeof buildMarkdownAssetIndexEntries>;
+    now: Date;
+  }
+): Promise<void> {
+  for (const entry of input.entries) {
+    await tx.$executeRaw`
+      INSERT INTO document_asset_bindings (
+        id,
+        tenant_id,
+        workspace_id,
+        knowledge_base_id,
+        document_id,
+        version_id,
+        chunk_id,
+        asset_id,
+        kind,
+        alt_text,
+        caption,
+        filename,
+        mime_type,
+        size_bytes,
+        checksum_sha256,
+        raw_url,
+        external_url,
+        start_line,
+        end_line,
+        start_char,
+        end_char,
+        status,
+        metadata,
+        created_at
+      )
+      VALUES (
+        ${entry.binding.id}::uuid,
+        ${input.document.tenant_id}::uuid,
+        ${input.document.workspace_id}::uuid,
+        ${input.document.knowledge_base_id}::uuid,
+        ${input.document.id}::uuid,
+        ${input.versionId}::uuid,
+        ${entry.binding.source_chunk_id}::uuid,
+        ${entry.binding.asset_id}::uuid,
+        ${entry.binding.kind},
+        ${entry.binding.alt_text},
+        ${entry.binding.caption},
+        ${entry.binding.filename},
+        ${entry.binding.mime_type},
+        ${normalizeNullableBigInt(entry.binding.size_bytes)},
+        ${entry.binding.checksum_sha256},
+        ${entry.binding.raw_url},
+        ${entry.binding.external_url},
+        ${entry.binding.start_line},
+        ${entry.binding.end_line},
+        ${entry.binding.start_char},
+        ${entry.binding.end_char},
+        'active',
+        ${JSON.stringify(entry.binding.metadata)}::jsonb,
+        ${input.now}
+      )
+    `;
+  }
+}
+
+function normalizeNullableBigInt(value: bigint | number | string | null): bigint | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "bigint") {
+    return value;
+  }
+  const parsed = BigInt(value);
+  return parsed >= 0n ? parsed : null;
 }
 
 function toStoredImportToolSetting(setting: unknown): StoredImportToolSetting {
@@ -1042,6 +1334,46 @@ function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+async function loadIndexableQaPairs(
+  tx: Prisma.TransactionClient,
+  documentId: string,
+  versionId: string
+) {
+  const pairs = await tx.documentQaPair.findMany({
+    where: { document_id: documentId, status: "active" },
+    orderBy: { created_at: "asc" }
+  });
+  const sourceIds = [
+    ...new Set(
+      pairs
+        .map((pair) => pair.source_chunk_id)
+        .filter((id): id is string => typeof id === "string" && Boolean(id))
+    )
+  ];
+  const activeSourceIds = new Set(
+    sourceIds.length
+      ? (
+          await tx.documentChunk.findMany({
+            where: {
+              id: { in: sourceIds },
+              document_id: documentId,
+              version_id: versionId,
+              status: "active",
+              index_role: "content"
+            },
+            select: { id: true }
+          })
+        ).map((chunk) => chunk.id)
+      : []
+  );
+  return pairs.filter((pair) => !pair.source_chunk_id || activeSourceIds.has(pair.source_chunk_id));
+}
+
+function getStringFromRecord(value: unknown, key: string): string | null {
+  const item = toRecord(value)[key];
+  return typeof item === "string" && item ? item : null;
 }
 
 function sleep(ms: number): Promise<void> {

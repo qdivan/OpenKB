@@ -452,6 +452,7 @@ async function collectRetrievalEnvironmentReport() {
     has_openkb_embedding_key: Boolean(process.env.OPENKB_EMBEDDING_API_KEY),
     has_openkb_rerank_key: Boolean(process.env.OPENKB_RERANK_API_KEY),
     dify_console_api_base_url: sanitizeUrlForReport(process.env.DIFY_CONSOLE_API_BASE_URL ?? null),
+    dify_embedding_provider_name: process.env.DIFY_EMBEDDING_PROVIDER_NAME ?? null,
     dify_embedding_model: process.env.DIFY_EMBEDDING_MODEL ?? null,
     dify_rerank_provider_name: process.env.DIFY_RERANK_PROVIDER_NAME ?? null,
     dify_rerank_model: process.env.DIFY_RERANK_MODEL ?? null,
@@ -461,6 +462,7 @@ async function collectRetrievalEnvironmentReport() {
     has_dify_api_key: Boolean(
       process.env.DIFY_API_KEY || process.env.DIFY_CONSOLE_TOKEN || process.env.DIFY_CONSOLE_COOKIE
     ),
+    has_dify_csrf_token: Boolean(getDifyConsoleCsrfToken()),
     has_dify_dataset_id: Boolean(process.env.DIFY_DATASET_ID),
     has_openkb_knowledge_base_id: Boolean(process.env.OPENKB_KNOWLEDGE_BASE_ID),
     has_openkb_search_cookie: Boolean(process.env.OPENKB_SEARCH_COOKIE),
@@ -472,6 +474,12 @@ async function collectRetrievalEnvironmentReport() {
   if (!openkbHealth?.ok) missing.push("OPENKB_API_BASE_URL reachable health check");
   if (!adapterHealth?.ok) missing.push("OPENKB_DIFY_ADAPTER_URL reachable health check");
   if (!modelEnv.has_dify_api_key) missing.push("DIFY_CONSOLE_TOKEN or DIFY_CONSOLE_COOKIE");
+  if (
+    (process.env.DIFY_CONSOLE_COOKIE || process.env.DIFY_CONSOLE_TOKEN) &&
+    !modelEnv.has_dify_csrf_token
+  ) {
+    missing.push("DIFY_CSRF_TOKEN or csrf_token cookie inside DIFY_CONSOLE_COOKIE");
+  }
   if (!modelEnv.has_dify_dataset_id) missing.push("DIFY_DATASET_ID");
   if (!modelEnv.has_openkb_knowledge_base_id) missing.push("OPENKB_KNOWLEDGE_BASE_ID");
   if (!modelEnv.has_openkb_search_cookie) missing.push("OPENKB_SEARCH_COOKIE");
@@ -1792,12 +1800,22 @@ function buildLiveRetrievalConfig(parsed) {
   );
   const keywordWeight = parseOptionalNumber(process.env.DIFY_KEYWORD_WEIGHT, 0.5);
   const vectorWeight = parseOptionalNumber(process.env.DIFY_VECTOR_WEIGHT, 0.5);
+  const difyEmbeddingProviderName = (process.env.DIFY_EMBEDDING_PROVIDER_NAME ?? "").trim();
+  const difyEmbeddingModelName = (process.env.DIFY_EMBEDDING_MODEL ?? "").trim();
   const weights = {
     weight_type: "customized",
     keyword_setting: { keyword_weight: keywordWeight },
     vector_setting: { vector_weight: vectorWeight },
     keyword_weight: keywordWeight,
     vector_weight: vectorWeight
+  };
+  const difyWeights = {
+    ...weights,
+    vector_setting: {
+      vector_weight: vectorWeight,
+      embedding_provider_name: difyEmbeddingProviderName,
+      embedding_model_name: difyEmbeddingModelName
+    }
   };
   const openkbRetrievalModel = {
     search_method: searchMethod,
@@ -1807,12 +1825,18 @@ function buildLiveRetrievalConfig(parsed) {
     reranking_enable: rerankingEnable,
     weights
   };
-  const difyRetrievalModel = { ...openkbRetrievalModel };
+  const difyRetrievalModel = { ...openkbRetrievalModel, weights: difyWeights };
   const difyRerankProviderName = (process.env.DIFY_RERANK_PROVIDER_NAME ?? "").trim();
   const difyRerankModelName = (process.env.DIFY_RERANK_MODEL ?? "").trim();
   const difyRerankingMode =
     (process.env.DIFY_RERANK_MODE ?? "reranking_model").trim() || "reranking_model";
   const missingInputs = [];
+  if (!difyEmbeddingProviderName) {
+    missingInputs.push("DIFY_EMBEDDING_PROVIDER_NAME when Dify hybrid/vector weights are sent");
+  }
+  if (!difyEmbeddingModelName) {
+    missingInputs.push("DIFY_EMBEDDING_MODEL when Dify hybrid/vector weights are sent");
+  }
   if (rerankingEnable) {
     if (!difyRerankProviderName) {
       missingInputs.push("DIFY_RERANK_PROVIDER_NAME when rerank is enabled");
@@ -1849,7 +1873,14 @@ function buildLiveRetrievalConfig(parsed) {
               reranking_model_name: difyRerankModelName
             }
           : null,
-      weights
+      weights: {
+        ...weights,
+        vector_setting: {
+          vector_weight: vectorWeight,
+          embedding_provider_name: difyEmbeddingProviderName || null,
+          embedding_model_name: difyEmbeddingModelName || null
+        }
+      }
     }
   };
 }
@@ -1862,7 +1893,19 @@ function buildDifyConsoleHeaders() {
   if (process.env.DIFY_CONSOLE_COOKIE) {
     headers.cookie = process.env.DIFY_CONSOLE_COOKIE;
   }
+  const csrfToken = getDifyConsoleCsrfToken();
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
+  }
   return headers;
+}
+
+function getDifyConsoleCsrfToken() {
+  if (process.env.DIFY_CSRF_TOKEN) {
+    return process.env.DIFY_CSRF_TOKEN;
+  }
+  const cookieName = process.env.DIFY_CSRF_COOKIE_NAME || "csrf_token";
+  return getCookieValue(process.env.DIFY_CONSOLE_COOKIE ?? "", cookieName);
 }
 
 function buildOpenKbSearchHeaders() {
@@ -2544,7 +2587,7 @@ function loadLocalEnvFile(file) {
       continue;
     }
     const [name, ...rest] = line.split("=");
-    const key = name.trim();
+    const key = name.trim().replace(/^\uFEFF/, "");
     if (!key || process.env[key]) {
       continue;
     }

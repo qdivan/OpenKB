@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Database,
   FileText,
+  Image as ImageIcon,
   Layers3,
   LoaderCircle,
   Play,
@@ -35,6 +36,7 @@ import {
   type KnowledgeBaseMetadataFieldsResponse,
   type KnowledgeBaseOverview,
   type RetrievalContextMode,
+  type SearchResult,
   type SearchResponse
 } from "@/lib/openkb-api";
 
@@ -469,6 +471,12 @@ export function KnowledgeBaseDashboard({
                           {chunk.index_role === "summary" ? (
                             <Badge tone="sky">{t("summary hit")}</Badge>
                           ) : null}
+                          {chunk.index_role === "asset_image" ? (
+                            <Badge tone="emerald">{t("image hit")}</Badge>
+                          ) : null}
+                          {chunk.index_role === "asset_attachment" ? (
+                            <Badge tone="emerald">{t("attachment hit")}</Badge>
+                          ) : null}
                           <span>#{chunk.ordinal}</span>
                           <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
                         </div>
@@ -554,7 +562,9 @@ export function KnowledgeBaseDashboard({
                     <Badge tone="sky">
                       {result.context_mode ?? labResponse.context_mode ?? "chunk"}
                     </Badge>
+                    <SearchHitBadge result={result} />
                   </div>
+                  <SearchAssetPreview result={result} />
                   <p className="mt-2 line-clamp-3 text-sm leading-6 text-zinc-600">
                     {result.content}
                   </p>
@@ -1304,6 +1314,51 @@ function Badge({
 
 function EmptyLine({ children }: { children: ReactNode }) {
   return <p className="rounded-md bg-white px-3 py-2 text-sm text-zinc-500">{children}</p>;
+}
+
+function SearchAssetPreview({ result }: { result: SearchResult }) {
+  const previewUrl = metadataString(result.metadata, "asset_preview_url");
+  if (metadataString(result.metadata, "hit_type") !== "image" || !previewUrl) {
+    return null;
+  }
+  const filename = metadataString(result.metadata, "asset_filename") ?? result.title;
+  return (
+    <div className="mt-3 flex items-start gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+      <img
+        alt={filename}
+        className="h-20 w-28 rounded object-cover"
+        loading="lazy"
+        src={previewUrl}
+      />
+      <div className="min-w-0 pt-1 text-xs text-zinc-500">
+        <div className="flex items-center gap-1 font-medium text-zinc-700">
+          <ImageIcon className="h-3.5 w-3.5" />
+          <span className="truncate">{filename}</span>
+        </div>
+        <p className="mt-1 truncate">{metadataString(result.metadata, "asset_mime_type")}</p>
+      </div>
+    </div>
+  );
+}
+
+function SearchHitBadge({ result }: { result: SearchResult }) {
+  const hitType = metadataString(result.metadata, "hit_type");
+  if (hitType !== "image" && hitType !== "attachment") {
+    return null;
+  }
+  return (
+    <Badge tone="emerald">
+      <span className="inline-flex items-center gap-1">
+        {hitType === "image" ? <ImageIcon className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+        {hitType}
+      </span>
+    </Badge>
+  );
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value ? value : null;
 }
 
 function encodeDelimiter(value: string): string {

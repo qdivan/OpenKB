@@ -42,14 +42,14 @@ model TenantMembership {
 }
 
 model AuthSession {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id     String    @db.Uuid
-  user_id       String    @db.Uuid
-  token_hash    String    @unique
-  expires_at    DateTime  @db.Timestamptz(6)
-  revoked_at    DateTime? @db.Timestamptz(6)
-  last_seen_at  DateTime? @db.Timestamptz(6)
-  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String    @db.Uuid
+  user_id      String    @db.Uuid
+  token_hash   String    @unique
+  expires_at   DateTime  @db.Timestamptz(6)
+  revoked_at   DateTime? @db.Timestamptz(6)
+  last_seen_at DateTime? @db.Timestamptz(6)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([user_id])
@@ -74,20 +74,20 @@ model AuthToken {
 }
 
 model AuthEmailOutbox {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id   String?   @db.Uuid
-  user_id     String?   @db.Uuid
-  to_email    String
-  template    String
-  subject     String
-  link_url    String?
-  payload     Json      @default("{}")
-  status      String    @default("pending")
-  error       String?
-  attempts    Int       @default(0)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id       String?   @db.Uuid
+  user_id         String?   @db.Uuid
+  to_email        String
+  template        String
+  subject         String
+  link_url        String?
+  payload         Json      @default("{}")
+  status          String    @default("pending")
+  error           String?
+  attempts        Int       @default(0)
   last_attempt_at DateTime? @db.Timestamptz(6)
-  sent_at     DateTime? @db.Timestamptz(6)
-  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  sent_at         DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([user_id])
@@ -115,17 +115,17 @@ model SmtpSetting {
 }
 
 model AuthSetting {
-  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id                  String?  @db.Uuid
-  registration_enabled       Boolean  @default(true)
+  id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                   String?  @db.Uuid
+  registration_enabled        Boolean  @default(true)
   email_verification_required Boolean  @default(true)
-  default_signup_status      String   @default("active")
-  invited_user_auto_active   Boolean  @default(true)
-  allowed_email_domains      String[]
-  invite_required            Boolean  @default(false)
-  first_user_becomes_admin   Boolean  @default(true)
-  created_at                 DateTime @default(now()) @db.Timestamptz(6)
-  updated_at                 DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  default_signup_status       String   @default("active")
+  invited_user_auto_active    Boolean  @default(true)
+  allowed_email_domains       String[]
+  invite_required             Boolean  @default(false)
+  first_user_becomes_admin    Boolean  @default(true)
+  created_at                  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@map("auth_settings")
@@ -203,27 +203,27 @@ model KnowledgeBase {
 }
 
 model KnowledgeBaseChunkSetting {
-  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id                  String   @db.Uuid
-  workspace_id               String   @db.Uuid
-  knowledge_base_id          String   @unique @db.Uuid
-  mode                       String   @default("parent_child")
-  doc_form                   String   @default("hierarchical_model")
-  indexing_technique         String   @default("high_quality")
-  process_rule_mode          String   @default("hierarchical")
-  process_rule               Json     @default("{}")
-  retrieval_model            Json     @default("{}")
-  summary_index_setting      Json     @default("{}")
-  parent_mode                String   @default("paragraph")
-  parent_delimiter           String   @default("\n\n")
-  child_delimiter            String   @default("\n\n")
-  parent_max_characters      Int      @default(4000)
-  child_max_characters       Int      @default(900)
-  child_overlap_characters   Int      @default(120)
-  revision                   Int      @default(1)
-  updated_by                 String   @db.Uuid
-  created_at                 DateTime @default(now()) @db.Timestamptz(6)
-  updated_at                 DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                String   @db.Uuid
+  workspace_id             String   @db.Uuid
+  knowledge_base_id        String   @unique @db.Uuid
+  mode                     String   @default("parent_child")
+  doc_form                 String   @default("hierarchical_model")
+  indexing_technique       String   @default("high_quality")
+  process_rule_mode        String   @default("hierarchical")
+  process_rule             Json     @default("{}")
+  retrieval_model          Json     @default("{}")
+  summary_index_setting    Json     @default("{}")
+  parent_mode              String   @default("paragraph")
+  parent_delimiter         String   @default("\n\n")
+  child_delimiter          String   @default("\n\n")
+  parent_max_characters    Int      @default(4000)
+  child_max_characters     Int      @default(900)
+  child_overlap_characters Int      @default(120)
+  revision                 Int      @default(1)
+  updated_by               String   @db.Uuid
+  created_at               DateTime @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([workspace_id])
@@ -252,29 +252,29 @@ model KnowledgeBaseMetadataField {
 }
 
 model Document {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id         String   @db.Uuid
-  workspace_id      String   @db.Uuid
-  knowledge_base_id String   @db.Uuid
-  parent_id         String?  @db.Uuid
-  type              String
-  title             String
-  slug              String
-  status            String
-  permission_mode   String   @default("inherit")
-  visibility        String?
-  current_version_id String? @db.Uuid
-  sort_order        Int      @default(0)
-  doc_form          String?
-  process_rule_snapshot Json @default("{}")
-  processing_status String   @default("current")
-  processing_revision Int    @default(1)
-  doc_language      String?
-  need_summary      Boolean  @default(false)
-  created_by        String   @db.Uuid
-  updated_by        String   @db.Uuid
-  created_at        DateTime @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id             String   @db.Uuid
+  workspace_id          String   @db.Uuid
+  knowledge_base_id     String   @db.Uuid
+  parent_id             String?  @db.Uuid
+  type                  String
+  title                 String
+  slug                  String
+  status                String
+  permission_mode       String   @default("inherit")
+  visibility            String?
+  current_version_id    String?  @db.Uuid
+  sort_order            Int      @default(0)
+  doc_form              String?
+  process_rule_snapshot Json     @default("{}")
+  processing_status     String   @default("current")
+  processing_revision   Int      @default(1)
+  doc_language          String?
+  need_summary          Boolean  @default(false)
+  created_by            String   @db.Uuid
+  updated_by            String   @db.Uuid
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([workspace_id])
@@ -323,6 +323,44 @@ model DocumentAsset {
   @@map("document_assets")
 }
 
+model DocumentAssetBinding {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  document_id       String   @db.Uuid
+  version_id        String   @db.Uuid
+  chunk_id          String   @db.Uuid
+  asset_id          String?  @db.Uuid
+  kind              String
+  alt_text          String?
+  caption           String?
+  filename          String?
+  mime_type         String?
+  size_bytes        BigInt?
+  checksum_sha256   String?
+  raw_url           String
+  external_url      String?
+  start_line        Int?
+  end_line          Int?
+  start_char        Int?
+  end_char          Int?
+  status            String   @default("active")
+  metadata          Json     @default("{}")
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([document_id])
+  @@index([version_id])
+  @@index([chunk_id])
+  @@index([asset_id])
+  @@index([kind])
+  @@index([status])
+  @@map("document_asset_bindings")
+}
+
 model DocumentVersion {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id      String   @db.Uuid
@@ -360,22 +398,22 @@ model Collaborator {
 }
 
 model Invitation {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id       String   @db.Uuid
-  object_type     String
-  object_id       String   @db.Uuid
-  email           String?
-  invited_user_id String?  @db.Uuid
-  role            String
-  token_hash      String
-  status          String
-  require_approval Boolean @default(false)
-  approved_by     String? @db.Uuid
-  invited_by      String  @db.Uuid
-  expires_at      DateTime? @db.Timestamptz(6)
-  max_uses        Int?
-  used_count      Int     @default(0)
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String    @db.Uuid
+  object_type      String
+  object_id        String    @db.Uuid
+  email            String?
+  invited_user_id  String?   @db.Uuid
+  role             String
+  token_hash       String
+  status           String
+  require_approval Boolean   @default(false)
+  approved_by      String?   @db.Uuid
+  invited_by       String    @db.Uuid
+  expires_at       DateTime? @db.Timestamptz(6)
+  max_uses         Int?
+  used_count       Int       @default(0)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([token_hash])
@@ -405,24 +443,24 @@ model ShareLink {
 }
 
 model ImportJob {
-  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id          String   @db.Uuid
-  workspace_id       String   @db.Uuid
-  knowledge_base_id  String   @db.Uuid
-  parent_id          String?  @db.Uuid
-  source_asset_id    String   @db.Uuid
-  status             String
-  converter          String
-  title              String?
-  document_id        String?  @db.Uuid
-  output_version_id  String?  @db.Uuid
-  error              String?
-  warnings           Json     @default("[]")
-  metadata           Json     @default("{}")
-  created_by         String   @db.Uuid
-  created_at         DateTime @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-  finished_at        DateTime? @db.Timestamptz(6)
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String    @db.Uuid
+  workspace_id      String    @db.Uuid
+  knowledge_base_id String    @db.Uuid
+  parent_id         String?   @db.Uuid
+  source_asset_id   String    @db.Uuid
+  status            String
+  converter         String
+  title             String?
+  document_id       String?   @db.Uuid
+  output_version_id String?   @db.Uuid
+  error             String?
+  warnings          Json      @default("[]")
+  metadata          Json      @default("{}")
+  created_by        String    @db.Uuid
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  finished_at       DateTime? @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([workspace_id])
@@ -433,36 +471,36 @@ model ImportJob {
 }
 
 model DocumentChunk {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id         String   @db.Uuid
-  workspace_id      String   @db.Uuid
-  knowledge_base_id String   @db.Uuid
-  document_id       String   @db.Uuid
-  version_id        String   @db.Uuid
-  ordinal           Int
-  chunk_type        String   @default("general")
-  parent_chunk_id   String?  @db.Uuid
-  settings_revision Int      @default(1)
-  start_line        Int?
-  end_line          Int?
-  start_char        Int?
-  end_char          Int?
-  parent_ordinal    Int?
-  child_ordinal     Int?
-  heading_path      String[] @default([])
-  content_text      String
-  content_markdown  String
-  token_count       Int?
-  metadata          Json     @default("{}")
-  index_role        String   @default("content")
-  source_chunk_id   String?  @db.Uuid
-  status            String   @default("active")
-  override_content_text String?
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                 String    @db.Uuid
+  workspace_id              String    @db.Uuid
+  knowledge_base_id         String    @db.Uuid
+  document_id               String    @db.Uuid
+  version_id                String    @db.Uuid
+  ordinal                   Int
+  chunk_type                String    @default("general")
+  parent_chunk_id           String?   @db.Uuid
+  settings_revision         Int       @default(1)
+  start_line                Int?
+  end_line                  Int?
+  start_char                Int?
+  end_char                  Int?
+  parent_ordinal            Int?
+  child_ordinal             Int?
+  heading_path              String[]  @default([])
+  content_text              String
+  content_markdown          String
+  token_count               Int?
+  metadata                  Json      @default("{}")
+  index_role                String    @default("content")
+  source_chunk_id           String?   @db.Uuid
+  status                    String    @default("active")
+  override_content_text     String?
   override_content_markdown String?
-  overridden_by     String?  @db.Uuid
-  overridden_at     DateTime? @db.Timestamptz(6)
-  disabled_at       DateTime? @db.Timestamptz(6)
-  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  overridden_by             String?   @db.Uuid
+  overridden_at             DateTime? @db.Timestamptz(6)
+  disabled_at               DateTime? @db.Timestamptz(6)
+  created_at                DateTime  @default(now()) @db.Timestamptz(6)
 
   @@unique([version_id, ordinal])
   @@index([tenant_id])
@@ -616,25 +654,25 @@ model RetrievalSetting {
 }
 
 model ModelSetting {
-  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id             String?  @db.Uuid
-  kind                  String   @unique
-  provider              String
-  endpoint              String?
-  model                 String?
-  enabled               Boolean  @default(false)
-  timeout_ms            Int?
-  embedding_dim         Int?
-  embedding_batch_size  Int?
-  llm_temperature       Float?
-  llm_max_output_tokens Int?
-  encrypted_api_key     String?
-  api_key_last4         String?
-  capabilities          Json      @default("{}")
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                String?   @db.Uuid
+  kind                     String    @unique
+  provider                 String
+  endpoint                 String?
+  model                    String?
+  enabled                  Boolean   @default(false)
+  timeout_ms               Int?
+  embedding_dim            Int?
+  embedding_batch_size     Int?
+  llm_temperature          Float?
+  llm_max_output_tokens    Int?
+  encrypted_api_key        String?
+  api_key_last4            String?
+  capabilities             Json      @default("{}")
   capabilities_detected_at DateTime? @db.Timestamptz(6)
-  updated_by            String   @db.Uuid
-  created_at            DateTime @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  updated_by               String    @db.Uuid
+  created_at               DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@map("model_settings")
@@ -706,18 +744,18 @@ model McpOauthGrant {
 }
 
 model McpOauthAuthorizationCode {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id    String    @db.Uuid
-  grant_id     String    @db.Uuid
-  code_hash    String
-  code_challenge String?
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id             String    @db.Uuid
+  grant_id              String    @db.Uuid
+  code_hash             String
+  code_challenge        String?
   code_challenge_method String?
-  resource     String?
-  redirect_uri String
-  scopes       String[]  @default([])
-  expires_at   DateTime  @db.Timestamptz(6)
-  consumed_at  DateTime? @db.Timestamptz(6)
-  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  resource              String?
+  redirect_uri          String
+  scopes                String[]  @default([])
+  expires_at            DateTime  @db.Timestamptz(6)
+  consumed_at           DateTime? @db.Timestamptz(6)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([grant_id])
@@ -782,14 +820,14 @@ model DifyApiKey {
 }
 
 model DifyKnowledgeMapping {
-  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id          String   @db.Uuid
-  dify_knowledge_id  String
-  knowledge_base_id  String   @db.Uuid
-  status             String
-  created_by         String   @db.Uuid
-  created_at         DateTime @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  dify_knowledge_id String
+  knowledge_base_id String   @db.Uuid
+  status            String
+  created_by        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@unique([tenant_id, dify_knowledge_id])
   @@index([knowledge_base_id])
