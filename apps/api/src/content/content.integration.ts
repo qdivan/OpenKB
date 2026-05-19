@@ -120,6 +120,82 @@ describe("ContentService integration", () => {
     }
   });
 
+  it("initializes Dify-style knowledge base types during creation", async () => {
+    await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const workspace = await content.createWorkspace(login.sessionToken, {
+        name: "Typed KB Workspace",
+        slug: "typed-kb-workspace"
+      });
+
+      const defaultKb = await content.createKnowledgeBase(login.sessionToken, {
+        workspace_id: workspace.id,
+        title: "Default Segments",
+        slug: "default-segments"
+      });
+      const textKb = await content.createKnowledgeBase(login.sessionToken, {
+        workspace_id: workspace.id,
+        title: "Segments",
+        slug: "segments",
+        doc_form: "text_model"
+      });
+      const hierarchicalKb = await content.createKnowledgeBase(login.sessionToken, {
+        workspace_id: workspace.id,
+        title: "Parent Child",
+        slug: "parent-child",
+        doc_form: "hierarchical_model"
+      });
+      const qaKb = await content.createKnowledgeBase(login.sessionToken, {
+        workspace_id: workspace.id,
+        title: "QA",
+        slug: "qa",
+        doc_form: "qa_model"
+      });
+
+      await expect(
+        content.createKnowledgeBase(login.sessionToken, {
+          workspace_id: workspace.id,
+          title: "Bad Type",
+          slug: "bad-type",
+          doc_form: "unknown_model"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      await expect(
+        content.getChunkSettings(login.sessionToken, defaultKb.id)
+      ).resolves.toMatchObject({
+        mode: "general",
+        doc_form: "text_model",
+        process_rule_mode: "automatic"
+      });
+      await expect(content.getChunkSettings(login.sessionToken, textKb.id)).resolves.toMatchObject({
+        mode: "general",
+        doc_form: "text_model",
+        process_rule_mode: "automatic"
+      });
+      await expect(
+        content.getChunkSettings(login.sessionToken, hierarchicalKb.id)
+      ).resolves.toMatchObject({
+        mode: "parent_child",
+        doc_form: "hierarchical_model",
+        process_rule_mode: "hierarchical",
+        parent_mode: "paragraph"
+      });
+      await expect(content.getChunkSettings(login.sessionToken, qaKb.id)).resolves.toMatchObject({
+        mode: "parent_child",
+        doc_form: "qa_model",
+        process_rule_mode: "automatic"
+      });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
   it("lets system admins discover private workspaces without reading content until audited takeover", async () => {
     await seedDev({ prisma });
     const content = new ContentService(auth, permissions);
@@ -572,7 +648,7 @@ describe("ContentService integration", () => {
     }
   });
 
-  it("requires explicit document reprocess before new chunks replace current content", async () => {
+  it("reprocesses current document chunks when publishing without creating an index job", async () => {
     const seed = await seedDev({ prisma });
     const content = new ContentService(auth, permissions);
 
@@ -600,16 +676,10 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
         prisma.documentChunk.count({ where: { version_id: updated.currentVersion?.id } })
       ).resolves.toBe(0);
 
+      const indexJobsBefore = await prisma.indexRebuildJob.count();
       const published = await content.publishDocument(login.sessionToken, seed.documentId);
       expect(published.status).toBe("published");
-      expect(published.processing_status).toBe("needs_reprocess");
-      await expect(
-        prisma.documentChunk.count({ where: { version_id: updated.currentVersion?.id } })
-      ).resolves.toBe(0);
-
-      const indexJobsBefore = await prisma.indexRebuildJob.count();
-      const reprocessed = await content.reprocessDocument(login.sessionToken, seed.documentId);
-      expect(reprocessed.processing_status).toBe("current");
+      expect(published.processing_status).toBe("current");
       const chunks = await content.listKnowledgeBaseChunks(
         login.sessionToken,
         seed.knowledgeBaseId,
@@ -618,10 +688,54 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
         }
       );
       expect(chunks.length).toBeGreaterThan(0);
-      expect(chunks.every((chunk) => chunk.version_id === reprocessed.currentVersion?.id)).toBe(
-        true
-      );
+      expect(chunks.every((chunk) => chunk.version_id === published.currentVersion?.id)).toBe(true);
       await expect(prisma.indexRebuildJob.count()).resolves.toBe(indexJobsBefore);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("does not wipe current segment management state on repeated publish", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const reprocessed = await content.reprocessDocument(login.sessionToken, seed.documentId);
+      expect(reprocessed.processing_status).toBe("current");
+      const chunk = await prisma.documentChunk.findFirstOrThrow({
+        where: {
+          document_id: seed.documentId,
+          version_id: reprocessed.currentVersion?.id,
+          index_role: "content",
+          status: "active",
+          chunk_type: { in: ["general", "child"] }
+        },
+        orderBy: { ordinal: "asc" }
+      });
+      await content.updateDocumentSegment(login.sessionToken, seed.documentId, chunk.id, {
+        override_content_text: "Stable override text",
+        override_content_markdown: "Stable override text"
+      });
+      await content.generateSegmentSummary(login.sessionToken, seed.documentId, {
+        scope: "segment",
+        mode: "manual",
+        chunk_id: chunk.id,
+        summary: "Stable segment summary."
+      });
+
+      const published = await content.publishDocument(login.sessionToken, seed.documentId);
+      expect(published.processing_status).toBe("current");
+      const chunkAfterPublish = await prisma.documentChunk.findUniqueOrThrow({
+        where: { id: chunk.id }
+      });
+      expect(chunkAfterPublish.override_content_text).toBe("Stable override text");
+      await expect(
+        prisma.documentSegmentSummary.findUniqueOrThrow({ where: { chunk_id: chunk.id } })
+      ).resolves.toMatchObject({ status: "active" });
     } finally {
       await content.disconnect();
     }

@@ -73,6 +73,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Set password": "设置密码",
   "Signing in...": "登录中...",
   "Password updated. Please log in.": "密码已更新，请登录。",
+  Read: "阅读",
   "Saving...": "保存中...",
   "System admins": "系统管理员",
   "User-bound Streamable HTTP server": "用户绑定的 Streamable HTTP 服务",
@@ -191,6 +192,13 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
     "软删除的 segment 默认隐藏，并会在下次 Milvus 重建后从检索中排除。",
   "Segment changes are stored in PostgreSQL. Rebuild the Milvus index before search, MCP, or Dify use them.":
     "Segment 变更已写入 PostgreSQL。需要重建 Milvus 索引后，搜索、MCP、Dify 才会使用这些变更。",
+  "Segments are generated from saved Markdown during publish or explicit reprocess. They are retrieval inputs, not editable body content.":
+    "Segments 会在发布或显式重处理时从已保存 Markdown 生成。它们是检索输入，不是可编辑正文。",
+  "Unsaved edits are not reflected here. Save and publish or reprocess to regenerate segments.":
+    "未保存改动不会显示在这里。请保存并发布，或重处理后重新生成 Segments。",
+  "Publish or reprocess this document to generate segments.":
+    "发布或重处理本文档后会生成 Segments。",
+  "Source segment": "原始 Segment",
   "PostgreSQL segment updated. Rebuild the Milvus index before Web Search, MCP, or Dify use this change.":
     "PostgreSQL segment 已更新。需要重建 Milvus 索引后，Web Search、MCP、Dify 才会使用这次变更。",
   "Open the document Chunks panel to manage segment status or overrides.":
@@ -225,6 +233,17 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Create document": "创建文档",
   "Create folder": "创建目录",
   "Create knowledge base": "创建知识库",
+  "Choose a knowledge base type first. You can change it later in settings.":
+    "先选择知识库类型，之后仍可在设置中调整。",
+  "Segment knowledge base": "分段知识库",
+  "Parent-child knowledge base": "父子知识库",
+  "QA knowledge base": "QA 知识库",
+  "Use standard segmentation for ordinary Markdown documents.":
+    "适合普通 Markdown 文档，使用标准分段检索。",
+  "Use paragraph parent-child or full-doc parent-child retrieval.":
+    "适合父子检索，可使用段落父子或全文父子。",
+  "Index questions and return answers through search, MCP, and Dify.":
+    "索引问题，并通过搜索、MCP 和 Dify 返回答案。",
   "Create a page from the document tree.": "从文档树创建一个页面。",
   "Create a page or folder to start.": "创建页面或目录后开始。",
   "Create a workspace and knowledge base from the left rail.": "从左侧栏创建 workspace 和知识库。",
@@ -575,6 +594,8 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   on: "开启",
   page: "页面",
   parent: "父块",
+  child: "子块",
+  content: "正文",
   "parent {id}": "父块 {id}",
   private: "私有",
   published: "已发布",
@@ -650,6 +671,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "No content": "暂无内容",
   "No expiration": "不过期",
   "No invitations.": "暂无邀请。",
+  "No workspace selected": "未选择工作区",
   "Password optional": "密码（可选）",
   "Password protected": "密码访问",
   "Password required": "需要密码",
@@ -678,6 +700,16 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Verify password": "验证密码",
   Workspace: "工作区",
   "Workspace collaborators": "工作区协作者",
+  Pages: "页面",
+  Folders: "目录",
+  Visibility: "可见性",
+  Role: "角色",
+  "{count} documents": "{count} 篇文档",
+  "This side panel follows the knowledge base home. Select a page to view document outline, segments, QA, summary, metadata, and versions.":
+    "这里显示知识库首页信息。选择具体页面后，右侧才会显示文档大纲、Segments、QA、摘要、Metadata 和版本。",
+  "You can manage metadata here, but private content requires an audited takeover before document panels are available.":
+    "你可以在这里管理元信息；私有正文需要审计接管后才会显示文档面板。",
+  "Select or create a knowledge base from the left rail.": "请从左侧选择或创建知识库。",
   "Workspace members": "工作区成员",
   "Workspace members only": "仅工作区成员",
   "You were invited to": "你被邀请加入",
@@ -828,11 +860,48 @@ Object.assign(ZH_CN_TRANSLATIONS, {
     "请先重处理 Segments，此文档才能按最新内容参与检索。",
   "Document published. Reprocess segments before rebuilding the Milvus index.":
     "文档已发布。请先重处理 Segments，再按需重建 Milvus 索引。",
+  "Document published and segments reprocessed. Rebuild the Milvus index when retrieval should update.":
+    "文档已发布，并已自动重处理本文档 Segments。如需检索更新，请重建 Milvus 索引。",
   "Version restored. Reprocess segments before rebuilding the search index.":
     "版本已恢复。请先重处理 Segments，再按需重建搜索索引。",
   "Save the document before reprocessing segments.": "重处理 Segments 前请先保存文档。",
+  "Save the document before changing processing settings.": "修改文档处理设置前请先保存文档。",
   "Document segments reprocessed. Rebuild Milvus index when retrieval should update.":
     "文档 Segments 已重处理。如需检索更新，请重建 Milvus 索引。",
+  "Document parent-child mode updated. Reprocess segments to apply it.":
+    "文档父子分段模式已更新。请重处理 Segments 后生效。",
+  "Document processing settings updated. Reprocess segments to apply them.":
+    "文档分段设置已更新。请重处理分段后生效。",
+  "Segment settings": "分段设置",
+  "These settings are saved as a document processing override. They take effect after explicit reprocess and never rewrite Markdown.":
+    "这些设置会保存为本文档的处理覆盖项，显式重处理后生效，且不会反写 Markdown 正文。",
+  "This is a read-only snapshot of the document processing settings. Editors can save overrides and reprocess segments.":
+    "这是文档分段设置的只读快照。编辑者可以保存覆盖设置并重处理分段。",
+  "Text preprocessing rules": "文本预处理规则",
+  "Remove extra spaces": "移除多余空白",
+  "Remove bare URLs and emails": "移除裸 URL 和邮箱",
+  "Segment chars": "分段字符数",
+  Delimiter: "分隔符",
+  "Standard segmentation uses one segment level.": "普通分段只使用一层分段。",
+  "QA knowledge bases index active QA questions during reprocess and return answers in retrieval.":
+    "QA 知识库会在重处理时索引活跃问题，并在检索中返回答案。",
+  "Parent-child knowledge bases show child segments inside each parent segment. Edit segment status and overrides from the segment settings workflow.":
+    "父子知识库会把子分段显示在父分段内。分段状态和覆盖内容请在分段设置流程中管理。",
+  "Save segment settings": "保存分段设置",
+  "Requires reprocess": "需要重处理",
+  "Parent-child mode": "父子分段模式",
+  "Paragraph parent-child": "段落父子",
+  "Full-doc parent-child": "全文父子",
+  "Dify uses paragraph parent-child or full-doc parent-child at the document level. Changing this only marks segments stale until you reprocess.":
+    "Dify 在文档层面使用“段落父子”或“全文父子”。修改这里只会标记 Segments 过期，需要显式重处理后生效。",
+  "Only parent-child documents use this setting.": "只有父子文档会使用这个设置。",
+  "Segment-{number}": "分段-{number}",
+  "{count} characters": "{count} 字符",
+  "Recall count not available": "召回次数 -",
+  "{count} child segments": "{count} 个子分段",
+  "Expand child segments": "展开子分段",
+  "Collapse child segments": "收起子分段",
+  "No child segments": "没有子分段",
   "QA updated. Reprocess segments, then rebuild Milvus index before retrieval updates.":
     "QA 已更新。请重处理 Segments，并在需要检索生效时重建 Milvus 索引。",
   "summary hit": "摘要命中",
@@ -877,6 +946,8 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Processing status": "处理状态",
   "Publishing, reprocessing, and Milvus index rebuild are separate steps. Reprocess updates PostgreSQL segments; index rebuild updates search, MCP, and Dify.":
     "发布、重处理和 Milvus 索引重建是三个独立步骤。重处理更新 PostgreSQL Segments；索引重建更新搜索、MCP 和 Dify。",
+  "Publishing automatically reprocesses this document's PostgreSQL segments. Milvus index rebuild is still separate and updates search, MCP, and Dify.":
+    "发布会自动重处理本文档的 PostgreSQL Segments；Milvus 索引重建仍是独立步骤，用于更新搜索、MCP 和 Dify。",
   "Document form": "文档形态",
   "Processing revision": "处理版本",
   "Current version id": "当前版本 ID",
@@ -1127,7 +1198,9 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Reprocess rebuilds PostgreSQL segments from Markdown. Search, MCP, and Dify still need a Milvus index rebuild before they use the new segments.":
     "重处理会从 Markdown 重建 PostgreSQL 分段；搜索、MCP 和 Dify 仍需要 Milvus 索引重建后才会使用新分段。",
   "Publishing, reprocessing, and Milvus index rebuild are separate steps. Reprocess updates PostgreSQL segments; index rebuild updates search, MCP, and Dify.":
-    "发布、重处理和 Milvus 索引重建是三个独立步骤。重处理更新 PostgreSQL 分段；索引重建更新搜索、MCP 和 Dify。",
+    "发布会自动重处理当前文档的 PostgreSQL 分段；Milvus 索引重建仍是独立步骤，用于更新搜索、MCP 和 Dify。",
+  "Publishing automatically reprocesses this document's PostgreSQL segments. Milvus index rebuild is still separate and updates search, MCP, and Dify.":
+    "发布会自动重处理本文档的 PostgreSQL 分段；Milvus 索引重建仍是独立步骤，用于更新搜索、MCP 和 Dify。",
   "Document published. Reprocess chunks before rebuilding the Milvus index.":
     "文档已发布。请先重处理分段，再按需重建 Milvus 索引。",
   "Document chunks reprocessed. Rebuild Milvus index when retrieval should update.":
@@ -1139,7 +1212,7 @@ Object.assign(ZH_CN_TRANSLATIONS, {
     "请先重处理分段，此文档才能按最新内容参与检索。",
   "Queue KB chunk rebuild": "排队 KB 分段重建",
   "Publish indexing help":
-    "发布只决定当前文档版本是否可进入检索候选；它不会同步重建 PostgreSQL 分段，也不会写入 Milvus embedding。内容或规则变化后请显式重处理分段，再按需执行 Milvus blue-green 索引重建。",
+    "发布会同步重处理当前文档的 PostgreSQL 分段，让当前版本具备检索候选资格；它不会写入 Milvus embedding，也不会切换 Milvus alias。需要检索、MCP 或 Dify 使用新内容时，请按需执行 Milvus blue-green 索引重建。",
   "Index rebuild creates a new Milvus collection from PostgreSQL chunks, writes BM25 and embedding fields, runs health checks, then switches the active alias. It is needed when the embedding model, vector dimension, schema, function configuration, or input modality changes. Publishing a document only makes its current chunks eligible for retrieval; it does not mutate the active collection inline.":
     "索引重建会从 PostgreSQL 分段创建新的 Milvus collection，写入 BM25 和 Embedding 字段，完成健康检查后再切换当前别名。更换 Embedding 模型、向量维度、schema、Function 配置或输入模态时需要重建。发布文档只让当前分段具备检索资格，不会在请求内直接修改当前 collection。",
 
@@ -1152,8 +1225,46 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Manage External Knowledge API keys and knowledge mappings.":
     "管理 Dify 外部知识库 API 密钥和知识映射。",
   "Create Dify API key": "创建 Dify API 密钥",
+  "Dify API key created": "Dify API 密钥已创建",
+  "Dify API key rotated": "Dify API 密钥已轮换",
   "Dify knowledge id": "Dify knowledge_id",
   "Allowed KB ids": "允许的知识库 ID",
+  "Use this guide when configuring Dify External Knowledge. Dify stores the endpoint and sends knowledge_id plus the bearer key to OpenKB.":
+    "配置 Dify 外部知识库时可以按这里操作。Dify 会保存端点，并把 knowledge_id 和 Bearer 密钥发送给 OpenKB。",
+  "Paste this base URL into Dify's External Knowledge API Endpoint. Dify 1.14 appends /retrieval itself, so do not add it in the Dify UI.":
+    "把这个 base URL 填到 Dify 的 External Knowledge API Endpoint。Dify 1.14 会自己拼接 /retrieval，Dify UI 里不要再加。",
+  "This is the External Knowledge ID configured in Dify. OpenKB maps it to one OpenKB knowledge base.":
+    "这是 Dify 里配置的 External Knowledge ID。OpenKB 会把它映射到一个 OpenKB 知识库。",
+  "These are fields Dify can send in metadata_condition. Business metadata comes from document metadata; openkb_* fields are diagnostics.":
+    "这些字段可由 Dify 通过 metadata_condition 传入。业务元数据来自文档元数据；openkb_* 字段主要用于诊断。",
+  "Create an OpenKB bearer key for Dify. Copy the revealed key into Dify's External Knowledge API Key field. Creating a key also creates or updates the matching knowledge mapping.":
+    "为 Dify 创建一个 OpenKB Bearer 密钥。把显示出来的密钥复制到 Dify 的 External Knowledge API Key 字段。创建密钥时也会创建或更新对应的知识映射。",
+  "Pick an OpenKB knowledge base first. OpenKB will suggest an External Knowledge ID and keep the API key scoped to the selected knowledge base.":
+    "先选择一个 OpenKB 知识库。OpenKB 会建议一个 External Knowledge ID，并把 API 密钥权限限制在选中的知识库范围内。",
+  "A local label for admins. Dify does not see this name.":
+    "仅供 OpenKB 管理员识别的本地名称，Dify 看不到这个名称。",
+  "The External Knowledge ID you will enter in Dify. It is not an OpenKB UUID; it is a stable identifier such as sanguo-openkb.":
+    "你会在 Dify 中填写的 External Knowledge ID。它不是 OpenKB UUID，而是类似 sanguo-openkb 的稳定标识。",
+  "Select the OpenKB knowledge base that this Dify knowledge_id should read.":
+    "选择这个 Dify knowledge_id 要读取的 OpenKB 知识库。",
+  "This is the security scope for the key. Keep it to the selected knowledge base unless the same Dify key must query several OpenKB knowledge bases.":
+    "这是这个密钥的安全范围。除非同一个 Dify 密钥需要查询多个 OpenKB 知识库，否则保持只勾选当前知识库。",
+  "Maximum records this key may return to Dify, regardless of Dify's requested top_k.":
+    "这个密钥最多能返回给 Dify 的记录数，即使 Dify 请求了更大的 top_k 也不会超过它。",
+  "Optional. Leave blank for a non-expiring development key.":
+    "可选。开发环境可以留空，表示不设置过期时间。",
+  "A mapping tells OpenKB which OpenKB knowledge base should answer when Dify sends a specific knowledge_id.":
+    "知识映射告诉 OpenKB：当 Dify 发送某个 knowledge_id 时，应该由哪个 OpenKB 知识库回答。",
+  "The same External Knowledge ID configured in Dify.":
+    "与 Dify 中配置一致的 External Knowledge ID。",
+  "Select the OpenKB knowledge base that should answer this Dify knowledge_id.":
+    "选择应该响应这个 Dify knowledge_id 的 OpenKB 知识库。",
+  "Select knowledge base": "选择知识库",
+  "No knowledge bases available": "暂无可选知识库",
+  "Copy this key into Dify's External Knowledge API Key field. Store it safely; it grants access to the allowed knowledge bases.":
+    "把这个密钥复制到 Dify 的 External Knowledge API Key 字段。请妥善保存；它可以访问已授权的知识库。",
+  "For safety, this dialog is the only place the raw key is shown during this action. Revealing it again requires an explicit admin action.":
+    "为了安全，本次操作中原始密钥只在这个弹窗里显示。再次查看需要管理员显式点击显示密钥。",
   "API keys": "API 密钥",
   "Secret reveal": "显示密钥",
   "Secret copied.": "密钥已复制。",

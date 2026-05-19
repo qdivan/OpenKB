@@ -57,6 +57,7 @@ type CreateKnowledgeBaseInput = {
   title?: string;
   slug?: string;
   visibility?: string;
+  doc_form?: string;
 };
 
 type UpdateKnowledgeBaseInput = {
@@ -441,6 +442,14 @@ export class ContentService {
     const title = requireText(input.title, "title");
     const slug = normalizeSlug(input.slug || title);
     const visibility = normalizeVisibility(input.visibility ?? "private");
+    const docForm =
+      input.doc_form === undefined || input.doc_form === null
+        ? "text_model"
+        : normalizeCreateDocForm(input.doc_form);
+    const processRuleMode = docForm === "hierarchical_model" ? "hierarchical" : "automatic";
+    const processRule = defaultProcessRule(docForm);
+    const parentMode = docForm === "hierarchical_model" ? "paragraph" : "paragraph";
+    const mode = docForm === "text_model" ? "general" : "parent_child";
     const now = new Date();
 
     const knowledgeBase = await this.prisma.$transaction(async (tx) => {
@@ -475,8 +484,11 @@ export class ContentService {
           tenant_id: workspace.tenant_id,
           workspace_id: created.workspace_id,
           knowledge_base_id: created.id,
-          mode: "parent_child",
-          parent_mode: "paragraph",
+          mode,
+          doc_form: docForm,
+          process_rule_mode: processRuleMode,
+          process_rule: processRule,
+          parent_mode: parentMode,
           updated_by: me.user.id
         }
       });
@@ -2156,15 +2168,49 @@ export class ContentService {
         400
       );
     }
-    await this.prisma.document.update({
-      where: { id: documentId },
-      data: {
-        status: "published",
-        updated_by: me.user.id,
-        updated_at: new Date()
-      }
+    const version = await this.prisma.documentVersion.findUnique({
+      where: { id: document.current_version_id }
     });
-    await this.writeAuditLog(this.prisma, me, "document.publish", "document", documentId);
+    if (!version) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Current document version was not found.", 404);
+    }
+    await this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      await tx.document.update({
+        where: { id: documentId },
+        data: {
+          status: "published",
+          updated_by: me.user.id,
+          updated_at: now
+        }
+      });
+      const shouldReprocess = await this.shouldReprocessDocumentOnPublish(
+        tx,
+        me,
+        document,
+        version
+      );
+      const result = shouldReprocess
+        ? await this.replaceChunksForDocumentVersion(
+            tx,
+            me,
+            document.id,
+            version.id,
+            version.markdown,
+            now
+          )
+        : { qaPairsSkipped: 0 };
+      await this.writeAuditLog(tx, me, "document.publish", "document", documentId, {
+        reprocessed: shouldReprocess,
+        ...(shouldReprocess
+          ? {
+              reprocessed_version_id: version.id,
+              markdown_hash: version.markdown_hash,
+              qa_pairs_skipped: result.qaPairsSkipped
+            }
+          : {})
+      });
+    });
     return this.getDocument(sessionToken, documentId);
   }
 
@@ -3262,6 +3308,42 @@ export class ContentService {
       }
     });
     return { qaPairsSkipped: qaPairSelection.skipped };
+  }
+
+  private async shouldReprocessDocumentOnPublish(
+    tx: Prisma.TransactionClient | PrismaClient,
+    me: AuthenticatedUser,
+    document: {
+      id: string;
+      knowledge_base_id: string;
+      processing_status: string;
+      process_rule_snapshot: Prisma.JsonValue | null;
+    },
+    version: { id: string; markdown: string }
+  ) {
+    const knowledgeBase = await tx.knowledgeBase.findUnique({
+      where: { id: document.knowledge_base_id }
+    });
+    if (!knowledgeBase) {
+      return true;
+    }
+    const settings = await this.getOrCreateChunkSettings(tx, me, knowledgeBase);
+    const contentChunkCount = await tx.documentChunk.count({
+      where: {
+        document_id: document.id,
+        version_id: version.id,
+        index_role: "content"
+      }
+    });
+    if (contentChunkCount === 0 || document.processing_status !== "current") {
+      return true;
+    }
+    const snapshot = toRecord(document.process_rule_snapshot);
+    return (
+      snapshot.content_version_id !== version.id ||
+      snapshot.content_markdown_hash !== markdownHash(version.markdown) ||
+      snapshot.settings_revision !== settings.revision
+    );
   }
 
   private async getOrCreateChunkSettings(
@@ -4615,6 +4697,13 @@ function normalizeDocForm(value: unknown): "text_model" | "hierarchical_model" |
     return value;
   }
   return "hierarchical_model";
+}
+
+function normalizeCreateDocForm(value: unknown): "text_model" | "hierarchical_model" | "qa_model" {
+  if (value === "text_model" || value === "hierarchical_model" || value === "qa_model") {
+    return value;
+  }
+  throw new ContentError("INVALID_INPUT", "doc_form is invalid.", 400);
 }
 
 function normalizeIndexingTechnique(value: unknown): "economy" | "high_quality" {

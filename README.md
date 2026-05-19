@@ -19,7 +19,7 @@
   ·
   <a href="docs/00-index.zh-CN.md">文档</a>
   ·
-  <a href="docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md">Dify 1.14.1 对齐审计</a>
+  <a href="docs/26-dify-external-knowledge-setup.zh-CN.md">Dify 配置</a>
   ·
   <a href="docs/31-dify-parity-next-phases.zh-CN.md">后续路线</a>
 </p>
@@ -38,15 +38,17 @@
 
 OpenKB 是一个开源、自托管的团队知识库。它把文档正文、版本、协作者和权限放在 PostgreSQL 里，把 Milvus 当作可重建的检索索引。Web、MCP 和 Dify 返回结果前都会回到 PostgreSQL 做最终权限检查。
 
-当前主线处于 `v0.3.x / Phase 25`：Phase 22 已完成 Dify-like 处理规则、retrieval model、segment、QA/summary 和 Web 信息层级；Phase 23 补齐 chunk 参数与处理快照一致性；Phase 24 收口 QA parity；Phase 25 接入 Dify 风格的图片与附件检索底座。它适合本地开发、公网测试平台和私有化试跑，还不是生产 GA 版本。
+当前主线处于 `v0.3.x / Phase 25`：OpenKB 已支持 Dify External Knowledge 接入、Dify 风格的知识库处理配置、QA/摘要派生内容、图片与附件检索底座，以及同模型检索验证。它适合本地开发、公网测试平台和私有化试跑，还不是生产 GA 版本。
+
+最近的收口重点是稳定产品路径：只读用户可以查看文档分段；创建 Dify key 时默认只授权当前选择的知识库；创建知识库时会严格校验 `doc_form`，避免错误类型被静默兜底。
 
 ## Highlights
 
 - 语雀式知识库结构：工作区、知识库、目录、文档、协作者、邀请和只读分享。
 - Markdown-first 编辑：Milkdown 富文本体验，Markdown 版本仍是正文真相。
-- Dify-like 知识库处理：普通 RAG、父子检索、QA 知识库、显式 reprocess、segment override、summary index、图片/附件命中回源。
-- Dify-compatible parity：新建或显式 reprocess 后按 Dify 1.14.1 recursive splitter 行为生成 PostgreSQL segments；Dify Adapter 对 QA、summary、metadata 和 tags 使用更接近 Dify 内部知识库的语义。
-- Phase 25 已跑真实验收：同一 corpus、同一 qwen3-vl embedding/rerank、同一 hybrid/rerank 开关完成 240 条 live retrieval parity；内部 `asset://` 图片完成 image vector smoke。
+- Dify 配合：OpenKB 可以作为 Dify External Knowledge API 使用，按 `knowledge_id` 映射到授权知识库。
+- Dify 风格知识库处理：普通 RAG、父子检索、QA 知识库、显式 reprocess、segment override、summary index、图片/附件命中回源。
+- Phase 25 已跑真实验收：同一 corpus、同一 qwen3-vl embedding/rerank、同一 hybrid/rerank 开关完成 240 条检索兼容性测试；内部 `asset://` 图片完成 image vector smoke。
 - 检索策略可解释：BM25、semantic、hybrid、rerank、parent-child 回填、metadata filters 和命中解释。
 - 安全接入：MCP 绑定真实用户；Dify 绑定 app key 和 allowed KB scope。
 - 运维控制台：用户、模型、导入工具、Dify、MCP、索引、SMTP、审计和安全运维入口。
@@ -114,14 +116,14 @@ then check the database, schema, and interfaces:
 
 Local Phase 25 evidence is kept out of git:
 
-- Live retrieval parity: `.codex-runtime/parity-runs/20260517T135537Z/retrieval/`
+- Live retrieval compatibility run: `.codex-runtime/parity-runs/20260517T135537Z/retrieval/`
 - Image-capable smoke: `.codex-runtime/phase25-smoke/image-smoke-summary.json`
 
 ## Releases
 
-- [`phase-21`](https://github.com/qdivan/OpenKB/releases/tag/phase-21): Dify External Knowledge 原生体验补强，包含配置向导、Dify 友好 metadata、KB metadata schema 和文档 metadata values。
-- [`phase-22`](https://github.com/qdivan/OpenKB/releases/tag/phase-22): Dify 1.14.1 知识库处理与检索逻辑对齐，包含分块/reprocess、retrieval model、segment 管理、QA/summary 和 Web 信息层级。
-- [`phase-25`](https://github.com/qdivan/OpenKB/releases/tag/phase-25): Phase 23-25 稳定收口，包含 chunk 参数一致性、QA parity、图片与附件检索、同模型 live retrieval parity 和 image-capable smoke 验收。
+- [`phase-21`](https://github.com/qdivan/OpenKB/releases/tag/phase-21): Dify External Knowledge 接入体验补强，包含配置向导、Dify 可读 metadata、KB metadata schema 和文档 metadata values。
+- [`phase-22`](https://github.com/qdivan/OpenKB/releases/tag/phase-22): Dify 风格知识库处理与检索配置，包含分块/reprocess、retrieval model、segment 管理、QA/summary 和 Web 信息层级。
+- [`phase-25`](https://github.com/qdivan/OpenKB/releases/tag/phase-25): Phase 23-25 稳定收口，包含 chunk 参数一致性、QA 兼容语义、图片与附件检索、同模型检索兼容性测试和 image-capable smoke 验收。
 
 ## Documentation
 
@@ -130,10 +132,10 @@ Local Phase 25 evidence is kept out of git:
 - [检索与 Milvus](docs/09-search-rag-milvus-native.zh-CN.md)
 - [Dify Adapter](docs/11-dify-adapter.zh-CN.md)
 - [Dify External Knowledge 配置指南](docs/26-dify-external-knowledge-setup.zh-CN.md)
-- [Dify 1.14.1 对齐计划](docs/27-dify-knowledge-alignment.zh-CN.md)
-- [Dify 1.14.1 差异审计](docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md)
-- [Dify parity v2 工程基线](docs/30-dify-parity-v2-analysis.zh-CN.md)
-- [Dify parity 后续路线](docs/31-dify-parity-next-phases.zh-CN.md)
+- [Dify 配合与兼容性基线](docs/27-dify-knowledge-alignment.zh-CN.md)
+- [Dify 1.14.1 工程审计记录](docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md)
+- [Dify 兼容性测试基线](docs/30-dify-parity-v2-analysis.zh-CN.md)
+- [Dify 集成后续路线](docs/31-dify-parity-next-phases.zh-CN.md)
 - [本地快速开始](docs/25-local-quickstart.zh-CN.md)
 - [部署说明](docs/13-deployment.zh-CN.md)
 

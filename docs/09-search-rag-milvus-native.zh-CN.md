@@ -281,7 +281,7 @@ resolve caller identity
 
 ## 11. 父子检索和全文上下文
 
-Phase 13 已实现 Dify-like 的上下文模式：
+Phase 13 已实现 Dify 风格的上下文模式：
 
 ```text
 chunk

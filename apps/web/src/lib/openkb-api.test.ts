@@ -7,6 +7,7 @@ import {
   createShareLink,
   clearAdminModelSecret,
   clearAdminImportToolSecret,
+  createKnowledgeBase,
   createKnowledgeBaseMetadataField,
   createAdminUser,
   getShare,
@@ -160,6 +161,33 @@ describe("OpenKB API client", () => {
             segmentation: { separator: "\n\n", max_tokens: 1024, chunk_overlap: 80 },
             subchunk_segmentation: { separator: "\n", max_tokens: 512, chunk_overlap: 50 }
           }
+        })
+      })
+    );
+  });
+
+  it("sends doc_form when creating a knowledge base", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createKnowledgeBase({
+      workspace_id: "ws_1",
+      title: "QA Library",
+      slug: "qa-library",
+      visibility: "workspace",
+      doc_form: "qa_model"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/knowledge-bases",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          workspace_id: "ws_1",
+          title: "QA Library",
+          slug: "qa-library",
+          visibility: "workspace",
+          doc_form: "qa_model"
         })
       })
     );

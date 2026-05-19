@@ -1190,6 +1190,7 @@ export function createKnowledgeBase(input: {
   title: string;
   slug?: string;
   visibility?: KnowledgeBase["visibility"];
+  doc_form?: ChunkSettings["doc_form"];
 }) {
   return apiFetch<KnowledgeBase>("/api/knowledge-bases", {
     method: "POST",

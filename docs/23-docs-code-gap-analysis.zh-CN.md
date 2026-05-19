@@ -8,7 +8,7 @@
 
 - Phase 20 生产增强已进入主线：SMTP、CSRF、MCP OAuth、ops health、metrics、backup/restore、security 页面和部署 env 透传。
 - Phase 21 Dify External Knowledge 原生体验已进入主线：配置向导、Dify 友好 metadata、KB metadata schema、文档 metadata values。
-- Phase 22.2-22.6 已完成基础闭环：Dify-like process rule、显式 reprocess、retrieval_model 注入、segment 管理、QA/summary、Web 信息层级。
+- Phase 22.2-22.6 已完成基础闭环：Dify 风格 process rule、显式 reprocess、retrieval_model 注入、segment 管理、QA/summary、Web 信息层级。
 - Phase 22.8-22.9 聚焦 Dify parity v2：Dify 1.14.1-compatible splitter、新建/显式 reprocess 后的边界收敛、QA 对外语义、metadata/tags、segment lifecycle 和同模型检索基线。
 - Phase 23-25 已继续收口：chunk 参数一致性、QA parity、图片与附件检索底座进入主线；稳定版验收以 README、`docs/13`、`docs/30`、`docs/31` 为准。
 

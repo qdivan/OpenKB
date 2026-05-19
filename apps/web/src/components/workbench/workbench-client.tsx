@@ -55,6 +55,7 @@ import {
   useRef,
   useState,
   type ForwardRefExoticComponent,
+  type FormEvent,
   type LazyExoticComponent,
   type MouseEvent,
   type ReactNode,
@@ -106,6 +107,7 @@ import {
   takeoverContentAccess,
   updateDocument,
   updateDocumentQaPair,
+  updateDocumentProcessing,
   updateDocumentSegment,
   updateDocumentMetadata,
   updateWorkspace,
@@ -122,6 +124,7 @@ import {
   type DocumentVersion,
   type DocumentVersionSummary,
   type ImportJob,
+  type ChunkSettings,
   type KnowledgeBase,
   type Workspace
 } from "@/lib/openkb-api";
@@ -132,7 +135,7 @@ export type WorkbenchClientProps = {
   initialDocumentId?: string;
 };
 
-type EditorMode = "read" | "edit" | "source";
+type EditorMode = "read" | "edit" | "segments" | "source";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
 type DocumentSideTab =
   | "outline"
@@ -235,6 +238,9 @@ export function WorkbenchClient({
   const [documentMetadataLoading, setDocumentMetadataLoading] = useState(false);
   const [documentMetadataSaving, setDocumentMetadataSaving] = useState(false);
   const [documentSideRefreshKey, setDocumentSideRefreshKey] = useState(0);
+  const [createKbDialogOpen, setCreateKbDialogOpen] = useState(false);
+  const [createKbTitle, setCreateKbTitle] = useState("");
+  const [createKbDocForm, setCreateKbDocForm] = useState<ChunkSettings["doc_form"]>("text_model");
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const selectedKnowledgeBase = knowledgeBases.find(
@@ -296,7 +302,7 @@ export function WorkbenchClient({
   }, [hasUnsavedChanges]);
 
   useEffect(() => {
-    if (currentDocument && !canEditCurrentDocument && mode !== "read") {
+    if (currentDocument && !canEditCurrentDocument && mode !== "read" && mode !== "segments") {
       setMode("read");
     }
   }, [canEditCurrentDocument, currentDocument, mode]);
@@ -314,7 +320,17 @@ export function WorkbenchClient({
   }, [currentDocument?.id]);
 
   useEffect(() => {
-    if (documentSideTab !== "chunks" || !currentDocument || !selectedKnowledgeBaseId) {
+    if (
+      documentSideTab !== "outline" &&
+      documentSideTab !== "metadata" &&
+      documentSideTab !== "versions"
+    ) {
+      setDocumentSideTab("outline");
+    }
+  }, [documentSideTab]);
+
+  useEffect(() => {
+    if (mode !== "segments" || !currentDocument || !selectedKnowledgeBaseId) {
       return;
     }
 
@@ -344,16 +360,10 @@ export function WorkbenchClient({
     return () => {
       cancelled = true;
     };
-  }, [
-    currentDocument,
-    documentSideRefreshKey,
-    documentSideTab,
-    selectedKnowledgeBaseId,
-    showDeletedSegments
-  ]);
+  }, [currentDocument, documentSideRefreshKey, mode, selectedKnowledgeBaseId, showDeletedSegments]);
 
   useEffect(() => {
-    if (documentSideTab !== "qa" || !currentDocument) {
+    if (mode !== "segments" || !currentDocument) {
       return;
     }
 
@@ -379,10 +389,10 @@ export function WorkbenchClient({
     return () => {
       cancelled = true;
     };
-  }, [currentDocument, documentSideRefreshKey, documentSideTab]);
+  }, [currentDocument, documentSideRefreshKey, mode]);
 
   useEffect(() => {
-    if (documentSideTab !== "summary" || !currentDocument) {
+    if (mode !== "segments" || !currentDocument) {
       return;
     }
 
@@ -408,7 +418,7 @@ export function WorkbenchClient({
     return () => {
       cancelled = true;
     };
-  }, [currentDocument, documentSideRefreshKey, documentSideTab]);
+  }, [currentDocument, documentSideRefreshKey, mode]);
 
   useEffect(() => {
     if (documentSideTab !== "versions" || !currentDocument) {
@@ -1075,12 +1085,17 @@ export function WorkbenchClient({
     if (!selectedWorkspaceId) {
       return;
     }
-    const title = await dialog.requestTextInput({
-      title: t("Create knowledge base"),
-      label: t("Knowledge base title"),
-      placeholder: t("Knowledge base title"),
-      confirmLabel: t("Create")
-    });
+    setCreateKbTitle("");
+    setCreateKbDocForm("text_model");
+    setCreateKbDialogOpen(true);
+  }
+
+  async function handleSubmitCreateKnowledgeBase(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    const title = createKbTitle.trim();
     if (!title) {
       return;
     }
@@ -1091,9 +1106,12 @@ export function WorkbenchClient({
         workspace_id: selectedWorkspaceId,
         title,
         slug: slugFromTitle(title, "kb"),
-        visibility: "workspace"
+        visibility: "workspace",
+        doc_form: createKbDocForm
       });
       setKnowledgeBases((items) => [...items, knowledgeBase]);
+      setCreateKbDialogOpen(false);
+      setCreateKbTitle("");
       await loadKnowledgeBase(knowledgeBase.id);
       pushWorkbenchUrl(`/app/kb/${knowledgeBase.id}`);
     } catch (error) {
@@ -1496,7 +1514,9 @@ export function WorkbenchClient({
       setDocumentSideRefreshKey((value) => value + 1);
       setMessage(
         updated.status === "published"
-          ? t("Document published. Reprocess segments before rebuilding the Milvus index.")
+          ? t(
+              "Document published and segments reprocessed. Rebuild the Milvus index when retrieval should update."
+            )
           : t("Document unpublished. Rebuild the search index to remove stale retrieval results.")
       );
     } catch (error) {
@@ -1604,6 +1624,37 @@ export function WorkbenchClient({
       setMessage(
         t("Document segments reprocessed. Rebuild Milvus index when retrieval should update.")
       );
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleUpdateDocumentParentMode(parentMode: "paragraph" | "full_doc") {
+    await handleUpdateDocumentProcessingSettings({ parent_mode: parentMode });
+  }
+
+  async function handleUpdateDocumentProcessingSettings(input: {
+    parent_mode?: "paragraph" | "full_doc";
+    process_rule?: unknown;
+  }) {
+    if (!currentDocument || currentDocument.type !== "page") {
+      return;
+    }
+    if (hasUnsavedChanges || saveState === "saving") {
+      setMessage(t("Save the document before changing processing settings."));
+      return;
+    }
+    setIsBusy(true);
+    setMessage("");
+    try {
+      await updateDocumentProcessing(currentDocument.id, input);
+      const updated = await getDocument(currentDocument.id);
+      setCurrentDocument(updated);
+      setDocuments((items) => updateDocumentInList(items, updated));
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(t("Document processing settings updated. Reprocess segments to apply them."));
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -1848,8 +1899,8 @@ export function WorkbenchClient({
   );
 
   return (
-    <main className="flex min-h-screen bg-zinc-50 text-zinc-950">
-      <aside className="hidden w-64 shrink-0 border-r border-zinc-200 bg-white md:flex md:flex-col">
+    <main className="flex h-screen overflow-hidden bg-zinc-50 text-zinc-950">
+      <aside className="hidden h-full w-64 shrink-0 overflow-hidden border-r border-zinc-200 bg-white md:flex md:flex-col">
         <div className="flex h-14 items-center gap-2 border-b border-zinc-200 px-4">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-600 text-sm font-semibold text-white">
             OK
@@ -1904,7 +1955,7 @@ export function WorkbenchClient({
         </div>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-600 text-sm font-semibold text-white md:hidden">
@@ -1971,8 +2022,8 @@ export function WorkbenchClient({
         {isBooting ? (
           <LoadingState />
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_240px]">
-            <aside className="min-h-0 border-b border-zinc-200 bg-zinc-50/70 lg:border-b-0 lg:border-r">
+          <div className="grid min-h-0 flex-1 overflow-hidden grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_240px]">
+            <aside className="flex min-h-0 flex-col overflow-hidden border-b border-zinc-200 bg-zinc-50/70 lg:border-b-0 lg:border-r">
               <div className="flex h-12 items-center justify-between border-b border-zinc-200 px-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{t("Documents")}</p>
@@ -2046,7 +2097,7 @@ export function WorkbenchClient({
                 type="file"
               />
 
-              <div className="max-h-72 overflow-y-auto px-2 py-3 lg:max-h-none">
+              <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
                 {tree.length > 0 ? (
                   tree.map((node) => (
                     <TreeItem
@@ -2078,14 +2129,23 @@ export function WorkbenchClient({
               </div>
             </aside>
 
-            <article className="min-w-0 bg-white">
+            <article className="min-h-0 min-w-0 overflow-hidden bg-white">
               {currentDocument ? (
-                <div className="flex h-full min-h-[680px] flex-col">
+                <div className="flex h-full min-h-0 flex-col">
                   <div className="border-b border-zinc-200 px-5 py-4">
                     <div className="flex flex-wrap items-center gap-2">
-                      {currentDocument.type === "page" && canEditCurrentDocument ? (
+                      {currentDocument.type === "page" ? (
                         <ModeSwitch
-                          mode={mode === "source" ? "source" : "edit"}
+                          canEdit={canEditCurrentDocument}
+                          mode={
+                            mode === "source"
+                              ? "source"
+                              : mode === "segments"
+                                ? "segments"
+                                : canEditCurrentDocument
+                                  ? "edit"
+                                  : "read"
+                          }
                           onChange={(nextMode) => setMode(nextMode)}
                         />
                       ) : (
@@ -2111,7 +2171,13 @@ export function WorkbenchClient({
                                 ? t("Published")
                                 : t("Publish")}
                             </button>
-                            <HelpTip text={t("Publish indexing help")} />
+                            <HelpTip
+                              text={t(
+                                "Publish indexing help",
+                                undefined,
+                                "Publishing automatically reprocesses this document's PostgreSQL segments. It does not write Milvus embeddings or switch the Milvus alias; rebuild the Milvus index when search, MCP, or Dify should use the new content."
+                              )}
+                            />
                           </span>
                         ) : null}
                         <button
@@ -2226,7 +2292,7 @@ export function WorkbenchClient({
 
                   <div
                     ref={editorPaneRef}
-                    className="min-h-0 flex-1 px-5 py-5"
+                    className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
                     onClick={handleDocumentPaneClick}
                   >
                     {currentDocument.type === "folder" ? (
@@ -2240,6 +2306,26 @@ export function WorkbenchClient({
                         onChange={(event) => setDraftMarkdown(event.target.value)}
                         spellCheck={false}
                         value={draftMarkdown}
+                      />
+                    ) : mode === "segments" ? (
+                      <DocumentSegmentsView
+                        chunks={documentChunks}
+                        currentDocument={currentDocument}
+                        documentQaLoading={documentQaLoading}
+                        documentQaPairs={documentQaPairs}
+                        documentSummaries={documentSummaries}
+                        documentSummariesLoading={documentSummariesLoading}
+                        hasUnsavedChanges={hasUnsavedChanges}
+                        loading={documentChunksLoading}
+                        onCreateQaPair={(input) => void handleCreateQaPair(input)}
+                        onGenerateQaPairs={(input) => void handleGenerateQaPairs(input)}
+                        onGenerateSummary={(input) => void handleGenerateSummary(input)}
+                        onImportQaPairs={(csv) => void handleImportQaPairs(csv)}
+                        onReprocessDocument={() => void handleReprocessDocument()}
+                        onUpdateDocumentProcessing={(input) =>
+                          void handleUpdateDocumentProcessingSettings(input)
+                        }
+                        onUpdateQaPair={(qaPair, patch) => void handleUpdateQaPair(qaPair, patch)}
                       />
                     ) : (
                       <div className="openkb-milkdown-shell">
@@ -2281,53 +2367,74 @@ export function WorkbenchClient({
               )}
             </article>
 
-            <aside className="hidden min-h-0 border-l border-zinc-200 bg-zinc-50/70 xl:block">
-              <DocumentSidePanel
-                activeOutlineId={activeOutlineId}
-                chunks={documentChunks}
-                chunksLoading={documentChunksLoading}
-                currentDocument={currentDocument}
-                currentMarkdown={savedMarkdown}
-                documentQaPairs={documentQaPairs}
-                documentQaLoading={documentQaLoading}
-                documentSummaries={documentSummaries}
-                documentSummariesLoading={documentSummariesLoading}
-                metadata={documentMetadata}
-                metadataDraft={documentMetadataDraft}
-                metadataLoading={documentMetadataLoading}
-                metadataSaving={documentMetadataSaving}
-                onIncludeDeletedSegmentsChange={setShowDeletedSegments}
-                onOpenDashboard={() => {
-                  if (selectedKnowledgeBaseId) {
-                    void selectKnowledgeBase(selectedKnowledgeBaseId);
-                  }
-                }}
-                onMetadataDraftChange={(name, value) =>
-                  setDocumentMetadataDraft((current) => ({ ...current, [name]: value }))
-                }
-                onCreateQaPair={(input) => void handleCreateQaPair(input)}
-                onGenerateQaPairs={(input) => void handleGenerateQaPairs(input)}
-                onGenerateSummary={(input) => void handleGenerateSummary(input)}
-                onImportQaPairs={(csv) => void handleImportQaPairs(csv)}
-                onReprocessDocument={() => void handleReprocessDocument()}
-                onRestoreVersion={(versionId) => void handleRestoreVersion(versionId)}
-                onSaveMetadata={() => void handleSaveDocumentMetadata()}
-                onSelectOutline={jumpToOutlineItem}
-                onSelectTab={setDocumentSideTab}
-                onSelectVersion={setSelectedVersionId}
-                onUpdateQaPair={(qaPair, patch) => void handleUpdateQaPair(qaPair, patch)}
-                onUpdateSegment={(chunk, patch) => void handleUpdateDocumentSegment(chunk, patch)}
-                outline={outline}
-                references={markdownReferences}
-                selectedVersion={selectedVersion}
-                selectedVersionId={selectedVersionId}
-                selectedVersionLoading={selectedVersionLoading}
-                showDeletedSegments={showDeletedSegments}
-                tab={documentSideTab}
-                versions={documentVersions}
-                versionsLoading={documentVersionsLoading}
-                onOpenDocument={(documentId) => void selectDocument(documentId)}
-              />
+            <aside className="hidden min-h-0 overflow-hidden border-l border-zinc-200 bg-zinc-50/70 xl:flex xl:flex-col">
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {currentDocument ? (
+                  <DocumentSidePanel
+                    activeOutlineId={activeOutlineId}
+                    chunks={documentChunks}
+                    chunksLoading={documentChunksLoading}
+                    currentDocument={currentDocument}
+                    currentMarkdown={savedMarkdown}
+                    documentQaPairs={documentQaPairs}
+                    documentQaLoading={documentQaLoading}
+                    documentSummaries={documentSummaries}
+                    documentSummariesLoading={documentSummariesLoading}
+                    metadata={documentMetadata}
+                    metadataDraft={documentMetadataDraft}
+                    metadataLoading={documentMetadataLoading}
+                    metadataSaving={documentMetadataSaving}
+                    onIncludeDeletedSegmentsChange={setShowDeletedSegments}
+                    onOpenDashboard={() => {
+                      if (selectedKnowledgeBaseId) {
+                        void selectKnowledgeBase(selectedKnowledgeBaseId);
+                      }
+                    }}
+                    onMetadataDraftChange={(name, value) =>
+                      setDocumentMetadataDraft((current) => ({ ...current, [name]: value }))
+                    }
+                    onCreateQaPair={(input) => void handleCreateQaPair(input)}
+                    onGenerateQaPairs={(input) => void handleGenerateQaPairs(input)}
+                    onGenerateSummary={(input) => void handleGenerateSummary(input)}
+                    onImportQaPairs={(csv) => void handleImportQaPairs(csv)}
+                    onReprocessDocument={() => void handleReprocessDocument()}
+                    onRestoreVersion={(versionId) => void handleRestoreVersion(versionId)}
+                    onSaveMetadata={() => void handleSaveDocumentMetadata()}
+                    onSelectOutline={jumpToOutlineItem}
+                    onSelectTab={setDocumentSideTab}
+                    onSelectVersion={setSelectedVersionId}
+                    onUpdateDocumentParentMode={(parentMode) =>
+                      void handleUpdateDocumentParentMode(parentMode)
+                    }
+                    onUpdateQaPair={(qaPair, patch) => void handleUpdateQaPair(qaPair, patch)}
+                    onUpdateSegment={(chunk, patch) =>
+                      void handleUpdateDocumentSegment(chunk, patch)
+                    }
+                    outline={outline}
+                    references={markdownReferences}
+                    selectedVersion={selectedVersion}
+                    selectedVersionId={selectedVersionId}
+                    selectedVersionLoading={selectedVersionLoading}
+                    showDeletedSegments={showDeletedSegments}
+                    tab={documentSideTab}
+                    versions={documentVersions}
+                    versionsLoading={documentVersionsLoading}
+                    onOpenDocument={(documentId) => void selectDocument(documentId)}
+                  />
+                ) : (
+                  <KnowledgeBaseSidePanel
+                    contentLocked={selectedKnowledgeBaseContentLocked}
+                    documents={documents}
+                    isBusy={isBusy}
+                    knowledgeBase={selectedKnowledgeBase}
+                    onCreateDocument={() => void handleCreateDocument("page")}
+                    onCreateFolder={() => void handleCreateDocument("folder")}
+                    onOpenAccess={() => setActiveWorkbenchPanel("access")}
+                    onOpenShare={() => setActiveWorkbenchPanel("share")}
+                    workspace={selectedWorkspace}
+                  />
+                )}
+              </div>
               <div className="border-t border-zinc-200 px-4 py-4">
                 <button
                   className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
@@ -2356,6 +2463,17 @@ export function WorkbenchClient({
           targets={accessTargets}
         />
       ) : null}
+      {createKbDialogOpen ? (
+        <CreateKnowledgeBaseDialog
+          disabled={isBusy}
+          docForm={createKbDocForm}
+          onClose={() => setCreateKbDialogOpen(false)}
+          onDocFormChange={setCreateKbDocForm}
+          onSubmit={handleSubmitCreateKnowledgeBase}
+          onTitleChange={setCreateKbTitle}
+          title={createKbTitle}
+        />
+      ) : null}
     </main>
   );
 }
@@ -2382,6 +2500,141 @@ function PanelHeader({
       >
         <Plus className="h-3.5 w-3.5" />
       </button>
+    </div>
+  );
+}
+
+function CreateKnowledgeBaseDialog({
+  disabled,
+  docForm,
+  onClose,
+  onDocFormChange,
+  onSubmit,
+  onTitleChange,
+  title
+}: {
+  disabled: boolean;
+  docForm: ChunkSettings["doc_form"];
+  onClose: () => void;
+  onDocFormChange: (value: ChunkSettings["doc_form"]) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onTitleChange: (value: string) => void;
+  title: string;
+}) {
+  const { t } = useI18n();
+  const options: Array<{
+    docForm: ChunkSettings["doc_form"];
+    icon: ReactNode;
+    title: string;
+    description: string;
+  }> = [
+    {
+      docForm: "text_model",
+      icon: <FileText className="h-4 w-4" />,
+      title: "Segment knowledge base",
+      description: "Use standard segmentation for ordinary Markdown documents."
+    },
+    {
+      docForm: "hierarchical_model",
+      icon: <BookOpen className="h-4 w-4" />,
+      title: "Parent-child knowledge base",
+      description: "Use paragraph parent-child or full-doc parent-child retrieval."
+    },
+    {
+      docForm: "qa_model",
+      icon: <Sparkles className="h-4 w-4" />,
+      title: "QA knowledge base",
+      description: "Index questions and return answers through search, MCP, and Dify."
+    }
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 p-4">
+      <form
+        className="w-full max-w-2xl rounded-lg border border-zinc-200 bg-white p-5 shadow-xl"
+        onSubmit={onSubmit}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-950">{t("Create knowledge base")}</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              {t("Choose a knowledge base type first. You can change it later in settings.")}
+            </p>
+          </div>
+          <button
+            className="icon-button"
+            disabled={disabled}
+            onClick={onClose}
+            title={t("Cancel")}
+            type="button"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+
+        <label className="mt-5 block text-sm">
+          <span className="mb-1 block font-medium text-zinc-600">{t("Knowledge base title")}</span>
+          <input
+            autoFocus
+            className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-500"
+            disabled={disabled}
+            onChange={(event) => onTitleChange(event.target.value)}
+            placeholder={t("Knowledge base title")}
+            value={title}
+          />
+        </label>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {options.map((option) => {
+            const selected = docForm === option.docForm;
+            return (
+              <button
+                className={`rounded-md border p-3 text-left transition ${
+                  selected
+                    ? "border-emerald-400 bg-emerald-50 text-emerald-950"
+                    : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50"
+                }`}
+                disabled={disabled}
+                key={option.docForm}
+                onClick={() => onDocFormChange(option.docForm)}
+                type="button"
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  <span
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${
+                      selected ? "bg-emerald-600 text-white" : "bg-zinc-100 text-zinc-600"
+                    }`}
+                  >
+                    {option.icon}
+                  </span>
+                  {t(option.title)}
+                </span>
+                <span className="mt-2 block text-xs leading-5 text-zinc-500">
+                  {t(option.description)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            disabled={disabled}
+            onClick={onClose}
+            type="button"
+          >
+            {t("Cancel")}
+          </button>
+          <button
+            className="inline-flex h-9 items-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+            disabled={disabled || !title.trim()}
+            type="submit"
+          >
+            {t("Create")}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -2533,6 +2786,1200 @@ function TreeGuides({ depth }: { depth: number }) {
   );
 }
 
+function KnowledgeBaseSidePanel({
+  contentLocked,
+  documents,
+  isBusy,
+  knowledgeBase,
+  onCreateDocument,
+  onCreateFolder,
+  onOpenAccess,
+  onOpenShare,
+  workspace
+}: {
+  contentLocked: boolean;
+  documents: DocumentSummary[];
+  isBusy: boolean;
+  knowledgeBase: KnowledgeBase | undefined;
+  onCreateDocument: () => void;
+  onCreateFolder: () => void;
+  onOpenAccess: () => void;
+  onOpenShare: () => void;
+  workspace: Workspace | undefined;
+}) {
+  const { t } = useI18n();
+  const pages = documents.filter((document) => document.type === "page").length;
+  const folders = documents.filter((document) => document.type === "folder").length;
+  const needsReprocess = documents.filter(
+    (document) => document.processing_status === "needs_reprocess"
+  ).length;
+  const canCreate = Boolean(knowledgeBase) && !contentLocked && !isBusy;
+
+  return (
+    <div className="min-h-0">
+      <div className="border-b border-zinc-200 px-4 py-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+            <BookOpen className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-zinc-950">
+              {knowledgeBase?.title ?? t("No knowledge base selected")}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {workspace?.name ?? t("No workspace selected")}
+            </p>
+          </div>
+        </div>
+        <p className="mt-3 text-xs leading-5 text-zinc-500">
+          {t(
+            "This side panel follows the knowledge base home. Select a page to view document outline, segments, QA, summary, metadata, and versions."
+          )}
+        </p>
+      </div>
+
+      {knowledgeBase ? (
+        <div className="space-y-4 px-4 py-4">
+          <div className="grid grid-cols-2 gap-2">
+            <KnowledgeBaseSideMetric
+              icon={<FileText className="h-4 w-4" />}
+              label={t("Pages")}
+              value={pages}
+            />
+            <KnowledgeBaseSideMetric
+              icon={<Folder className="h-4 w-4" />}
+              label={t("Folders")}
+              value={folders}
+            />
+          </div>
+
+          <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+            <div className="grid gap-2">
+              <SnapshotRow label={t("Visibility")} value={t(knowledgeBase.visibility)} />
+              <SnapshotRow label={t("Status")} value={t(knowledgeBase.status)} />
+              <SnapshotRow label={t("Role")} value={t(knowledgeBase.role ?? "-")} />
+              <SnapshotRow
+                label={t("Needs reprocess")}
+                value={t("{count} documents", { count: needsReprocess })}
+              />
+            </div>
+          </div>
+
+          {contentLocked ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+              <p className="font-semibold">{t("Admin visible, content locked")}</p>
+              <p className="mt-1">
+                {t(
+                  "You can manage metadata here, but private content requires an audited takeover before document panels are available."
+                )}
+              </p>
+            </div>
+          ) : null}
+
+          <div className="grid gap-2">
+            <button
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-zinc-300"
+              disabled={!canCreate}
+              onClick={onCreateDocument}
+              type="button"
+            >
+              <Plus className="h-4 w-4" />
+              {t("New document")}
+            </button>
+            <button
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:text-zinc-300"
+              disabled={!canCreate}
+              onClick={onCreateFolder}
+              type="button"
+            >
+              <FolderPlus className="h-4 w-4" />
+              {t("New folder")}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              onClick={onOpenAccess}
+              type="button"
+            >
+              <Users className="h-3.5 w-3.5" />
+              {t("Access")}
+            </button>
+            <button
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              onClick={onOpenShare}
+              type="button"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              {t("Share")}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <EmptyPanel
+          title={t("No knowledge base selected")}
+          action={t("Select or create a knowledge base from the left rail.")}
+        />
+      )}
+    </div>
+  );
+}
+
+function KnowledgeBaseSideMetric({
+  icon,
+  label,
+  value
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white p-3">
+      <div className="flex items-center gap-2 text-xs text-zinc-500">
+        {icon}
+        {label}
+      </div>
+      <p className="mt-2 text-xl font-semibold text-zinc-950">{value}</p>
+    </div>
+  );
+}
+
+function DocumentSegmentsView({
+  chunks,
+  currentDocument,
+  documentQaLoading,
+  documentQaPairs,
+  documentSummaries,
+  documentSummariesLoading,
+  hasUnsavedChanges,
+  loading,
+  onCreateQaPair,
+  onGenerateQaPairs,
+  onGenerateSummary,
+  onImportQaPairs,
+  onReprocessDocument,
+  onUpdateDocumentProcessing,
+  onUpdateQaPair
+}: {
+  chunks: DocumentChunk[];
+  currentDocument: DocumentDetail;
+  documentQaLoading: boolean;
+  documentQaPairs: DocumentQaPair[];
+  documentSummaries: DocumentSummariesResponse | null;
+  documentSummariesLoading: boolean;
+  hasUnsavedChanges: boolean;
+  loading: boolean;
+  onCreateQaPair: (input: {
+    question: string;
+    answer: string;
+    source_chunk_id?: string | null;
+  }) => void;
+  onGenerateQaPairs: (input: {
+    mode: "llm" | "mock";
+    scope: "document" | "segments";
+    count?: number;
+    overwrite?: boolean;
+  }) => void;
+  onGenerateSummary: (input: Parameters<typeof generateDocumentSummary>[1]) => void;
+  onImportQaPairs: (csv: string) => void;
+  onReprocessDocument: () => void;
+  onUpdateDocumentProcessing: (input: {
+    parent_mode?: "paragraph" | "full_doc";
+    process_rule?: unknown;
+  }) => void;
+  onUpdateQaPair: (
+    qaPair: DocumentQaPair,
+    patch: Parameters<typeof updateDocumentQaPair>[2]
+  ) => void;
+}) {
+  const { t } = useI18n();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const visibleSegments = chunks.filter(
+    (chunk) => chunk.status !== "deleted" && isMeaningfulDocumentSegment(chunk)
+  );
+  const parents = visibleSegments.filter((chunk) => chunk.chunk_type === "parent");
+  const children = visibleSegments.filter((chunk) => chunk.chunk_type === "child");
+  const generalSegments = visibleSegments.filter((chunk) => chunk.chunk_type === "general");
+  const childrenByParent = new Map<string, DocumentChunk[]>();
+  for (const child of children) {
+    if (!child.parent_chunk_id) {
+      continue;
+    }
+    const current = childrenByParent.get(child.parent_chunk_id) ?? [];
+    current.push(child);
+    childrenByParent.set(child.parent_chunk_id, current);
+  }
+  const parentSegments = parents.map((parent) => ({
+    children: childrenByParent.get(parent.id) ?? [],
+    parent
+  }));
+  const parentCount = parents.length;
+  const childCount = children.length;
+  const generalCount = generalSegments.length;
+  const hasSegments = generalSegments.length > 0 || parentSegments.length > 0;
+  const canManageDerivedContent = canEditDocumentRole(currentDocument.role);
+  const isQaDocument = currentDocument.doc_form === "qa_model";
+  const isParentChildDocument = currentDocument.doc_form === "hierarchical_model";
+  const parentExpansionKey = parentSegments
+    .map(({ children, parent }) => `${parent.id}:${children.length}`)
+    .join("|");
+  const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(() => new Set());
+  const lastParentExpansionKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const parentSetChanged = lastParentExpansionKeyRef.current !== parentExpansionKey;
+    lastParentExpansionKeyRef.current = parentExpansionKey;
+    setExpandedParentIds((current) => {
+      const visibleParentIds = new Set(parentSegments.map(({ parent }) => parent.id));
+      const next = new Set([...current].filter((id) => visibleParentIds.has(id)));
+      if (parentSetChanged && next.size === 0) {
+        const firstExpandableParent = parentSegments.find(({ children }) => children.length > 0)
+          ?.parent.id;
+        if (firstExpandableParent) {
+          next.add(firstExpandableParent);
+        }
+      }
+      if (next.size === current.size && [...next].every((id) => current.has(id))) {
+        return current;
+      }
+      return next;
+    });
+  }, [parentExpansionKey, parentSegments]);
+
+  function toggleParentSegment(parentId: string) {
+    setExpandedParentIds((current) => {
+      const next = new Set(current);
+      if (next.has(parentId)) {
+        next.delete(parentId);
+      } else {
+        next.add(parentId);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-4">
+      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-zinc-950">{t("Document segments")}</p>
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
+              {t(
+                "Segments are generated from saved Markdown during publish or explicit reprocess. They are retrieval inputs, not editable body content."
+              )}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <SegmentCountBadge label={t("general")} value={generalCount} />
+            <SegmentCountBadge label={t("parent")} value={parentCount} />
+            <SegmentCountBadge label={t("child")} value={childCount} />
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 font-medium text-zinc-700 hover:bg-zinc-50"
+              onClick={() => setSettingsOpen((value) => !value)}
+              type="button"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {t("Segment settings")}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {settingsOpen ? (
+        <DocumentSegmentSettingsPanel
+          canManage={canManageDerivedContent}
+          currentDocument={currentDocument}
+          hasUnsavedChanges={hasUnsavedChanges}
+          onReprocessDocument={onReprocessDocument}
+          onSave={onUpdateDocumentProcessing}
+        />
+      ) : null}
+
+      {hasUnsavedChanges ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+          {t(
+            "Unsaved edits are not reflected here. Save and publish or reprocess to regenerate segments."
+          )}
+        </div>
+      ) : null}
+
+      {currentDocument.processing_status === "needs_reprocess" ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <span>{t("This document changed after its segments were generated.")}</span>
+          <button
+            className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-1.5 font-medium text-white hover:bg-amber-800 disabled:bg-amber-200 disabled:text-amber-500"
+            disabled={!canManageDerivedContent}
+            onClick={onReprocessDocument}
+            type="button"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t("Reprocess document segments")}
+          </button>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <EditorLoadingFallback />
+      ) : !hasSegments ? (
+        <EmptyPanel
+          title={t("No segments for this document")}
+          action={t("Publish or reprocess this document to generate segments.")}
+        />
+      ) : (
+        <div className="space-y-3">
+          {generalSegments.map((chunk) => (
+            <SegmentCard chunk={chunk} key={chunk.id} />
+          ))}
+          {parentSegments.map(({ parent, children }) => (
+            <ParentSegmentCard
+              childrenSegments={children}
+              isExpanded={expandedParentIds.has(parent.id)}
+              key={parent.id}
+              onToggle={() => toggleParentSegment(parent.id)}
+              parent={parent}
+            />
+          ))}
+        </div>
+      )}
+
+      {isQaDocument ? (
+        <DocumentQaWorkspace
+          canManage={canManageDerivedContent}
+          documentQaLoading={documentQaLoading}
+          documentQaPairs={documentQaPairs}
+          onCreateQaPair={onCreateQaPair}
+          onGenerateQaPairs={onGenerateQaPairs}
+          onImportQaPairs={onImportQaPairs}
+          onUpdateQaPair={onUpdateQaPair}
+        />
+      ) : isParentChildDocument ? (
+        <div className="rounded-md border border-zinc-200 bg-white px-4 py-3 text-xs leading-5 text-zinc-500">
+          {t(
+            "Parent-child knowledge bases show child segments inside each parent segment. Edit segment status and overrides from the segment settings workflow."
+          )}
+        </div>
+      ) : null}
+
+      <DocumentSummaryWorkspace
+        canManage={canManageDerivedContent}
+        documentSummaries={documentSummaries}
+        documentSummariesLoading={documentSummariesLoading}
+        onGenerateSummary={onGenerateSummary}
+      />
+    </div>
+  );
+}
+
+type SegmentRuleDraft = {
+  parentMode: "paragraph" | "full_doc";
+  removeExtraSpaces: boolean;
+  removeUrlsEmails: boolean;
+  parentSeparator: string;
+  parentMaxTokens: number;
+  parentOverlap: number;
+  childSeparator: string;
+  childMaxTokens: number;
+  childOverlap: number;
+};
+
+function DocumentSegmentSettingsPanel({
+  canManage,
+  currentDocument,
+  hasUnsavedChanges,
+  onReprocessDocument,
+  onSave
+}: {
+  canManage: boolean;
+  currentDocument: DocumentDetail;
+  hasUnsavedChanges: boolean;
+  onReprocessDocument: () => void;
+  onSave: (input: { parent_mode?: "paragraph" | "full_doc"; process_rule?: unknown }) => void;
+}) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<SegmentRuleDraft>(() =>
+    createSegmentRuleDraft(currentDocument)
+  );
+  const docForm = currentDocument.doc_form ?? "text_model";
+  const isParentChild = docForm === "hierarchical_model";
+  const isQa = docForm === "qa_model";
+
+  useEffect(() => {
+    setDraft(createSegmentRuleDraft(currentDocument));
+  }, [currentDocument.id, currentDocument.process_rule_snapshot]);
+
+  function updateDraft(patch: Partial<SegmentRuleDraft>) {
+    setDraft((current) => ({ ...current, ...patch }));
+  }
+
+  function handleSaveSettings() {
+    const processRule = {
+      pre_processing_rules: [
+        { id: "remove_extra_spaces", enabled: draft.removeExtraSpaces },
+        { id: "remove_urls_emails", enabled: draft.removeUrlsEmails }
+      ],
+      parent_mode: draft.parentMode === "full_doc" ? "full-doc" : "paragraph",
+      segmentation: {
+        separator: parseSeparatorInput(draft.parentSeparator),
+        max_tokens: draft.parentMaxTokens,
+        chunk_overlap: draft.parentOverlap
+      },
+      subchunk_segmentation: {
+        separator: parseSeparatorInput(draft.childSeparator),
+        max_tokens: draft.childMaxTokens,
+        chunk_overlap: draft.childOverlap
+      }
+    };
+    onSave({
+      parent_mode: draft.parentMode,
+      process_rule: processRule
+    });
+  }
+
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-950">{t("Segment settings")}</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            {canManage
+              ? t(
+                  "These settings are saved as a document processing override. They take effect after explicit reprocess and never rewrite Markdown."
+                )
+              : t(
+                  "This is a read-only snapshot of the document processing settings. Editors can save overrides and reprocess segments."
+                )}
+          </p>
+        </div>
+        <span
+          className={`rounded-full px-2 py-1 text-xs font-medium ${
+            currentDocument.processing_status === "needs_reprocess"
+              ? "bg-amber-50 text-amber-700"
+              : "bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {t(currentDocument.processing_status ?? "current")}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="space-y-3">
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+            <p className="text-xs font-semibold text-zinc-700">{t("Text preprocessing rules")}</p>
+            <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600">
+              <input
+                checked={draft.removeExtraSpaces}
+                className="h-4 w-4 rounded border-zinc-300"
+                disabled={!canManage}
+                onChange={(event) => updateDraft({ removeExtraSpaces: event.target.checked })}
+                type="checkbox"
+              />
+              {t("Remove extra spaces")}
+            </label>
+            <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600">
+              <input
+                checked={draft.removeUrlsEmails}
+                className="h-4 w-4 rounded border-zinc-300"
+                disabled={!canManage}
+                onChange={(event) => updateDraft({ removeUrlsEmails: event.target.checked })}
+                type="checkbox"
+              />
+              {t("Remove bare URLs and emails")}
+            </label>
+          </div>
+
+          {isParentChild ? (
+            <label className="block text-xs">
+              <span className="mb-1 block font-medium text-zinc-600">{t("Parent-child mode")}</span>
+              <select
+                className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-500"
+                disabled={!canManage}
+                onChange={(event) =>
+                  updateDraft({ parentMode: event.target.value as "paragraph" | "full_doc" })
+                }
+                value={draft.parentMode}
+              >
+                <option value="paragraph">{t("Paragraph parent-child")}</option>
+                <option value="full_doc">{t("Full-doc parent-child")}</option>
+              </select>
+            </label>
+          ) : null}
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <SegmentNumberInput
+              disabled={!canManage}
+              label={isParentChild ? t("Parent chars") : t("Segment chars")}
+              onChange={(value) => updateDraft({ parentMaxTokens: value })}
+              value={draft.parentMaxTokens}
+            />
+            <SegmentNumberInput
+              disabled={!canManage}
+              label={t("Parent/standard overlap")}
+              onChange={(value) => updateDraft({ parentOverlap: value })}
+              value={draft.parentOverlap}
+            />
+            <label className="block text-xs sm:col-span-1">
+              <span className="mb-1 block font-medium text-zinc-600">
+                {isParentChild ? t("Parent delimiter") : t("Delimiter")}
+              </span>
+              <input
+                className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 font-mono outline-none focus:border-emerald-500"
+                disabled={!canManage}
+                onChange={(event) => updateDraft({ parentSeparator: event.target.value })}
+                value={draft.parentSeparator}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {isParentChild ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <SegmentNumberInput
+                disabled={!canManage}
+                label={t("Child chars")}
+                onChange={(value) => updateDraft({ childMaxTokens: value })}
+                value={draft.childMaxTokens}
+              />
+              <SegmentNumberInput
+                disabled={!canManage}
+                label={t("Child overlap")}
+                onChange={(value) => updateDraft({ childOverlap: value })}
+                value={draft.childOverlap}
+              />
+              <label className="block text-xs">
+                <span className="mb-1 block font-medium text-zinc-600">{t("Child delimiter")}</span>
+                <input
+                  className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 font-mono outline-none focus:border-emerald-500"
+                  disabled={!canManage}
+                  onChange={(event) => updateDraft({ childSeparator: event.target.value })}
+                  value={draft.childSeparator}
+                />
+              </label>
+            </div>
+          ) : isQa ? (
+            <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
+              {t(
+                "QA knowledge bases index active QA questions during reprocess and return answers in retrieval."
+              )}
+            </div>
+          ) : (
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
+              {t("Standard segmentation uses one segment level.")}
+            </div>
+          )}
+
+          <div className="rounded-md border border-zinc-200 bg-zinc-950 p-3">
+            <p className="text-xs font-semibold text-zinc-200">{t("Process rule preview")}</p>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-zinc-50">
+              {formatJsonForPanel({
+                pre_processing_rules: [
+                  { id: "remove_extra_spaces", enabled: draft.removeExtraSpaces },
+                  { id: "remove_urls_emails", enabled: draft.removeUrlsEmails }
+                ],
+                parent_mode: draft.parentMode === "full_doc" ? "full-doc" : "paragraph",
+                segmentation: {
+                  separator: parseSeparatorInput(draft.parentSeparator),
+                  max_tokens: draft.parentMaxTokens,
+                  chunk_overlap: draft.parentOverlap
+                },
+                subchunk_segmentation: {
+                  separator: parseSeparatorInput(draft.childSeparator),
+                  max_tokens: draft.childMaxTokens,
+                  chunk_overlap: draft.childOverlap
+                }
+              })}
+            </pre>
+          </div>
+        </div>
+      </div>
+
+      {hasUnsavedChanges ? (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {t("Save the document before changing processing settings.")}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <button
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+          disabled={!canManage}
+          onClick={onReprocessDocument}
+          type="button"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          {t("Reprocess document segments")}
+        </button>
+        <button
+          className="inline-flex h-9 items-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white hover:bg-zinc-800"
+          disabled={!canManage || hasUnsavedChanges}
+          onClick={handleSaveSettings}
+          type="button"
+        >
+          {t("Save segment settings")}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function SegmentNumberInput({
+  disabled,
+  label,
+  onChange,
+  value
+}: {
+  disabled?: boolean;
+  label: string;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="block text-xs">
+      <span className="mb-1 block font-medium text-zinc-600">{label}</span>
+      <input
+        className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-500"
+        disabled={disabled}
+        min={0}
+        onChange={(event) => onChange(Math.max(0, Number(event.target.value) || 0))}
+        type="number"
+        value={value}
+      />
+    </label>
+  );
+}
+
+function DocumentQaWorkspace({
+  canManage,
+  documentQaLoading,
+  documentQaPairs,
+  onCreateQaPair,
+  onGenerateQaPairs,
+  onImportQaPairs,
+  onUpdateQaPair
+}: {
+  canManage: boolean;
+  documentQaLoading: boolean;
+  documentQaPairs: DocumentQaPair[];
+  onCreateQaPair: (input: {
+    question: string;
+    answer: string;
+    source_chunk_id?: string | null;
+  }) => void;
+  onGenerateQaPairs: (input: {
+    mode: "llm" | "mock";
+    scope: "document" | "segments";
+    count?: number;
+    overwrite?: boolean;
+  }) => void;
+  onImportQaPairs: (csv: string) => void;
+  onUpdateQaPair: (
+    qaPair: DocumentQaPair,
+    patch: Parameters<typeof updateDocumentQaPair>[2]
+  ) => void;
+}) {
+  const { t } = useI18n();
+  const [questionDraft, setQuestionDraft] = useState("");
+  const [answerDraft, setAnswerDraft] = useState("");
+  const [csvDraft, setCsvDraft] = useState("");
+
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-950">{t("QA pairs")}</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            {t("Questions are indexed; answers are returned to search, MCP, and Dify.")}
+          </p>
+        </div>
+        <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+          {t("Requires reprocess")}
+        </span>
+      </div>
+
+      {canManage ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+            <label className="block text-xs">
+              <span className="mb-1 block font-medium text-zinc-600">{t("Question")}</span>
+              <input
+                className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-500"
+                onChange={(event) => setQuestionDraft(event.target.value)}
+                value={questionDraft}
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="mb-1 block font-medium text-zinc-600">{t("Answer")}</span>
+              <textarea
+                className="min-h-24 w-full rounded-md border border-zinc-300 bg-white px-2 py-2 outline-none focus:border-emerald-500"
+                onChange={(event) => setAnswerDraft(event.target.value)}
+                value={answerDraft}
+              />
+            </label>
+            <button
+              className="inline-flex h-9 w-full items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+              disabled={!questionDraft.trim() || !answerDraft.trim()}
+              onClick={() => {
+                onCreateQaPair({ question: questionDraft, answer: answerDraft });
+                setQuestionDraft("");
+                setAnswerDraft("");
+              }}
+              type="button"
+            >
+              {t("Add QA pair")}
+            </button>
+          </div>
+
+          <details className="rounded-md border border-zinc-200 bg-zinc-50 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
+              {t("CSV import and generation")}
+            </summary>
+            <div className="mt-3 space-y-3">
+              <textarea
+                className="min-h-24 w-full rounded-md border border-zinc-300 bg-white px-2 py-2 font-mono text-xs outline-none focus:border-emerald-500"
+                onChange={(event) => setCsvDraft(event.target.value)}
+                placeholder="question,answer"
+                value={csvDraft}
+              />
+              <button
+                className="inline-flex h-8 w-full items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:text-zinc-300"
+                disabled={!csvDraft.trim()}
+                onClick={() => {
+                  onImportQaPairs(csvDraft);
+                  setCsvDraft("");
+                }}
+                type="button"
+              >
+                {t("Import CSV")}
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                  onClick={() => onGenerateQaPairs({ mode: "mock", scope: "segments", count: 6 })}
+                  type="button"
+                >
+                  {t("Generate mock QA")}
+                </button>
+                <button
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                  onClick={() => onGenerateQaPairs({ mode: "llm", scope: "document", count: 6 })}
+                  type="button"
+                >
+                  {t("Generate LLM QA")}
+                </button>
+              </div>
+            </div>
+          </details>
+        </div>
+      ) : null}
+
+      {documentQaLoading ? (
+        <EditorLoadingFallback />
+      ) : documentQaPairs.length > 0 ? (
+        <div className="mt-4 grid gap-2">
+          {documentQaPairs.map((pair) => (
+            <article
+              className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs"
+              key={pair.id}
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
+                  {t(pair.source)}
+                </span>
+                <span
+                  className={`rounded-full px-2 py-0.5 font-medium ${
+                    pair.status === "active"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : pair.status === "deleted"
+                        ? "bg-red-50 text-red-700"
+                        : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {t(pair.status)}
+                </span>
+              </div>
+              <p className="mt-2 font-semibold text-zinc-900">{pair.question}</p>
+              <p className="mt-1 whitespace-pre-wrap text-zinc-600">{pair.answer}</p>
+              {canManage ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    onClick={() =>
+                      onUpdateQaPair(pair, {
+                        status: pair.status === "active" ? "disabled" : "active"
+                      })
+                    }
+                    type="button"
+                  >
+                    {pair.status === "active" ? t("Disable") : t("Enable")}
+                  </button>
+                  <button
+                    className="inline-flex h-8 items-center rounded-md border border-red-200 bg-white px-2.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                    onClick={() => onUpdateQaPair(pair, { status: "deleted" })}
+                    type="button"
+                  >
+                    {t("Delete")}
+                  </button>
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyPanel title={t("No QA pairs")} action={t("Add QA manually or import CSV.")} />
+      )}
+    </section>
+  );
+}
+
+function DocumentSummaryWorkspace({
+  canManage,
+  documentSummaries,
+  documentSummariesLoading,
+  onGenerateSummary
+}: {
+  canManage: boolean;
+  documentSummaries: DocumentSummariesResponse | null;
+  documentSummariesLoading: boolean;
+  onGenerateSummary: (input: Parameters<typeof generateDocumentSummary>[1]) => void;
+}) {
+  const { t } = useI18n();
+  const [summaryDraft, setSummaryDraft] = useState("");
+
+  return (
+    <details className="rounded-md border border-zinc-200 bg-white p-4">
+      <summary className="cursor-pointer text-sm font-semibold text-zinc-950">
+        {t("Summaries")}
+      </summary>
+      <p className="mt-2 text-xs leading-5 text-zinc-500">
+        {t("Summaries are derived retrieval indexes and never rewrite Markdown.")}
+      </p>
+      {canManage ? (
+        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
+          <textarea
+            className="min-h-24 rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+            onChange={(event) => setSummaryDraft(event.target.value)}
+            placeholder={t("Document summary")}
+            value={summaryDraft}
+          />
+          <div className="grid gap-2">
+            <button
+              className="inline-flex h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+              disabled={!summaryDraft.trim()}
+              onClick={() => {
+                onGenerateSummary({
+                  scope: "document",
+                  mode: "manual",
+                  summary: summaryDraft
+                });
+                setSummaryDraft("");
+              }}
+              type="button"
+            >
+              {t("Save document summary")}
+            </button>
+            <button
+              className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              onClick={() => onGenerateSummary({ scope: "document", mode: "mock" })}
+              type="button"
+            >
+              {t("Mock document summary")}
+            </button>
+            <button
+              className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              onClick={() => onGenerateSummary({ scope: "all_segments", mode: "mock" })}
+              type="button"
+            >
+              {t("Mock all segment summaries")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {documentSummariesLoading ? (
+        <EditorLoadingFallback />
+      ) : documentSummaries ? (
+        <div className="mt-3 grid gap-3">
+          {documentSummaries.document_summary ? (
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs">
+              <p className="font-semibold text-zinc-900">{t("Document summary")}</p>
+              <p className="mt-2 whitespace-pre-wrap text-zinc-600">
+                {documentSummaries.document_summary.summary}
+              </p>
+            </div>
+          ) : null}
+          {documentSummaries.segment_summaries.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-zinc-700">
+                {t("Segment summaries")} ({documentSummaries.segment_summaries.length})
+              </p>
+              {documentSummaries.segment_summaries.map((summary) => (
+                <div
+                  className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs"
+                  key={summary.id}
+                >
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+                    {t(summary.status)}
+                  </span>
+                  <p className="mt-2 whitespace-pre-wrap text-zinc-600">{summary.summary}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+function createSegmentRuleDraft(currentDocument: DocumentDetail): SegmentRuleDraft {
+  const snapshot = toPanelRecord(currentDocument.process_rule_snapshot);
+  const processRule = toPanelRecord(snapshot.process_rule ?? snapshot);
+  const segmentation = toPanelRecord(processRule.segmentation);
+  const subchunkSegmentation = toPanelRecord(processRule.subchunk_segmentation);
+  const preProcessingRules = Array.isArray(processRule.pre_processing_rules)
+    ? processRule.pre_processing_rules
+    : [];
+  const docForm = currentDocument.doc_form ?? "text_model";
+  const parentMode =
+    readPanelParentMode(processRule.parent_mode ?? snapshot.parent_mode) ?? "paragraph";
+  return {
+    parentMode,
+    removeExtraSpaces: readPreProcessingRule(preProcessingRules, "remove_extra_spaces", true),
+    removeUrlsEmails: readPreProcessingRule(preProcessingRules, "remove_urls_emails", false),
+    parentSeparator: formatSeparatorForInput(readString(segmentation.separator, "\n\n")),
+    parentMaxTokens: readNumber(
+      segmentation.max_tokens,
+      docForm === "hierarchical_model" ? 1024 : 1024
+    ),
+    parentOverlap: readNumber(
+      segmentation.chunk_overlap,
+      docForm === "hierarchical_model" ? 0 : 50
+    ),
+    childSeparator: formatSeparatorForInput(readString(subchunkSegmentation.separator, "\n")),
+    childMaxTokens: readNumber(subchunkSegmentation.max_tokens, 512),
+    childOverlap: readNumber(subchunkSegmentation.chunk_overlap, 50)
+  };
+}
+
+function readPreProcessingRule(
+  rules: unknown[],
+  id: "remove_extra_spaces" | "remove_urls_emails",
+  fallback: boolean
+) {
+  const found = rules.find((rule) => toPanelRecord(rule).id === id);
+  return found ? toPanelRecord(found).enabled === true : fallback;
+}
+
+function readString(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function readNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function formatSeparatorForInput(value: string): string {
+  return value.replace(/\t/g, "\\t").replace(/\n/g, "\\n");
+}
+
+function parseSeparatorInput(value: string): string {
+  return value.replace(/\\t/g, "\t").replace(/\\n/g, "\n");
+}
+
+function SegmentCountBadge({ label, value }: { label: string; value: number }) {
+  return (
+    <span className="rounded-full border border-zinc-200 bg-white px-2 py-1 font-medium text-zinc-600">
+      {label}: {value}
+    </span>
+  );
+}
+
+function SegmentCard({ chunk }: { chunk: DocumentChunk }) {
+  const { t } = useI18n();
+  const effectiveText = effectiveSegmentText(chunk);
+  const sourceText = chunk.source_content_text ?? effectiveText;
+  return (
+    <article
+      className={`rounded-md border bg-white p-4 ${
+        chunk.status === "disabled" ? "border-zinc-200 opacity-70" : "border-zinc-200"
+      }`}
+    >
+      <SegmentHeader chunk={chunk} />
+      {chunk.heading_path.length > 0 ? (
+        <p className="mt-2 text-xs text-zinc-500">{chunk.heading_path.join(" / ")}</p>
+      ) : null}
+      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-zinc-800">{effectiveText}</p>
+      {chunk.has_override && sourceText !== effectiveText ? (
+        <details className="mt-3 rounded-md bg-zinc-50 p-3 text-xs text-zinc-600">
+          <summary className="cursor-pointer font-medium">{t("Source segment")}</summary>
+          <p className="mt-2 whitespace-pre-wrap leading-5">{sourceText}</p>
+        </details>
+      ) : null}
+    </article>
+  );
+}
+
+function ParentSegmentCard({
+  childrenSegments,
+  isExpanded,
+  onToggle,
+  parent
+}: {
+  childrenSegments: DocumentChunk[];
+  isExpanded: boolean;
+  onToggle: () => void;
+  parent: DocumentChunk;
+}) {
+  const { t } = useI18n();
+  const effectiveText = effectiveSegmentText(parent);
+  const parentNumber = String((parent.parent_ordinal ?? parent.ordinal) + 1).padStart(2, "0");
+  const characterCount = effectiveText.length;
+  const canExpand = childrenSegments.length > 0;
+  return (
+    <article
+      className={`rounded-md border bg-zinc-50/80 px-4 py-3 ${
+        parent.status === "disabled" ? "border-zinc-200 opacity-70" : "border-zinc-200"
+      }`}
+    >
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
+            <span className="font-semibold text-zinc-800">
+              {t("Segment-{number}", { number: parentNumber })}
+            </span>
+            <span>·</span>
+            <span>{t("{count} characters", { count: characterCount })}</span>
+            {parent.token_count ? (
+              <>
+                <span>·</span>
+                <span>{t("{count} tokens", { count: parent.token_count })}</span>
+              </>
+            ) : null}
+            <span>·</span>
+            <span>{t("Recall count not available")}</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                parent.status === "active"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-amber-50 text-amber-700"
+              }`}
+            >
+              {t(parent.status)}
+            </span>
+            {parent.has_override ? (
+              <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                {t("override")}
+              </span>
+            ) : null}
+          </div>
+          {effectiveText ? (
+            <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-zinc-900">
+              {effectiveText}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      {canExpand ? (
+        <div className="mt-2">
+          <button
+            aria-label={t(isExpanded ? "Collapse child segments" : "Expand child segments")}
+            aria-expanded={isExpanded}
+            className="inline-flex h-7 items-center gap-1 rounded-md bg-white px-2 text-xs font-medium text-zinc-700 shadow-sm ring-1 ring-zinc-200 hover:bg-zinc-50"
+            onClick={onToggle}
+            title={t(isExpanded ? "Collapse child segments" : "Expand child segments")}
+            type="button"
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            {t("{count} child segments", { count: childrenSegments.length })}
+          </button>
+        </div>
+      ) : null}
+
+      {canExpand && isExpanded ? (
+        <div className="mt-2 space-y-1.5 pl-4">
+          {childrenSegments.map((child, index) => (
+            <div
+              className="flex gap-2 rounded-md bg-white px-2.5 py-1.5 text-xs leading-5 ring-1 ring-zinc-200"
+              key={child.id}
+            >
+              <span className="h-6 shrink-0 rounded bg-emerald-600 px-1.5 text-[11px] font-semibold leading-6 text-white">
+                C-{(child.child_ordinal ?? index) + 1}
+              </span>
+              <p className="min-w-0 flex-1 whitespace-pre-wrap text-zinc-700">
+                {effectiveSegmentText(child)}
+              </p>
+              {child.status !== "active" ? (
+                <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  {t(child.status)}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {!canExpand ? <p className="mt-3 text-xs text-zinc-500">{t("No child segments")}</p> : null}
+    </article>
+  );
+}
+
+function SegmentHeader({
+  chunk,
+  hideTokenCount = false
+}: {
+  chunk: DocumentChunk;
+  hideTokenCount?: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-700">
+          #{chunk.ordinal}
+        </span>
+        <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+          {t(chunk.chunk_type)}
+        </span>
+        <span className="rounded-full bg-zinc-50 px-2 py-0.5 text-zinc-500">{t(chunk.status)}</span>
+        {chunk.index_role && chunk.index_role !== "content" ? (
+          <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
+            {t(chunk.index_role)}
+          </span>
+        ) : null}
+        {chunk.has_override ? (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">
+            {t("override")}
+          </span>
+        ) : null}
+      </div>
+      {!hideTokenCount ? (
+        <div className="text-xs text-zinc-500">
+          {chunk.token_count ? t("{count} tokens", { count: chunk.token_count }) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function effectiveSegmentText(chunk: DocumentChunk) {
+  return chunk.content_text || chunk.content_markdown;
+}
+
+function isMeaningfulDocumentSegment(chunk: DocumentChunk) {
+  const text = effectiveSegmentText(chunk)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 0;
+}
+
 function DocumentSidePanel({
   activeOutlineId,
   chunks,
@@ -2561,6 +4008,7 @@ function DocumentSidePanel({
   onSelectOutline,
   onSelectTab,
   onSelectVersion,
+  onUpdateDocumentParentMode,
   onUpdateQaPair,
   onUpdateSegment,
   outline,
@@ -2609,6 +4057,7 @@ function DocumentSidePanel({
   onSelectOutline: (item: MarkdownOutlineItem) => void;
   onSelectTab: (tab: DocumentSideTab) => void;
   onSelectVersion: (versionId: string) => void;
+  onUpdateDocumentParentMode: (parentMode: "paragraph" | "full_doc") => void;
   onUpdateQaPair: (
     qaPair: DocumentQaPair,
     patch: Parameters<typeof updateDocumentQaPair>[2]
@@ -2651,6 +4100,14 @@ function DocumentSidePanel({
   const snapshotRule = toPanelRecord(processingSnapshot.process_rule);
   const snapshotSegmentation = toPanelRecord(snapshotRule.segmentation);
   const snapshotSubchunkSegmentation = toPanelRecord(snapshotRule.subchunk_segmentation);
+  const snapshotParentMode = readPanelParentMode(
+    processingSnapshot.parent_mode ?? snapshotRule.parent_mode
+  );
+  const documentParentMode = snapshotParentMode ?? "paragraph";
+  const isParentChildDocument = currentDocument?.doc_form === "hierarchical_model";
+  const visibleTab: "outline" | "metadata" | "versions" =
+    tab === "metadata" || tab === "versions" ? tab : "outline";
+  const visibleTabs = ["outline", "metadata", "versions"] as const;
 
   async function confirmSegmentAction(
     title: string,
@@ -2667,15 +4124,13 @@ function DocumentSidePanel({
   }
 
   return (
-    <div className="min-h-0">
-      <div className="border-b border-zinc-200 px-3 py-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-zinc-200 px-3 py-3">
         <div className="grid grid-cols-3 gap-1 rounded-md bg-zinc-100 p-1 xl:grid-cols-4 2xl:grid-cols-7">
-          {(
-            ["outline", "processing", "chunks", "qa", "summary", "metadata", "versions"] as const
-          ).map((item) => (
+          {visibleTabs.map((item) => (
             <button
               className={`rounded px-2 py-1.5 text-xs font-medium ${
-                tab === item
+                visibleTab === item
                   ? "bg-white text-zinc-950 shadow-sm"
                   : "text-zinc-500 hover:text-zinc-950"
               }`}
@@ -2689,782 +4144,821 @@ function DocumentSidePanel({
         </div>
       </div>
 
-      {tab === "outline" ? (
-        <>
-          <div className="border-b border-zinc-200 px-4 py-3">
-            <p className="text-sm font-semibold">{t("Outline")}</p>
-            <p className="text-xs text-zinc-500">
-              {t("{count} headings", { count: outline.length })}
-            </p>
-          </div>
-          <Outline activeId={activeOutlineId} items={outline} onSelect={onSelectOutline} />
-          <ReferencesPanel references={references} onOpenDocument={onOpenDocument} />
-        </>
-      ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {visibleTab === "outline" ? (
+          <>
+            <div className="border-b border-zinc-200 px-4 py-3">
+              <p className="text-sm font-semibold">{t("Outline")}</p>
+              <p className="text-xs text-zinc-500">
+                {t("{count} headings", { count: outline.length })}
+              </p>
+            </div>
+            <Outline activeId={activeOutlineId} items={outline} onSelect={onSelectOutline} />
+            <ReferencesPanel references={references} onOpenDocument={onOpenDocument} />
+          </>
+        ) : null}
 
-      {tab === "processing" ? (
-        <div className="space-y-3 px-4 py-4">
-          <div>
-            <p className="text-sm font-semibold">{t("Processing snapshot")}</p>
-            <p className="text-xs text-zinc-500">
-              {t(
-                "Dify-like document processing is snapshotted per document version and reprocessed explicitly."
-              )}
-            </p>
-          </div>
-          {currentDocument ? (
-            <div className="space-y-3">
-              <div
-                className={`rounded-md border p-3 text-xs leading-5 ${
-                  currentDocument.processing_status === "needs_reprocess"
-                    ? "border-amber-200 bg-amber-50 text-amber-900"
-                    : "border-emerald-200 bg-emerald-50 text-emerald-900"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold">{t("Processing status")}</span>
-                  <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium">
-                    {t(currentDocument.processing_status ?? "current")}
-                  </span>
-                </div>
-                <p className="mt-2">
-                  {t(
-                    "Publishing, reprocessing, and Milvus index rebuild are separate steps. Reprocess updates PostgreSQL segments; index rebuild updates search, MCP, and Dify."
-                  )}
-                </p>
-              </div>
-
-              <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
-                <div className="grid gap-2">
-                  <SnapshotRow
-                    label={t("Document form")}
-                    value={t(currentDocument.doc_form ?? "-")}
-                  />
-                  <SnapshotRow
-                    label={t("Processing revision")}
-                    value={String(currentDocument.processing_revision ?? "-")}
-                  />
-                  <SnapshotRow
-                    label={t("Current version id")}
-                    value={shortId(currentDocument.currentVersion?.id)}
-                  />
-                  <SnapshotRow
-                    label={t("Current version hash")}
-                    value={shortId(currentDocument.currentVersion?.markdown_hash)}
-                  />
-                  <SnapshotRow
-                    label={t("Snapshot settings revision")}
-                    value={String(processingSnapshot.settings_revision ?? "-")}
-                  />
-                  <SnapshotRow
-                    label={t("Snapshot parent mode")}
-                    value={String(
-                      processingSnapshot.parent_mode ?? snapshotRule.parent_mode ?? "-"
-                    )}
-                  />
-                  <SnapshotRow
-                    label={t("Snapshot parent overlap")}
-                    value={String(snapshotSegmentation.chunk_overlap ?? "-")}
-                  />
-                  <SnapshotRow
-                    label={t("Snapshot child overlap")}
-                    value={String(snapshotSubchunkSegmentation.chunk_overlap ?? "-")}
-                  />
-                </div>
-              </div>
-
-              <details className="rounded-md border border-zinc-200 bg-white p-3">
-                <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
-                  {t("Process rule snapshot")}
-                </summary>
-                <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-950 p-3 text-[11px] leading-5 text-zinc-50">
-                  {formatJsonForPanel(currentDocument.process_rule_snapshot)}
-                </pre>
-              </details>
-
-              <button
-                className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
-                disabled={!canManageSegments || currentDocument.type !== "page"}
-                onClick={onReprocessDocument}
-                type="button"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                {t("Reprocess document segments")}
-              </button>
+        {tab === "processing" ? (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <p className="text-sm font-semibold">{t("Processing snapshot")}</p>
+              <p className="text-xs text-zinc-500">
+                {t(
+                  "Dify-like document processing is snapshotted per document version and reprocessed explicitly."
+                )}
+              </p>
             </div>
-          ) : (
-            <EmptyPanel
-              title={t("No document selected")}
-              action={t("Select a page document first.")}
-            />
-          )}
-        </div>
-      ) : null}
-
-      {tab === "chunks" ? (
-        <div className="space-y-3 px-4 py-4">
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold">{t("Document segments")}</p>
-              {currentDocument?.processing_status === "needs_reprocess" ? (
-                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                  {t("Needs reprocess")}
-                </span>
-              ) : currentDocument ? (
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                  {t(currentDocument.processing_status ?? "current")}
-                </span>
-              ) : null}
-            </div>
-            <p className="text-xs text-zinc-500">
-              {currentDocument
-                ? t("{count} segments", { count: chunks.length })
-                : t("No document selected")}
-            </p>
-          </div>
-          {currentDocument?.processing_status === "needs_reprocess" ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <p>{t("This document changed after its segments were generated.")}</p>
-              <button
-                className="mt-2 inline-flex h-8 items-center rounded-md bg-amber-600 px-3 text-xs font-medium text-white hover:bg-amber-700"
-                onClick={onReprocessDocument}
-                type="button"
-              >
-                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                {t("Reprocess document segments")}
-              </button>
-            </div>
-          ) : null}
-          {hasManagedSegments ? (
-            <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
-              {t(
-                "Segment changes are stored in PostgreSQL. Rebuild the Milvus index before search, MCP, or Dify use them."
-              )}
-            </div>
-          ) : null}
-          <label className="flex items-center gap-2 text-xs text-zinc-600">
-            <input
-              checked={showDeletedSegments}
-              className="h-4 w-4 rounded border-zinc-300"
-              onChange={(event) => onIncludeDeletedSegmentsChange(event.target.checked)}
-              type="checkbox"
-            />
-            {t("Show deleted segments")}
-          </label>
-          {chunksLoading ? (
-            <EmptyPanel title={t("Loading segments")} action={t("Reading PostgreSQL segments.")} />
-          ) : chunks.length > 0 ? (
-            <div className="space-y-2">
-              {chunks.map((chunk) => {
-                const isEditing = editingSegmentId === chunk.id;
-                const sourceText = chunk.source_content_text ?? chunk.content_text;
-                return (
-                  <div
-                    className={`rounded-md border bg-white p-2 text-xs ${
-                      chunk.status === "deleted" ? "border-red-200" : "border-zinc-200"
-                    }`}
-                    key={chunk.id}
-                  >
-                    <div className="flex flex-wrap items-center gap-1.5 text-zinc-500">
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
-                        {t(chunk.chunk_type)}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 font-medium ${
-                          chunk.status === "active"
-                            ? "bg-emerald-50 text-emerald-700"
-                            : chunk.status === "deleted"
-                              ? "bg-red-50 text-red-700"
-                              : "bg-amber-50 text-amber-700"
-                        }`}
-                      >
-                        {t(chunk.status)}
-                      </span>
-                      {chunk.has_override ? (
-                        <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
-                          {t("override")}
-                        </span>
-                      ) : null}
-                      <span>#{chunk.ordinal}</span>
-                      <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
-                    </div>
-                    <div className="mt-2 space-y-2">
-                      <div>
-                        <p className="text-[11px] font-medium text-zinc-500">
-                          {t("Effective retrieval content")}
-                        </p>
-                        <p className="mt-1 line-clamp-4 text-zinc-700">{chunk.content_text}</p>
-                      </div>
-                      {chunk.has_override ? (
-                        <details className="rounded-md bg-zinc-50 p-2">
-                          <summary className="cursor-pointer text-[11px] font-medium text-zinc-500">
-                            {t("Source content")}
-                          </summary>
-                          <p className="mt-1 line-clamp-4 text-zinc-600">{sourceText}</p>
-                        </details>
-                      ) : null}
-                    </div>
-                    {isEditing ? (
-                      <div className="mt-2 space-y-2">
-                        <textarea
-                          className="min-h-28 w-full rounded-md border border-zinc-300 px-2 py-2 text-xs outline-none focus:border-emerald-500"
-                          onChange={(event) => setSegmentOverrideDraft(event.target.value)}
-                          value={segmentOverrideDraft}
-                        />
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            className="inline-flex h-8 items-center rounded-md bg-zinc-950 px-2.5 text-xs font-medium text-white"
-                            disabled={!canManageSegments}
-                            onClick={() => {
-                              onUpdateSegment(chunk, {
-                                override_content_markdown: segmentOverrideDraft,
-                                override_content_text: segmentOverrideDraft
-                              });
-                              setEditingSegmentId(null);
-                            }}
-                            type="button"
-                          >
-                            {t("Save")}
-                          </button>
-                          <button
-                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700"
-                            onClick={() => setEditingSegmentId(null)}
-                            type="button"
-                          >
-                            {t("Cancel")}
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                    <p className="mt-2 truncate text-[11px] text-zinc-400" title={chunk.version_id}>
-                      {t("Version id")}: {chunk.version_id} · {t("Settings revision")}{" "}
-                      {chunk.settings_revision}
-                    </p>
-                    {chunk.heading_path.length > 0 ? (
-                      <p className="mt-1 truncate text-[11px] text-sky-700">
-                        {chunk.heading_path.join(" / ")}
-                      </p>
-                    ) : null}
-                    {canManageSegments ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {chunk.status === "active" ? (
-                          <button
-                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                            onClick={async () => {
-                              const confirmed = await confirmSegmentAction(
-                                "Disable segment",
-                                "Disabled segments stay in PostgreSQL but are excluded from retrieval after the next Milvus rebuild.",
-                                "Disable segment"
-                              );
-                              if (confirmed) onUpdateSegment(chunk, { status: "disabled" });
-                            }}
-                            type="button"
-                          >
-                            {t("Disable segment")}
-                          </button>
-                        ) : (
-                          <button
-                            className="inline-flex h-8 items-center rounded-md border border-emerald-200 px-2.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
-                            onClick={() => onUpdateSegment(chunk, { status: "active" })}
-                            type="button"
-                          >
-                            {chunk.status === "deleted"
-                              ? t("Restore segment")
-                              : t("Enable segment")}
-                          </button>
-                        )}
-                        <button
-                          className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                          onClick={() => {
-                            setEditingSegmentId(chunk.id);
-                            setSegmentOverrideDraft(chunk.content_text);
-                          }}
-                          type="button"
-                        >
-                          {t("Edit retrieval content")}
-                        </button>
-                        {chunk.has_override ? (
-                          <button
-                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                            onClick={async () => {
-                              const confirmed = await confirmSegmentAction(
-                                "Reset override",
-                                "Reset this segment override and return retrieval content to the source chunk?",
-                                "Reset override"
-                              );
-                              if (confirmed) onUpdateSegment(chunk, { reset_override: true });
-                            }}
-                            type="button"
-                          >
-                            {t("Reset override")}
-                          </button>
-                        ) : null}
-                        {chunk.status !== "deleted" ? (
-                          <button
-                            className="inline-flex h-8 items-center rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-700 hover:bg-red-50"
-                            onClick={async () => {
-                              const confirmed = await confirmSegmentAction(
-                                "Soft delete segment",
-                                "Soft-deleted segments are hidden by default and excluded from retrieval after the next Milvus rebuild.",
-                                "Soft delete segment",
-                                "danger"
-                              );
-                              if (confirmed) onUpdateSegment(chunk, { status: "deleted" });
-                            }}
-                            type="button"
-                          >
-                            {t("Soft delete segment")}
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <EmptyPanel
-                title={t("No segments for this document")}
-                action={t("Reprocess segments before this document can be searched.")}
-              />
-              <button
-                className="inline-flex w-full items-center justify-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                onClick={onOpenDashboard}
-                type="button"
-              >
-                {t("Open KB dashboard")}
-              </button>
-            </div>
-          )}
-        </div>
-      ) : null}
-
-      {tab === "qa" ? (
-        <div className="space-y-3 px-4 py-4">
-          <div>
-            <p className="text-sm font-semibold">{t("QA pairs")}</p>
-            <p className="text-xs text-zinc-500">
-              {t("Questions are indexed; answers are returned to search, MCP, and Dify.")}
-            </p>
-          </div>
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-            {t(
-              "QA changes require reprocess and then Milvus index rebuild before retrieval updates."
-            )}
-          </div>
-          {canManageDerivedContent ? (
-            <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
-              <label className="block text-xs">
-                <span className="mb-1 block font-medium text-zinc-600">{t("Question")}</span>
-                <input
-                  className="h-8 w-full rounded-md border border-zinc-200 px-2 outline-none focus:border-emerald-500"
-                  onChange={(event) => setQaQuestionDraft(event.target.value)}
-                  value={qaQuestionDraft}
-                />
-              </label>
-              <label className="block text-xs">
-                <span className="mb-1 block font-medium text-zinc-600">{t("Answer")}</span>
-                <textarea
-                  className="min-h-20 w-full rounded-md border border-zinc-200 px-2 py-2 outline-none focus:border-emerald-500"
-                  onChange={(event) => setQaAnswerDraft(event.target.value)}
-                  value={qaAnswerDraft}
-                />
-              </label>
-              <button
-                className="inline-flex h-8 w-full items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
-                disabled={!qaQuestionDraft.trim() || !qaAnswerDraft.trim()}
-                onClick={() => {
-                  onCreateQaPair({
-                    question: qaQuestionDraft,
-                    answer: qaAnswerDraft
-                  });
-                  setQaQuestionDraft("");
-                  setQaAnswerDraft("");
-                }}
-                type="button"
-              >
-                {t("Add QA pair")}
-              </button>
-            </div>
-          ) : null}
-          {canManageDerivedContent ? (
-            <details className="rounded-md border border-zinc-200 bg-white p-3">
-              <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
-                {t("CSV import and generation")}
-              </summary>
-              <div className="mt-3 space-y-3">
-                <textarea
-                  className="min-h-24 w-full rounded-md border border-zinc-200 px-2 py-2 font-mono text-xs outline-none focus:border-emerald-500"
-                  onChange={(event) => setQaCsvDraft(event.target.value)}
-                  placeholder="question,answer"
-                  value={qaCsvDraft}
-                />
-                <button
-                  className="inline-flex h-8 w-full items-center justify-center rounded-md border border-zinc-200 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:text-zinc-300"
-                  disabled={!qaCsvDraft.trim()}
-                  onClick={() => {
-                    onImportQaPairs(qaCsvDraft);
-                    setQaCsvDraft("");
-                  }}
-                  type="button"
-                >
-                  {t("Import CSV")}
-                </button>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                    onClick={() => onGenerateQaPairs({ mode: "mock", scope: "segments", count: 6 })}
-                    type="button"
-                  >
-                    {t("Generate mock QA")}
-                  </button>
-                  <button
-                    className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                    onClick={() => onGenerateQaPairs({ mode: "llm", scope: "document", count: 6 })}
-                    type="button"
-                  >
-                    {t("Generate LLM QA")}
-                  </button>
-                </div>
-              </div>
-            </details>
-          ) : null}
-          {documentQaLoading ? (
-            <EmptyPanel title={t("Loading QA")} action={t("Reading QA pairs.")} />
-          ) : documentQaPairs.length > 0 ? (
-            <div className="space-y-2">
-              {documentQaPairs.map((pair) => (
+            {currentDocument ? (
+              <div className="space-y-3">
                 <div
-                  className="rounded-md border border-zinc-200 bg-white p-3 text-xs"
-                  key={pair.id}
+                  className={`rounded-md border p-3 text-xs leading-5 ${
+                    currentDocument.processing_status === "needs_reprocess"
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  }`}
                 >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
-                      {t(pair.source)}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 font-medium ${
-                        pair.status === "active"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : pair.status === "deleted"
-                            ? "bg-red-50 text-red-700"
-                            : "bg-amber-50 text-amber-700"
-                      }`}
-                    >
-                      {t(pair.status)}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{t("Processing status")}</span>
+                    <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium">
+                      {t(currentDocument.processing_status ?? "current")}
                     </span>
                   </div>
-                  <p className="mt-2 font-semibold text-zinc-900">{pair.question}</p>
-                  <p className="mt-1 whitespace-pre-wrap text-zinc-600">{pair.answer}</p>
-                  {pair.source_chunk_id ? (
-                    <p className="mt-2 truncate text-[11px] text-zinc-400">
-                      {t("Source chunk")}: {pair.source_chunk_id}
-                    </p>
-                  ) : null}
-                  {canManageDerivedContent ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button
-                        className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                        onClick={() =>
-                          onUpdateQaPair(pair, {
-                            status: pair.status === "active" ? "disabled" : "active"
-                          })
-                        }
-                        type="button"
-                      >
-                        {pair.status === "active" ? t("Disable") : t("Enable")}
-                      </button>
-                      <button
-                        className="inline-flex h-8 items-center rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-700 hover:bg-red-50"
-                        onClick={() => onUpdateQaPair(pair, { status: "deleted" })}
-                        type="button"
-                      >
-                        {t("Delete")}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyPanel title={t("No QA pairs")} action={t("Add QA manually or import CSV.")} />
-          )}
-        </div>
-      ) : null}
-
-      {tab === "summary" ? (
-        <div className="space-y-3 px-4 py-4">
-          <div>
-            <p className="text-sm font-semibold">{t("Summaries")}</p>
-            <p className="text-xs text-zinc-500">
-              {t("Summaries are derived retrieval indexes and never rewrite Markdown.")}
-            </p>
-          </div>
-          <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
-            {t(
-              "Summary changes require a Milvus index rebuild before search, MCP, or Dify use them."
-            )}
-          </div>
-          {canManageDerivedContent ? (
-            <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
-              <label className="block text-xs">
-                <span className="mb-1 block font-medium text-zinc-600">
-                  {t("Document summary")}
-                </span>
-                <textarea
-                  className="min-h-24 w-full rounded-md border border-zinc-200 px-2 py-2 outline-none focus:border-emerald-500"
-                  onChange={(event) => setSummaryDraft(event.target.value)}
-                  value={summaryDraft}
-                />
-              </label>
-              <button
-                className="inline-flex h-8 w-full items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
-                disabled={!summaryDraft.trim()}
-                onClick={() => {
-                  onGenerateSummary({
-                    scope: "document",
-                    mode: "manual",
-                    summary: summaryDraft
-                  });
-                  setSummaryDraft("");
-                }}
-                type="button"
-              >
-                {t("Save document summary")}
-              </button>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                  onClick={() => onGenerateSummary({ scope: "document", mode: "mock" })}
-                  type="button"
-                >
-                  {t("Mock document summary")}
-                </button>
-                <button
-                  className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                  onClick={() => onGenerateSummary({ scope: "document", mode: "llm" })}
-                  type="button"
-                >
-                  {t("LLM document summary")}
-                </button>
-              </div>
-              <button
-                className="inline-flex h-8 w-full items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                onClick={() => onGenerateSummary({ scope: "all_segments", mode: "mock" })}
-                type="button"
-              >
-                {t("Mock all segment summaries")}
-              </button>
-            </div>
-          ) : null}
-          {documentSummariesLoading ? (
-            <EmptyPanel title={t("Loading summaries")} action={t("Reading summaries.")} />
-          ) : documentSummaries ? (
-            <div className="space-y-3">
-              {documentSummaries.document_summary ? (
-                <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
-                  <p className="font-semibold text-zinc-900">{t("Document summary")}</p>
-                  <p className="mt-2 whitespace-pre-wrap text-zinc-600">
-                    {documentSummaries.document_summary.summary}
+                  <p className="mt-2">
+                    {t(
+                      "Publishing automatically reprocesses this document's PostgreSQL segments. Milvus index rebuild is still separate and updates search, MCP, and Dify."
+                    )}
                   </p>
                 </div>
-              ) : (
-                <EmptyPanel
-                  title={t("No document summary")}
-                  action={t("Create one manually or generate it explicitly.")}
-                />
-              )}
-              <div>
-                <p className="mb-2 text-xs font-semibold text-zinc-700">
-                  {t("Segment summaries")} ({documentSummaries.segment_summaries.length})
-                </p>
-                <div className="space-y-2">
-                  {documentSummaries.segment_summaries.map((summary) => (
+
+                <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-zinc-950">{t("Parent-child mode")}</p>
+                      <p className="mt-1 leading-5 text-zinc-500">
+                        {t(
+                          "Dify uses paragraph parent-child or full-doc parent-child at the document level. Changing this only marks segments stale until you reprocess."
+                        )}
+                      </p>
+                    </div>
+                    <select
+                      className="h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 disabled:bg-zinc-50 disabled:text-zinc-400"
+                      disabled={!canManageSegments || !isParentChildDocument}
+                      onChange={(event) =>
+                        onUpdateDocumentParentMode(event.target.value as "paragraph" | "full_doc")
+                      }
+                      value={documentParentMode}
+                    >
+                      <option value="paragraph">{t("Paragraph parent-child")}</option>
+                      <option value="full_doc">{t("Full-doc parent-child")}</option>
+                    </select>
+                  </div>
+                  {!isParentChildDocument ? (
+                    <p className="mt-2 rounded-md bg-zinc-50 px-2 py-1.5 text-[11px] text-zinc-500">
+                      {t("Only parent-child documents use this setting.")}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+                  <div className="grid gap-2">
+                    <SnapshotRow
+                      label={t("Document form")}
+                      value={t(currentDocument.doc_form ?? "-")}
+                    />
+                    <SnapshotRow
+                      label={t("Processing revision")}
+                      value={String(currentDocument.processing_revision ?? "-")}
+                    />
+                    <SnapshotRow
+                      label={t("Current version id")}
+                      value={shortId(currentDocument.currentVersion?.id)}
+                    />
+                    <SnapshotRow
+                      label={t("Current version hash")}
+                      value={shortId(currentDocument.currentVersion?.markdown_hash)}
+                    />
+                    <SnapshotRow
+                      label={t("Snapshot settings revision")}
+                      value={String(processingSnapshot.settings_revision ?? "-")}
+                    />
+                    <SnapshotRow
+                      label={t("Snapshot parent mode")}
+                      value={t(formatParentModeLabel(snapshotParentMode))}
+                    />
+                    <SnapshotRow
+                      label={t("Snapshot parent overlap")}
+                      value={String(snapshotSegmentation.chunk_overlap ?? "-")}
+                    />
+                    <SnapshotRow
+                      label={t("Snapshot child overlap")}
+                      value={String(snapshotSubchunkSegmentation.chunk_overlap ?? "-")}
+                    />
+                  </div>
+                </div>
+
+                <details className="rounded-md border border-zinc-200 bg-white p-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
+                    {t("Process rule snapshot")}
+                  </summary>
+                  <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-950 p-3 text-[11px] leading-5 text-zinc-50">
+                    {formatJsonForPanel(currentDocument.process_rule_snapshot)}
+                  </pre>
+                </details>
+
+                <button
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+                  disabled={!canManageSegments || currentDocument.type !== "page"}
+                  onClick={onReprocessDocument}
+                  type="button"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  {t("Reprocess document segments")}
+                </button>
+              </div>
+            ) : (
+              <EmptyPanel
+                title={t("No document selected")}
+                action={t("Select a page document first.")}
+              />
+            )}
+          </div>
+        ) : null}
+
+        {tab === "chunks" ? (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold">{t("Document segments")}</p>
+                {currentDocument?.processing_status === "needs_reprocess" ? (
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                    {t("Needs reprocess")}
+                  </span>
+                ) : currentDocument ? (
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                    {t(currentDocument.processing_status ?? "current")}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-xs text-zinc-500">
+                {currentDocument
+                  ? t("{count} segments", { count: chunks.length })
+                  : t("No document selected")}
+              </p>
+            </div>
+            {currentDocument?.processing_status === "needs_reprocess" ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <p>{t("This document changed after its segments were generated.")}</p>
+                <button
+                  className="mt-2 inline-flex h-8 items-center rounded-md bg-amber-600 px-3 text-xs font-medium text-white hover:bg-amber-700"
+                  onClick={onReprocessDocument}
+                  type="button"
+                >
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  {t("Reprocess document segments")}
+                </button>
+              </div>
+            ) : null}
+            {hasManagedSegments ? (
+              <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
+                {t(
+                  "Segment changes are stored in PostgreSQL. Rebuild the Milvus index before search, MCP, or Dify use them."
+                )}
+              </div>
+            ) : null}
+            <label className="flex items-center gap-2 text-xs text-zinc-600">
+              <input
+                checked={showDeletedSegments}
+                className="h-4 w-4 rounded border-zinc-300"
+                onChange={(event) => onIncludeDeletedSegmentsChange(event.target.checked)}
+                type="checkbox"
+              />
+              {t("Show deleted segments")}
+            </label>
+            {chunksLoading ? (
+              <EmptyPanel
+                title={t("Loading segments")}
+                action={t("Reading PostgreSQL segments.")}
+              />
+            ) : chunks.length > 0 ? (
+              <div className="space-y-2">
+                {chunks.map((chunk) => {
+                  const isEditing = editingSegmentId === chunk.id;
+                  const sourceText = chunk.source_content_text ?? chunk.content_text;
+                  return (
                     <div
-                      className="rounded-md border border-zinc-200 bg-white p-2 text-xs"
-                      key={summary.id}
+                      className={`rounded-md border bg-white p-2 text-xs ${
+                        chunk.status === "deleted" ? "border-red-200" : "border-zinc-200"
+                      }`}
+                      key={chunk.id}
                     >
                       <div className="flex flex-wrap items-center gap-1.5 text-zinc-500">
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+                          {t(chunk.chunk_type)}
+                        </span>
                         <span
                           className={`rounded-full px-2 py-0.5 font-medium ${
-                            summary.status === "active"
+                            chunk.status === "active"
                               ? "bg-emerald-50 text-emerald-700"
-                              : summary.status === "deleted"
+                              : chunk.status === "deleted"
                                 ? "bg-red-50 text-red-700"
                                 : "bg-amber-50 text-amber-700"
                           }`}
                         >
-                          {t(summary.status)}
+                          {t(chunk.status)}
                         </span>
-                        <span className="truncate">{summary.chunk_id}</span>
+                        {chunk.has_override ? (
+                          <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
+                            {t("override")}
+                          </span>
+                        ) : null}
+                        <span>#{chunk.ordinal}</span>
+                        <span>{t("{count} tokens", { count: chunk.token_count ?? 0 })}</span>
                       </div>
-                      <p className="mt-2 whitespace-pre-wrap text-zinc-600">{summary.summary}</p>
+                      <div className="mt-2 space-y-2">
+                        <div>
+                          <p className="text-[11px] font-medium text-zinc-500">
+                            {t("Effective retrieval content")}
+                          </p>
+                          <p className="mt-1 line-clamp-4 text-zinc-700">{chunk.content_text}</p>
+                        </div>
+                        {chunk.has_override ? (
+                          <details className="rounded-md bg-zinc-50 p-2">
+                            <summary className="cursor-pointer text-[11px] font-medium text-zinc-500">
+                              {t("Source content")}
+                            </summary>
+                            <p className="mt-1 line-clamp-4 text-zinc-600">{sourceText}</p>
+                          </details>
+                        ) : null}
+                      </div>
+                      {isEditing ? (
+                        <div className="mt-2 space-y-2">
+                          <textarea
+                            className="min-h-28 w-full rounded-md border border-zinc-300 px-2 py-2 text-xs outline-none focus:border-emerald-500"
+                            onChange={(event) => setSegmentOverrideDraft(event.target.value)}
+                            value={segmentOverrideDraft}
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              className="inline-flex h-8 items-center rounded-md bg-zinc-950 px-2.5 text-xs font-medium text-white"
+                              disabled={!canManageSegments}
+                              onClick={() => {
+                                onUpdateSegment(chunk, {
+                                  override_content_markdown: segmentOverrideDraft,
+                                  override_content_text: segmentOverrideDraft
+                                });
+                                setEditingSegmentId(null);
+                              }}
+                              type="button"
+                            >
+                              {t("Save")}
+                            </button>
+                            <button
+                              className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700"
+                              onClick={() => setEditingSegmentId(null)}
+                              type="button"
+                            >
+                              {t("Cancel")}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      <p
+                        className="mt-2 truncate text-[11px] text-zinc-400"
+                        title={chunk.version_id}
+                      >
+                        {t("Version id")}: {chunk.version_id} · {t("Settings revision")}{" "}
+                        {chunk.settings_revision}
+                      </p>
+                      {chunk.heading_path.length > 0 ? (
+                        <p className="mt-1 truncate text-[11px] text-sky-700">
+                          {chunk.heading_path.join(" / ")}
+                        </p>
+                      ) : null}
+                      {canManageSegments ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {chunk.status === "active" ? (
+                            <button
+                              className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                              onClick={async () => {
+                                const confirmed = await confirmSegmentAction(
+                                  "Disable segment",
+                                  "Disabled segments stay in PostgreSQL but are excluded from retrieval after the next Milvus rebuild.",
+                                  "Disable segment"
+                                );
+                                if (confirmed) onUpdateSegment(chunk, { status: "disabled" });
+                              }}
+                              type="button"
+                            >
+                              {t("Disable segment")}
+                            </button>
+                          ) : (
+                            <button
+                              className="inline-flex h-8 items-center rounded-md border border-emerald-200 px-2.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                              onClick={() => onUpdateSegment(chunk, { status: "active" })}
+                              type="button"
+                            >
+                              {chunk.status === "deleted"
+                                ? t("Restore segment")
+                                : t("Enable segment")}
+                            </button>
+                          )}
+                          <button
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                            onClick={() => {
+                              setEditingSegmentId(chunk.id);
+                              setSegmentOverrideDraft(chunk.content_text);
+                            }}
+                            type="button"
+                          >
+                            {t("Edit retrieval content")}
+                          </button>
+                          {chunk.has_override ? (
+                            <button
+                              className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                              onClick={async () => {
+                                const confirmed = await confirmSegmentAction(
+                                  "Reset override",
+                                  "Reset this segment override and return retrieval content to the source chunk?",
+                                  "Reset override"
+                                );
+                                if (confirmed) onUpdateSegment(chunk, { reset_override: true });
+                              }}
+                              type="button"
+                            >
+                              {t("Reset override")}
+                            </button>
+                          ) : null}
+                          {chunk.status !== "deleted" ? (
+                            <button
+                              className="inline-flex h-8 items-center rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                              onClick={async () => {
+                                const confirmed = await confirmSegmentAction(
+                                  "Soft delete segment",
+                                  "Soft-deleted segments are hidden by default and excluded from retrieval after the next Milvus rebuild.",
+                                  "Soft delete segment",
+                                  "danger"
+                                );
+                                if (confirmed) onUpdateSegment(chunk, { status: "deleted" });
+                              }}
+                              type="button"
+                            >
+                              {t("Soft delete segment")}
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
-                  ))}
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <EmptyPanel
+                  title={t("No segments for this document")}
+                  action={t("Reprocess segments before this document can be searched.")}
+                />
+                <button
+                  className="inline-flex w-full items-center justify-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                  onClick={onOpenDashboard}
+                  type="button"
+                >
+                  {t("Open KB dashboard")}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {tab === "qa" ? (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <p className="text-sm font-semibold">{t("QA pairs")}</p>
+              <p className="text-xs text-zinc-500">
+                {t("Questions are indexed; answers are returned to search, MCP, and Dify.")}
+              </p>
+            </div>
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+              {t(
+                "QA changes require reprocess and then Milvus index rebuild before retrieval updates."
+              )}
+            </div>
+            {canManageDerivedContent ? (
+              <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+                <label className="block text-xs">
+                  <span className="mb-1 block font-medium text-zinc-600">{t("Question")}</span>
+                  <input
+                    className="h-8 w-full rounded-md border border-zinc-200 px-2 outline-none focus:border-emerald-500"
+                    onChange={(event) => setQaQuestionDraft(event.target.value)}
+                    value={qaQuestionDraft}
+                  />
+                </label>
+                <label className="block text-xs">
+                  <span className="mb-1 block font-medium text-zinc-600">{t("Answer")}</span>
+                  <textarea
+                    className="min-h-20 w-full rounded-md border border-zinc-200 px-2 py-2 outline-none focus:border-emerald-500"
+                    onChange={(event) => setQaAnswerDraft(event.target.value)}
+                    value={qaAnswerDraft}
+                  />
+                </label>
+                <button
+                  className="inline-flex h-8 w-full items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+                  disabled={!qaQuestionDraft.trim() || !qaAnswerDraft.trim()}
+                  onClick={() => {
+                    onCreateQaPair({
+                      question: qaQuestionDraft,
+                      answer: qaAnswerDraft
+                    });
+                    setQaQuestionDraft("");
+                    setQaAnswerDraft("");
+                  }}
+                  type="button"
+                >
+                  {t("Add QA pair")}
+                </button>
+              </div>
+            ) : null}
+            {canManageDerivedContent ? (
+              <details className="rounded-md border border-zinc-200 bg-white p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
+                  {t("CSV import and generation")}
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <textarea
+                    className="min-h-24 w-full rounded-md border border-zinc-200 px-2 py-2 font-mono text-xs outline-none focus:border-emerald-500"
+                    onChange={(event) => setQaCsvDraft(event.target.value)}
+                    placeholder="question,answer"
+                    value={qaCsvDraft}
+                  />
+                  <button
+                    className="inline-flex h-8 w-full items-center justify-center rounded-md border border-zinc-200 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:text-zinc-300"
+                    disabled={!qaCsvDraft.trim()}
+                    onClick={() => {
+                      onImportQaPairs(qaCsvDraft);
+                      setQaCsvDraft("");
+                    }}
+                    type="button"
+                  >
+                    {t("Import CSV")}
+                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                      onClick={() =>
+                        onGenerateQaPairs({ mode: "mock", scope: "segments", count: 6 })
+                      }
+                      type="button"
+                    >
+                      {t("Generate mock QA")}
+                    </button>
+                    <button
+                      className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                      onClick={() =>
+                        onGenerateQaPairs({ mode: "llm", scope: "document", count: 6 })
+                      }
+                      type="button"
+                    >
+                      {t("Generate LLM QA")}
+                    </button>
+                  </div>
+                </div>
+              </details>
+            ) : null}
+            {documentQaLoading ? (
+              <EmptyPanel title={t("Loading QA")} action={t("Reading QA pairs.")} />
+            ) : documentQaPairs.length > 0 ? (
+              <div className="space-y-2">
+                {documentQaPairs.map((pair) => (
+                  <div
+                    className="rounded-md border border-zinc-200 bg-white p-3 text-xs"
+                    key={pair.id}
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
+                        {t(pair.source)}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-medium ${
+                          pair.status === "active"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : pair.status === "deleted"
+                              ? "bg-red-50 text-red-700"
+                              : "bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        {t(pair.status)}
+                      </span>
+                    </div>
+                    <p className="mt-2 font-semibold text-zinc-900">{pair.question}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-zinc-600">{pair.answer}</p>
+                    {pair.source_chunk_id ? (
+                      <p className="mt-2 truncate text-[11px] text-zinc-400">
+                        {t("Source chunk")}: {pair.source_chunk_id}
+                      </p>
+                    ) : null}
+                    {canManageDerivedContent ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                          onClick={() =>
+                            onUpdateQaPair(pair, {
+                              status: pair.status === "active" ? "disabled" : "active"
+                            })
+                          }
+                          type="button"
+                        >
+                          {pair.status === "active" ? t("Disable") : t("Enable")}
+                        </button>
+                        <button
+                          className="inline-flex h-8 items-center rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                          onClick={() => onUpdateQaPair(pair, { status: "deleted" })}
+                          type="button"
+                        >
+                          {t("Delete")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyPanel title={t("No QA pairs")} action={t("Add QA manually or import CSV.")} />
+            )}
+          </div>
+        ) : null}
+
+        {tab === "summary" ? (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <p className="text-sm font-semibold">{t("Summaries")}</p>
+              <p className="text-xs text-zinc-500">
+                {t("Summaries are derived retrieval indexes and never rewrite Markdown.")}
+              </p>
+            </div>
+            <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
+              {t(
+                "Summary changes require a Milvus index rebuild before search, MCP, or Dify use them."
+              )}
+            </div>
+            {canManageDerivedContent ? (
+              <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+                <label className="block text-xs">
+                  <span className="mb-1 block font-medium text-zinc-600">
+                    {t("Document summary")}
+                  </span>
+                  <textarea
+                    className="min-h-24 w-full rounded-md border border-zinc-200 px-2 py-2 outline-none focus:border-emerald-500"
+                    onChange={(event) => setSummaryDraft(event.target.value)}
+                    value={summaryDraft}
+                  />
+                </label>
+                <button
+                  className="inline-flex h-8 w-full items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+                  disabled={!summaryDraft.trim()}
+                  onClick={() => {
+                    onGenerateSummary({
+                      scope: "document",
+                      mode: "manual",
+                      summary: summaryDraft
+                    });
+                    setSummaryDraft("");
+                  }}
+                  type="button"
+                >
+                  {t("Save document summary")}
+                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    onClick={() => onGenerateSummary({ scope: "document", mode: "mock" })}
+                    type="button"
+                  >
+                    {t("Mock document summary")}
+                  </button>
+                  <button
+                    className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    onClick={() => onGenerateSummary({ scope: "document", mode: "llm" })}
+                    type="button"
+                  >
+                    {t("LLM document summary")}
+                  </button>
+                </div>
+                <button
+                  className="inline-flex h-8 w-full items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                  onClick={() => onGenerateSummary({ scope: "all_segments", mode: "mock" })}
+                  type="button"
+                >
+                  {t("Mock all segment summaries")}
+                </button>
+              </div>
+            ) : null}
+            {documentSummariesLoading ? (
+              <EmptyPanel title={t("Loading summaries")} action={t("Reading summaries.")} />
+            ) : documentSummaries ? (
+              <div className="space-y-3">
+                {documentSummaries.document_summary ? (
+                  <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+                    <p className="font-semibold text-zinc-900">{t("Document summary")}</p>
+                    <p className="mt-2 whitespace-pre-wrap text-zinc-600">
+                      {documentSummaries.document_summary.summary}
+                    </p>
+                  </div>
+                ) : (
+                  <EmptyPanel
+                    title={t("No document summary")}
+                    action={t("Create one manually or generate it explicitly.")}
+                  />
+                )}
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-zinc-700">
+                    {t("Segment summaries")} ({documentSummaries.segment_summaries.length})
+                  </p>
+                  <div className="space-y-2">
+                    {documentSummaries.segment_summaries.map((summary) => (
+                      <div
+                        className="rounded-md border border-zinc-200 bg-white p-2 text-xs"
+                        key={summary.id}
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5 text-zinc-500">
+                          <span
+                            className={`rounded-full px-2 py-0.5 font-medium ${
+                              summary.status === "active"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : summary.status === "deleted"
+                                  ? "bg-red-50 text-red-700"
+                                  : "bg-amber-50 text-amber-700"
+                            }`}
+                          >
+                            {t(summary.status)}
+                          </span>
+                          <span className="truncate">{summary.chunk_id}</span>
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap text-zinc-600">{summary.summary}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <EmptyPanel title={t("No summaries")} action={t("Select a page document first.")} />
-          )}
-        </div>
-      ) : null}
-
-      {tab === "metadata" ? (
-        <div className="space-y-3 px-4 py-4">
-          <div>
-            <p className="text-sm font-semibold">{t("Metadata")}</p>
-            <p className="text-xs text-zinc-500">
-              {t("Dify-native document metadata for filtering.")}
-            </p>
+            ) : (
+              <EmptyPanel title={t("No summaries")} action={t("Select a page document first.")} />
+            )}
           </div>
-          {metadataLoading ? (
-            <EmptyPanel title={t("Loading metadata")} action={t("Reading document metadata.")} />
-          ) : metadata ? (
-            <div className="space-y-3">
-              <div className="space-y-2">
-                {metadata.fields.built_in.map((field) => (
-                  <label className="block text-xs" key={field.name}>
-                    <span className="mb-1 flex items-center justify-between gap-2 text-zinc-500">
-                      <span>{field.name}</span>
-                      <span className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
-                        {t("Built-in")}
+        ) : null}
+
+        {visibleTab === "metadata" ? (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <p className="text-sm font-semibold">{t("Metadata")}</p>
+              <p className="text-xs text-zinc-500">
+                {t("Dify-native document metadata for filtering.")}
+              </p>
+            </div>
+            {metadataLoading ? (
+              <EmptyPanel title={t("Loading metadata")} action={t("Reading document metadata.")} />
+            ) : metadata ? (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  {metadata.fields.built_in.map((field) => (
+                    <label className="block text-xs" key={field.name}>
+                      <span className="mb-1 flex items-center justify-between gap-2 text-zinc-500">
+                        <span>{field.name}</span>
+                        <span className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
+                          {t("Built-in")}
+                        </span>
                       </span>
-                    </span>
-                    <input
-                      className="h-8 w-full rounded-md border border-zinc-200 bg-zinc-50 px-2 text-xs text-zinc-500"
-                      readOnly
-                      value={String(metadata.values[field.name] ?? "")}
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="space-y-2 border-t border-zinc-200 pt-3">
-                {metadata.fields.custom.map((field) => (
-                  <label className="block text-xs" key={field.id ?? field.name}>
-                    <span className="mb-1 flex items-center justify-between gap-2 text-zinc-600">
-                      <span>{field.name}</span>
-                      <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600">
-                        {field.type}
+                      <input
+                        className="h-8 w-full rounded-md border border-zinc-200 bg-zinc-50 px-2 text-xs text-zinc-500"
+                        readOnly
+                        value={String(metadata.values[field.name] ?? "")}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="space-y-2 border-t border-zinc-200 pt-3">
+                  {metadata.fields.custom.map((field) => (
+                    <label className="block text-xs" key={field.id ?? field.name}>
+                      <span className="mb-1 flex items-center justify-between gap-2 text-zinc-600">
+                        <span>{field.name}</span>
+                        <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600">
+                          {field.type}
+                        </span>
                       </span>
-                    </span>
-                    <input
-                      className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-emerald-500"
-                      onChange={(event) => onMetadataDraftChange(field.name, event.target.value)}
-                      type={
-                        field.type === "number"
-                          ? "number"
-                          : field.type === "time"
-                            ? "datetime-local"
-                            : "text"
-                      }
-                      value={metadataDraft[field.name] ?? ""}
+                      <input
+                        className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-emerald-500"
+                        onChange={(event) => onMetadataDraftChange(field.name, event.target.value)}
+                        type={
+                          field.type === "number"
+                            ? "number"
+                            : field.type === "time"
+                              ? "datetime-local"
+                              : "text"
+                        }
+                        value={metadataDraft[field.name] ?? ""}
+                      />
+                    </label>
+                  ))}
+                  {metadata.fields.custom.length === 0 ? (
+                    <EmptyPanel
+                      title={t("No custom metadata fields")}
+                      action={t("Add fields in the knowledge base Metadata tab.")}
                     />
-                  </label>
-                ))}
-                {metadata.fields.custom.length === 0 ? (
-                  <EmptyPanel
-                    title={t("No custom metadata fields")}
-                    action={t("Add fields in the knowledge base Metadata tab.")}
-                  />
+                  ) : null}
+                </div>
+                {metadata.fields.custom.length > 0 ? (
+                  <button
+                    className="inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+                    disabled={metadataSaving}
+                    onClick={onSaveMetadata}
+                    type="button"
+                  >
+                    {metadataSaving ? t("Saving...") : t("Save metadata")}
+                  </button>
                 ) : null}
               </div>
-              {metadata.fields.custom.length > 0 ? (
-                <button
-                  className="inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
-                  disabled={metadataSaving}
-                  onClick={onSaveMetadata}
-                  type="button"
-                >
-                  {metadataSaving ? t("Saving...") : t("Save metadata")}
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <EmptyPanel title={t("No metadata")} action={t("Select a page document first.")} />
-          )}
-        </div>
-      ) : null}
-
-      {tab === "versions" ? (
-        <div className="space-y-3 px-4 py-4">
-          <div>
-            <p className="text-sm font-semibold">{t("Versions")}</p>
-            <p className="text-xs text-zinc-500">
-              {versionsLoading
-                ? t("Loading versions")
-                : t("{count} versions", { count: versions.length })}
-            </p>
+            ) : (
+              <EmptyPanel title={t("No metadata")} action={t("Select a page document first.")} />
+            )}
           </div>
+        ) : null}
 
-          {versions.length > 0 ? (
-            <div className="space-y-1">
-              {versions.map((version) => (
+        {visibleTab === "versions" ? (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <p className="text-sm font-semibold">{t("Versions")}</p>
+              <p className="text-xs text-zinc-500">
+                {versionsLoading
+                  ? t("Loading versions")
+                  : t("{count} versions", { count: versions.length })}
+              </p>
+            </div>
+
+            {versions.length > 0 ? (
+              <div className="space-y-1">
+                {versions.map((version) => (
+                  <button
+                    className={`w-full rounded-md border px-2 py-2 text-left text-xs ${
+                      selectedVersionId === version.id
+                        ? "border-sky-300 bg-sky-50 text-sky-900"
+                        : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                    }`}
+                    key={version.id}
+                    onClick={() => onSelectVersion(version.id)}
+                    type="button"
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-medium">
+                        {t("Version {version}", { version: version.version_no })}
+                      </span>
+                      {version.is_current ? (
+                        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                          {t("Current")}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="mt-1 block truncate text-[11px] text-zinc-500">
+                      {formatDateTime(version.created_at)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : versionsLoading ? (
+              <EmptyPanel title={t("Loading versions")} action={t("Reading document history.")} />
+            ) : (
+              <EmptyPanel title={t("No versions")} action={t("Save the page to create history.")} />
+            )}
+
+            {selectedVersion ? (
+              <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold">
+                    {t("Version {version}", { version: selectedVersion.version_no })}
+                  </p>
+                  <span className="text-zinc-400">{selectedVersion.source_type}</span>
+                </div>
+                {diff ? (
+                  <p className="mt-2 text-zinc-500">
+                    {diff.changed === 0
+                      ? t("No Markdown changes from current version.")
+                      : t("{count} changed lines", { count: diff.changed })}
+                  </p>
+                ) : null}
+                <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-950 p-2 text-[11px] leading-5 text-zinc-50">
+                  {selectedVersion.markdown || " "}
+                </pre>
                 <button
-                  className={`w-full rounded-md border px-2 py-2 text-left text-xs ${
-                    selectedVersionId === version.id
-                      ? "border-sky-300 bg-sky-50 text-sky-900"
-                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-                  }`}
-                  key={version.id}
-                  onClick={() => onSelectVersion(version.id)}
+                  className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+                  disabled={
+                    !canRestore || selectedVersionSummary?.is_current || selectedVersionLoading
+                  }
+                  onClick={() => onRestoreVersion(selectedVersion.id)}
                   type="button"
                 >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="font-medium">
-                      {t("Version {version}", { version: version.version_no })}
-                    </span>
-                    {version.is_current ? (
-                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
-                        {t("Current")}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="mt-1 block truncate text-[11px] text-zinc-500">
-                    {formatDateTime(version.created_at)}
-                  </span>
+                  {selectedVersionLoading ? t("Loading...") : t("Restore")}
                 </button>
-              ))}
-            </div>
-          ) : versionsLoading ? (
-            <EmptyPanel title={t("Loading versions")} action={t("Reading document history.")} />
-          ) : (
-            <EmptyPanel title={t("No versions")} action={t("Save the page to create history.")} />
-          )}
-
-          {selectedVersion ? (
-            <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold">
-                  {t("Version {version}", { version: selectedVersion.version_no })}
-                </p>
-                <span className="text-zinc-400">{selectedVersion.source_type}</span>
               </div>
-              {diff ? (
-                <p className="mt-2 text-zinc-500">
-                  {diff.changed === 0
-                    ? t("No Markdown changes from current version.")
-                    : t("{count} changed lines", { count: diff.changed })}
-                </p>
-              ) : null}
-              <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-950 p-2 text-[11px] leading-5 text-zinc-50">
-                {selectedVersion.markdown || " "}
-              </pre>
-              <button
-                className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
-                disabled={
-                  !canRestore || selectedVersionSummary?.is_current || selectedVersionLoading
-                }
-                onClick={() => onRestoreVersion(selectedVersion.id)}
-                type="button"
-              >
-                {selectedVersionLoading ? t("Loading...") : t("Restore")}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -3544,6 +5038,26 @@ function toPanelRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function readPanelParentMode(value: unknown): "paragraph" | "full_doc" | null {
+  if (value === "full_doc" || value === "full-doc") {
+    return "full_doc";
+  }
+  if (value === "paragraph") {
+    return "paragraph";
+  }
+  return null;
+}
+
+function formatParentModeLabel(value: "paragraph" | "full_doc" | null): string {
+  if (value === "full_doc") {
+    return "Full-doc parent-child";
+  }
+  if (value === "paragraph") {
+    return "Paragraph parent-child";
+  }
+  return "-";
 }
 
 function summarizeMarkdownDiff(currentMarkdown: string, versionMarkdown: string) {
@@ -3771,28 +5285,42 @@ function ReferenceGroup({
 }
 
 function ModeSwitch({
+  canEdit,
   mode,
   onChange
 }: {
-  mode: "edit" | "source";
-  onChange: (mode: "edit" | "source") => void;
+  canEdit: boolean;
+  mode: EditorMode;
+  onChange: (mode: EditorMode) => void;
 }) {
   const { t } = useI18n();
   return (
     <div className="editor-mode-switch" aria-label={t("Editor mode")}>
       <button
         className={
-          mode === "edit" ? "editor-mode-switch-button-active" : "editor-mode-switch-button"
+          mode === "edit" || mode === "read"
+            ? "editor-mode-switch-button-active"
+            : "editor-mode-switch-button"
         }
-        onClick={() => onChange("edit")}
+        onClick={() => onChange(canEdit ? "edit" : "read")}
         type="button"
       >
-        {t("Edit")}
+        {canEdit ? t("Edit") : t("Read")}
+      </button>
+      <button
+        className={
+          mode === "segments" ? "editor-mode-switch-button-active" : "editor-mode-switch-button"
+        }
+        onClick={() => onChange("segments")}
+        type="button"
+      >
+        {t("Segments")}
       </button>
       <button
         className={
           mode === "source" ? "editor-mode-switch-button-active" : "editor-mode-switch-button"
         }
+        disabled={!canEdit}
         onClick={() => onChange("source")}
         type="button"
       >

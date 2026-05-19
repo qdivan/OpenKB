@@ -1,6 +1,8 @@
 # 00 — OpenKB 文档索引
 
-本文档把 OpenKB 文档分为四类：当前规范、路线图、对齐审计和历史快照。Codex 开始任何代码工作前，应优先阅读“最高优先级”和“当前规范”；历史快照只用于追溯，不应覆盖当前规范。
+本文档把 OpenKB 文档分为四类：当前规范、路线图、Dify 配合与兼容、历史/工程审计。Codex 开始任何代码工作前，应优先阅读“最高优先级”和“当前规范”；历史快照和工程审计只用于追溯，不应覆盖当前规范。
+
+当前主线状态：Phase 25 稳定收口中。只读用户可查看文档分段，Dify key 默认最小化授权到当前选择知识库，创建知识库时严格校验 `doc_form`；Dify 相关公开表述统一使用“配合 / 兼容 / 接入”。
 
 ## 最高优先级
 
@@ -41,14 +43,17 @@
 - `docs/21-v0.3.2-clarifications.zh-CN.md`：Codex 首轮发现点的澄清和修正。
 - `docs/22-v0.3.3-clarifications.zh-CN.md`：Codex 第二轮发现点的澄清和修正。
 
-## Dify 与对齐审计
+## Dify 配合与兼容
 
 - `docs/26-dify-external-knowledge-setup.zh-CN.md`：OpenKB 作为 Dify External Knowledge 的配置、metadata 映射和本地 Docker/WSL 验证指南。
-- `docs/27-dify-knowledge-alignment.zh-CN.md`：Dify 1.14.1 知识库处理、分块、检索策略、QA、摘要和 segment 管理的 OpenKB 对齐计划。
-- `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`：本地 Dify 1.14.1 升级记录、真实运行验证、差异矩阵和 Phase 22 历史拆分记录。
-- `docs/29-i18n-terminology-alignment.zh-CN.md`：前端中文术语对齐基线，覆盖 Dify 知识库/检索术语和语雀式协作权限术语。
-- `docs/30-dify-parity-v2-analysis.zh-CN.md`：Dify Parity v2 报告、Dify 1.14.1 后端和 OpenKB 后端的三方差异分析基线；记录 splitter 全量一致、同模型 live retrieval parity 和 Phase 25 image smoke 证据。
+- `docs/27-dify-knowledge-alignment.zh-CN.md`：Dify 风格知识库处理、分块、检索策略、QA、摘要和 segment 管理在 OpenKB 中的兼容性基线。
+- `docs/29-i18n-terminology-alignment.zh-CN.md`：前端中文术语基线，覆盖 Dify 知识库/检索术语和语雀式协作权限术语。
 - `docs/31-dify-parity-next-phases.zh-CN.md`：Phase 23-25 的收口记录和后续验证入口；当前剩余重点是发布后观察、排序差异归因和旧派生数据手动重建 runbook。
+
+## 历史 / 工程审计
+
+- `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md`：本地 Dify 1.14.1 升级记录、真实运行验证、差异矩阵和 Phase 22 历史拆分记录。
+- `docs/30-dify-parity-v2-analysis.zh-CN.md`：Dify 兼容性测试报告、Dify 1.14.1 后端和 OpenKB 后端的三方差异分析基线；记录 splitter 全量一致、同模型检索兼容性测试和 Phase 25 image smoke 证据。
 
 ## 辅助文档
 

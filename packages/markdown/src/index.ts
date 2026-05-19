@@ -893,21 +893,23 @@ function chunkMarkdownParentChild(
   const markdown = normalizeMarkdownSource(markdownInput);
   const parentChunks =
     options.parentMode === "full_doc"
-      ? [
-          {
-            ordinal: 0,
-            heading_path: [],
-            content_text: extractMarkdownPlainText(markdown),
-            content_markdown: markdown,
-            token_count: estimateTokenCount(extractMarkdownPlainText(markdown)),
-            metadata: {
-              start_line: 1,
-              end_line: Math.max(markdown.split("\n").length, 1),
-              start_char: 0,
-              end_char: markdown.length
+      ? isMeaningfulMarkdownContent(markdown)
+        ? [
+            {
+              ordinal: 0,
+              heading_path: [],
+              content_text: extractMarkdownPlainText(markdown),
+              content_markdown: markdown,
+              token_count: estimateTokenCount(extractMarkdownPlainText(markdown)),
+              metadata: {
+                start_line: 1,
+                end_line: Math.max(markdown.split("\n").length, 1),
+                start_char: 0,
+                end_char: markdown.length
+              }
             }
-          }
-        ]
+          ]
+        : []
       : chunkMarkdownByDifySplitter(markdown, {
           mode: options.processRuleMode,
           fixedSeparator: options.parentDelimiter,
@@ -959,7 +961,7 @@ function chunkMarkdownParentChild(
       overlapCharacters: options.childOverlapCharacters
     })
       .map((chunk) => chunk.trim())
-      .filter(Boolean);
+      .filter(isMeaningfulMarkdownContent);
     for (const [childOrdinal, childMarkdown] of childSegments.entries()) {
       const contentText = extractMarkdownPlainText(childMarkdown);
       const childRange = findMarkdownRange(
@@ -997,7 +999,7 @@ function chunkMarkdownParentChild(
     }
   }
 
-  return chunks.length > 0 ? chunks : chunkMarkdownForIndex("", { mode: "general" });
+  return chunks;
 }
 
 function chunkMarkdownByDifySplitter(
@@ -1012,7 +1014,7 @@ function chunkMarkdownByDifySplitter(
   const outline = extractMarkdownOutline(markdown);
   const chunks = splitDifyText(markdown, options)
     .map((chunk) => chunk.trim())
-    .filter(Boolean);
+    .filter(isMeaningfulMarkdownContent);
   let cursor = 0;
   const mapped = chunks.map((contentMarkdown, ordinal) => {
     const range = findMarkdownRange(markdown, contentMarkdown, cursor);
@@ -1039,18 +1041,19 @@ function chunkMarkdownByDifySplitter(
     };
   });
 
-  return mapped.length > 0
-    ? mapped
-    : [
-        {
-          ordinal: 0,
-          heading_path: [],
-          content_text: "",
-          content_markdown: "",
-          token_count: 0,
-          metadata: { start_line: 1, end_line: 1, start_char: 0, end_char: 0 }
-        }
-      ];
+  return mapped;
+}
+
+function isMeaningfulMarkdownContent(markdown: string): boolean {
+  if (extractMarkdownAssetReferencesForIndex(markdown).length > 0) {
+    return true;
+  }
+  const text = extractMarkdownPlainText(markdown)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 0;
 }
 
 function splitDifyText(

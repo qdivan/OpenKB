@@ -58,5 +58,5 @@ The Yuque MCP references above are public server/API references used for capabil
 - Dify 1.14.1 source tag: https://github.com/langgenius/dify/tree/1.14.1
 
 See also `docs/26-dify-external-knowledge-setup.zh-CN.md` for the OpenKB -> Dify External Knowledge setup and metadata compatibility checklist.
-See also `docs/27-dify-knowledge-alignment.zh-CN.md` for the Dify 1.14.1 knowledge processing and retrieval alignment matrix.
-See also `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md` for the local Dify 1.14.1 upgrade log, validation notes, and OpenKB gap audit.
+See also `docs/27-dify-knowledge-alignment.zh-CN.md` for the Dify knowledge processing and retrieval compatibility baseline.
+See also `docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md` for the local Dify 1.14.1 upgrade log, validation notes, and OpenKB engineering audit record.

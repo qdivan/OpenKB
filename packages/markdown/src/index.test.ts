@@ -156,6 +156,47 @@ Child chunks keep searchable text.`,
     expect(parents[0]?.content_text).toContain("One long paragraph");
   });
 
+  it("drops break-only parent-child segments", () => {
+    const chunks = chunkMarkdownForIndex("测试\n\n<br />\n\n测试", {
+      mode: "parent_child",
+      parent_mode: "paragraph",
+      parent_delimiter: "\n\n",
+      child_delimiter: "\n\n",
+      parent_max_characters: 20,
+      child_max_characters: 20
+    });
+
+    expect(chunks).not.toHaveLength(0);
+    expect(chunks.every((chunk) => !chunk.content_markdown.includes("<br"))).toBe(true);
+    expect(chunks.every((chunk) => chunk.content_text.trim().length > 0)).toBe(true);
+  });
+
+  it("keeps asset-only Markdown as meaningful retrieval source", () => {
+    const markdown = "![](asset://asset_123)";
+    const textChunks = chunkMarkdownForIndex(markdown, {
+      doc_form: "text_model",
+      process_rule_mode: "custom",
+      process_rule: {
+        segmentation: { separator: "\n\n", max_tokens: 500, chunk_overlap: 0 }
+      }
+    });
+    const parentChildChunks = chunkMarkdownForIndex(markdown, {
+      mode: "parent_child",
+      parent_mode: "paragraph",
+      parent_delimiter: "\n\n",
+      child_delimiter: "\n\n",
+      parent_max_characters: 500,
+      child_max_characters: 500
+    });
+
+    expect(textChunks.some((chunk) => chunk.content_markdown.includes("asset://asset_123"))).toBe(
+      true
+    );
+    expect(
+      parentChildChunks.some((chunk) => chunk.content_markdown.includes("asset://asset_123"))
+    ).toBe(true);
+  });
+
   it("maps Dify text_model to general chunks and qa_model to question chunks", () => {
     const textChunks = chunkMarkdownForIndex("# A\n\nBody", {
       doc_form: "text_model",

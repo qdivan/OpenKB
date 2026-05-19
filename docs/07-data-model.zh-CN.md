@@ -523,4 +523,4 @@ audit_logs (
   created_at timestamptz not null
 )
 ```
-> Phase 22 补充：Dify 1.14.1 对齐新增 `knowledge_base_chunk_settings.doc_form/indexing_technique/process_rule_mode/process_rule/retrieval_model/summary_index_setting`，`documents.process_rule_snapshot/processing_status/processing_revision/need_summary`，`document_chunks.status/override_content_*`，以及 `document_qa_pairs`、`document_segment_summaries`。正文仍以 `document_versions.markdown` 为真相，chunks/QA/summary 都是派生索引数据。
+> Phase 22 补充：Dify 兼容性工作新增 `knowledge_base_chunk_settings.doc_form/indexing_technique/process_rule_mode/process_rule/retrieval_model/summary_index_setting`，`documents.process_rule_snapshot/processing_status/processing_revision/need_summary`，`document_chunks.status/override_content_*`，以及 `document_qa_pairs`、`document_segment_summaries`。正文仍以 `document_versions.markdown` 为真相，chunks/QA/summary 都是派生索引数据。

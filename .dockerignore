@@ -10,6 +10,7 @@ coverage
 *.log
 
 # Local runtime artifacts
+.codex-runtime
 .playwright-cli
 output/playwright
 playwright-report
@@ -27,4 +28,3 @@ test-results
 Thumbs.db
 .idea
 .vscode
-

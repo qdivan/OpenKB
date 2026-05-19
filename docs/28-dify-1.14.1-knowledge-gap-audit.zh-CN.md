@@ -1,11 +1,13 @@
-# 28 — Dify 1.14.1 知识库能力差异审计
+# 28 — Dify 1.14.1 知识库能力工程审计
+
+> 本文是工程审计材料，不是产品宣传口径。README 和当前用户入口统一使用“Dify 配合 / 兼容 / 接入”；本文保留部分历史术语用于追溯当时的实现差异。
 
 本文是 Phase 22 的升级与审计记录。它合并两件事：
 
 - 本地 Dify 从 `1.13.0` 原地升级到 `1.14.1` 的执行记录、验证结果和回滚边界。
 - 以 Dify `1.14.1` 源码、升级后的本地 Dify UI/运行行为、OpenKB 当前实现为三方参照，逐项审计知识库处理、分块、检索和 segment 管理差异。
 
-本文是 Dify 1.14.1 升级与能力审计基线。分块与检索结果的实测差异以后续 `docs/30-dify-parity-v2-analysis.zh-CN.md` 为准；若两者冲突，以 docs/30 的 parity 结论为准。Phase 22.9 之后的新增计划统一放在 `docs/31-dify-parity-next-phases.zh-CN.md`，本文不再作为后续执行入口。
+本文是 Dify 1.14.1 升级与能力审计基线。分块与检索结果的实测差异以后续 `docs/30-dify-parity-v2-analysis.zh-CN.md` 为准；若两者冲突，以 docs/30 的兼容性测试结论为准。Phase 22.9 之后的新增计划统一放在 `docs/31-dify-parity-next-phases.zh-CN.md`，本文不再作为后续执行入口。
 
 ## 参照来源
 
@@ -124,17 +126,17 @@ python_path: /opt/python/bin/python3
 - 已实现：OpenKB 代码路径已经具备主要行为，并有相应 API/worker/UI 或测试。
 - 部分实现：有 schema、API 或部分 UI，但行为未完全等价 Dify。
 - 仅计划：只在文档或路线图中定义，尚未完整实现。
-- 不对齐：OpenKB 明确不照搬，需保留产品边界。
+- 不兼容：OpenKB 明确不照搬，需保留产品边界。
 
 | Dify 1.14.1 能力/字段 | Dify 语义 | OpenKB 当前映射 | 状态 | 差异与后续 |
 | --- | --- | --- | --- | --- |
 | Dataset / Knowledge | 知识库级对象，保存索引技术、检索模型、summary 设置、metadata schema 等 | `knowledge_bases` + `knowledge_base_chunk_settings` + metadata fields | Phase 23 已收口 | 参数展示、校验和处理快照一致性已进入 Phase 23 测试基线 |
-| Document | 知识库内文档，可保存处理规则快照、启用状态和 summary 状态 | `documents` + `document_versions` + processing snapshot | Phase 22.6 UI 已对齐 | OpenKB 正文以 Markdown 版本为真相，处理快照是派生索引层 |
+| Document | 知识库内文档，可保存处理规则快照、启用状态和 summary 状态 | `documents` + `document_versions` + processing snapshot | Phase 22.6 UI 已兼容 | OpenKB 正文以 Markdown 版本为真相，处理快照是派生索引层 |
 | Segment | 检索最小片段，可启用/禁用、编辑内容、删除 | `document_chunks` | 已实现基础闭环 | 文档右侧 Segments 面板管理 active/disabled/deleted、override/reset；KB Segment map 只做分组预览 |
 | `doc_form=text_model` | 普通 RAG 文档，生成普通段落 chunks | `doc_form=text_model` / `general` chunks | Phase 23 已收口 | 参数 UI/API 与快照一致性已补齐 |
 | `doc_form=hierarchical_model` | 父子检索知识库 | `doc_form=hierarchical_model` + parent/child chunks | Phase 23 已收口 | parent/subchunk overlap 展示与回归验收已补齐 |
-| `doc_form=qa_model` | QA 知识库，索引问题、返回答案 | `document_qa_pairs` / QA metadata | Phase 24 已完成 QA parity 收口 | manual/CSV/mock/LLM 统一进入 `document_qa_pairs`，`qa_model` reprocess 只索引 active QA pairs |
-| `indexing_technique=economy` | 关键词/全文类低成本索引 | BM25 / keyword strategy | Phase 22.3 已注入 | Phase 25 已完成同模型 live retrieval parity 复跑 |
+| `doc_form=qa_model` | QA 知识库，索引问题、返回答案 | `document_qa_pairs` / QA metadata | Phase 24 已完成 QA 兼容语义收口 | manual/CSV/mock/LLM 统一进入 `document_qa_pairs`，`qa_model` reprocess 只索引 active QA pairs |
+| `indexing_technique=economy` | 关键词/全文类低成本索引 | BM25 / keyword strategy | Phase 22.3 已注入 | Phase 25 已完成同模型 live retrieval 兼容性测试复跑 |
 | `indexing_technique=high_quality` | embedding/hybrid/rerank 高质量索引 | Admin Models + dense/hybrid/rerank + Milvus profile | Phase 22.3 已注入 | OpenKB 不做 KB 级模型密钥，使用实例级模型配置 |
 | `process_rule.mode=automatic` | Dify 默认切分规则 | Dify 1.14.1-compatible recursive splitter | Phase 22.8 已接入，Phase 22.9 已补复跑证据 | 新建或显式 reprocess 后使用；旧 chunks 不自动迁移 |
 | `process_rule.mode=custom` | 用户自定义切分规则 | fixed separator + recursive fallback | Phase 22.8 已接入，Phase 22.9 已补输入规范化对照 | KB Settings 已拆出分块规则 tab |
@@ -142,8 +144,8 @@ python_path: /opt/python/bin/python3
 | `parent_mode=paragraph` | 段落父块 | `parent_mode=paragraph` | Phase 23 已收口 | UI 展示与回归验收已补齐 |
 | `parent_mode=full-doc` | 全文父块 | `parent_mode=full-doc` | Phase 23 已收口 | UI 展示与大小提示已补齐 |
 | Subchunk segmentation | 父子模式中的子块规则 | `subchunk_segmentation` | Phase 23 已收口 | 参数覆盖测试已补齐 |
-| Document process snapshot | 文档导入/重处理时的规则快照 | `process_rule_snapshot` | Phase 22.6 UI 已对齐 | 文档右侧新增处理快照面板 |
-| Reprocess | 文档按当前/指定规则重新处理 segment | document reprocess API | Phase 22.6 UI 已对齐 | KB Settings 重处理 tab 逐篇触发现有 document reprocess |
+| Document process snapshot | 文档导入/重处理时的规则快照 | `process_rule_snapshot` | Phase 22.6 UI 已兼容 | 文档右侧新增处理快照面板 |
+| Reprocess | 文档按当前/指定规则重新处理 segment | document reprocess API | Phase 22.6 UI 已兼容 | KB Settings 重处理 tab 逐篇触发现有 document reprocess |
 | `retrieval_model.search_method=semantic_search` | 语义检索 | dense / dense_rerank | Phase 22.3 已注入 | embedding/index 不可用时返回 `SEARCH_INDEX_NOT_READY` |
 | `retrieval_model.search_method=full_text_search` | 全文检索 | BM25 | Phase 22.3 已注入 | metadata 标记 effective retrieval mode |
 | `retrieval_model.search_method=hybrid_search` | 混合检索 | hybrid / hybrid_rerank | Phase 22.3 已注入 | 支持 keyword/vector weights |
@@ -152,22 +154,22 @@ python_path: /opt/python/bin/python3
 | `score_threshold` | 分数阈值 | KB default + request override | Phase 22.3 已实现 | 权限终检后、裁剪前统一过滤 |
 | Rerank enable/model | 开启重排并选择模型 | Admin instance-level rerank | 部分实现 | 不提供 KB 级 rerank provider/key |
 | Hybrid weights | 语义/关键词权重 | `retrieval_model` JSON -> Milvus WeightedRanker | Phase 22.3 已实现 | SDK 支持 WeightedRanker 时使用权重 |
-| Metadata schema | 知识库级 metadata 字段定义 | Phase 21.2 metadata fields | Phase 22.6 UI 已对齐 | KB Settings metadata tab 管理 schema，文档右侧 Metadata 管理 values |
+| Metadata schema | 知识库级 metadata 字段定义 | Phase 21.2 metadata fields | Phase 22.6 UI 已兼容 | KB Settings metadata tab 管理 schema，文档右侧 Metadata 管理 values |
 | Metadata filters | workflow/retrieval 中按 metadata 过滤 | Dify `metadata_condition` + OpenKB metadata values | Phase 22.3 已统一解析 | tags 下推 Milvus；document metadata post-filter |
-| Summary index | 文档/segment summary 参与索引 | `document_summaries` / `document_segment_summaries` / summary metadata | Phase 22.6 UI 已对齐 | 文档右侧 Summary 面板显式触发，KB Settings 只配置索引参与 |
-| QA generation | 由 LLM 生成 QA pairs | 实例级 LLM 显式触发 | Phase 22.6 UI 已对齐 | 文档右侧 QA 面板支持手动、CSV、mock/LLM 触发 |
+| Summary index | 文档/segment summary 参与索引 | `document_summaries` / `document_segment_summaries` / summary metadata | Phase 22.6 UI 已兼容 | 文档右侧 Summary 面板显式触发，KB Settings 只配置索引参与 |
+| QA generation | 由 LLM 生成 QA pairs | 实例级 LLM 显式触发 | Phase 22.6 UI 已兼容 | 文档右侧 QA 面板支持手动、CSV、mock/LLM 触发 |
 | Segment enable/disable | 控制 segment 是否参与检索 | `document_chunks.status` | Phase 22.4 已实现 | API/UI 均提示需要 Milvus index rebuild 后才影响搜索/MCP/Dify |
 | Segment override | 手工覆盖 segment 内容 | override content fields | Phase 22.4 已实现 | 明确不反写 Markdown 正文，index worker 使用 override 内容 |
 | Segment reset override | 恢复派生 chunk 内容 | reset override API/UI | Phase 22.4 已实现 | 清空 override 字段并写审计 |
 | Hit-test explanation | 显示命中 segment 与上下文关系 | parent/child explanation metadata | 部分实现 | Web Search / Retrieval Lab / Dify metadata 需要统一 |
-| External dataset / bound dataset tenant 校验 | 外部知识库和绑定知识库需要租户边界校验 | Dify app-key-bound allowed KB scope | 已实现/部分实现 | OpenKB 不写 Dify DB，只通过 External Knowledge API 对齐 |
-| Knowledge-base-level model config | Dify 可为知识库选模型 | OpenKB 不提供 | 不对齐 | OpenKB 只允许 system_admin 配置实例级模型 |
+| External dataset / bound dataset tenant 校验 | 外部知识库和绑定知识库需要租户边界校验 | Dify app-key-bound allowed KB scope | 已实现/部分实现 | OpenKB 不写 Dify DB，只通过 External Knowledge API 配合 |
+| Knowledge-base-level model config | Dify 可为知识库选模型 | OpenKB 不提供 | 不兼容 | OpenKB 只允许 system_admin 配置实例级模型 |
 
-## OpenKB 对齐结论
+## OpenKB 兼容结论
 
-OpenKB 当前已经完成 Phase 22 的基础闭环，并在 Phase 23-25 收口了配置一致性、QA parity、图片与附件检索底座。Phase 25 稳定收口已补上真实同模型 live retrieval parity 和 image-capable smoke；后续重点不再是补“有没有这个字段”，而是发布后继续观察排序差异、补充 runbook 和扩展多模态质量：
+OpenKB 当前已经完成 Phase 22 的基础闭环，并在 Phase 23-25 收口了配置一致性、QA 兼容语义、图片与附件检索底座。Phase 25 稳定收口已补上真实同模型 live retrieval 兼容性测试和 image-capable smoke；后续重点不再是补“有没有这个字段”，而是发布后继续观察排序差异、补充 runbook 和扩展多模态质量：
 
-1. **处理规则基础闭环已完成，parity 已有实测证据**：KB 默认规则、文档快照、显式 reprocess、状态提示和 worker 行为已进入主线；Phase 22.8 已把 splitter 算法对齐 Dify 1.14.1，Phase 22.9 收敛 QA、metadata/tags、segment lifecycle 和复跑证据；Phase 25 已完成 240 条同模型 live retrieval parity。
+1. **处理规则基础闭环已完成，兼容性测试已有实测证据**：KB 默认规则、文档快照、显式 reprocess、状态提示和 worker 行为已进入主线；Phase 22.8 已把 splitter 算法改为 Dify 兼容实现，Phase 22.9 收敛 QA、metadata/tags、segment lifecycle 和复跑证据；Phase 25 已完成 240 条同模型 live retrieval 兼容性测试。
 2. **检索策略已完成基础注入**：Phase 22.3 已让 KB 级 `retrieval_model` 成为 Web Search、Retrieval Lab、MCP、Dify Adapter 的共同默认策略；Phase 22.6 已把策略配置放入 KB Settings 的“检索策略”tab。
 3. **segment 管理基础已落地**：Phase 22.4 已实现启用/禁用、override/reset、soft delete/restore 和 index rebuild 提示；Phase 22.6 已把文案和入口统一为 Segments。
 4. **summary/QA 生成闭环已进入 UI 可用阶段**：Phase 22.5 完成手动/CSV/mock/LLM 显式触发；Phase 22.6 已把 QA 与 Summary 放入文档右侧独立面板；Phase 24 已收口 QA source、active source segment 终检和 Dify/Web/MCP 返回语义。
@@ -188,7 +190,7 @@ OpenKB 当前已经完成 Phase 22 的基础闭环，并在 Phase 23-25 收口�
 - Phase 22.2 已完成显式 reprocess、处理快照和 parent/full-doc 基础闭环。
 - Phase 22.8 已将新建或显式 reprocess 后的 splitter 默认切到 Dify 1.14.1-compatible recursive splitter。
 - 旧 chunks 不自动迁移；Milvus 仍需显式 blue-green index rebuild。
-- Parity 验收以 `docs/30` 和 `scripts/parity` 的小型 golden fixtures / 大样本报告为准。
+- 兼容性验收以 `docs/30` 和 `scripts/parity` 的小型 golden fixtures / 大样本报告为准。
 
 ### Phase 22.3 — KB 级 retrieval_model 注入
 
@@ -212,19 +214,19 @@ OpenKB 当前已经完成 Phase 22 的基础闭环，并在 Phase 23-25 收口�
 - Summary/QA hit 映射回原始文档和 chunk，并在 Dify metadata 中说明命中类型。
 - 所有 LLM 消耗必须手动或批量显式触发。
 
-### Phase 22.6 — Web UI 对齐
+### Phase 22.6 — Web UI 兼容
 
-- 已完成 KB Settings Dify-like tabs：处理模式、分块规则、检索策略、metadata、摘要、重处理。
+- 已完成 KB Settings Dify 风格 tabs：处理模式、分块规则、检索策略、metadata、摘要、重处理。
 - 已完成文档右侧大纲、处理快照、Segments、QA、Summary、Metadata、Versions 的面板层级。
-- 页面风格保持 OpenKB 自己的产品设计，但知识库/文档处理信息层级与 Dify 1.14.1 对齐。
+- 页面风格保持 OpenKB 自己的产品设计，但知识库/文档处理信息层级按 Dify 1.14.1 兼容性基线组织。
 
 ### Phase 22.8 / 22.9 — Parity v2 修复
 
-- 默认 splitter 对齐 Dify 1.14.1 后端，而不是只对齐字段名。
+- 默认 splitter 兼容 Dify 1.14.1 后端，而不是只复用字段名。
 - QA 对外 Dify Adapter 按 Dify 风格暴露 question/answer metadata；Web 继续 answer-first。
 - 文档 metadata 是 Dify `metadata_condition` 的业务真相；chunk 技术字段保留为诊断 metadata。
 
-## 明确不对齐项
+## 明确不兼容项
 
 - 不做知识库级模型 endpoint/key 配置；模型仍由 system_admin 在实例级 Admin Models 管理。
 - 不写 Dify 数据库，也不依赖 Dify 内部表结构。

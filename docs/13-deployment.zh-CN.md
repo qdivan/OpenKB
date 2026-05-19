@@ -184,5 +184,5 @@ SMTP test send 与 outbox retry
 - 本地快速开始：`docs/25-local-quickstart.zh-CN.md`
 - 公网测试平台：`docs/24-public-test-platform-deployment.zh-CN.md`
 - Dify External Knowledge：`docs/26-dify-external-knowledge-setup.zh-CN.md`
-- Dify 1.14.1 对齐：`docs/27-dify-knowledge-alignment.zh-CN.md`
+- Dify 兼容性基线：`docs/27-dify-knowledge-alignment.zh-CN.md`
 - Dify parity v2：`docs/30-dify-parity-v2-analysis.zh-CN.md`

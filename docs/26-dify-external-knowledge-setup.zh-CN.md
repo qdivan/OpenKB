@@ -177,7 +177,7 @@ OpenKB adapter 会保证每条 Dify record 至少包含以下 metadata：
 | `metadata.absolute_url` | `DIFY_RESULT_BASE_URL` / `APP_BASE_URL` | 可直接打开的 OpenKB 文档 URL；未配置 base URL 时为 `null` |
 | `metadata.retrieval_mode` | OpenKB retrieval context | `chunk` / `parent_child` / `full_text` 等 |
 | `metadata.score_source` | retrieval/rerank 状态 | `retrieval` 或 `rerank` |
-| `metadata.retrieval_model` | KB 默认检索策略 + Dify request override | Dify-like `semantic_search/full_text_search/hybrid_search/keyword_search` 配置 |
+| `metadata.retrieval_model` | KB 默认检索策略 + Dify request override | Dify 风格 `semantic_search/full_text_search/hybrid_search/keyword_search` 配置 |
 | `metadata.mixed_retrieval_model` | Retrieval Service 策略解析 | 多 KB 策略不一致时为 `true`；Dify 单 KB mapping 通常为 `false` |
 | `metadata.openkb_retrieval.hybrid_weights` | KB `retrieval_model.weights` | Hybrid keyword/vector 权重 |
 | `metadata.openkb_retrieval.score_threshold_applied` | KB 或 Dify request 阈值 | 实际用于过滤的 score threshold |
