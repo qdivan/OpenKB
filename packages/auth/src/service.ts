@@ -248,6 +248,9 @@ export class AuthService {
       } else {
         await this.promoteFirstAdminIfNeeded(tx, tenant.id, user.id, settings);
       }
+      if (user.status === "active") {
+        await this.ensurePersonalWorkspaceForUser(tx, tenant.id, user);
+      }
 
       return {
         user,
@@ -302,6 +305,9 @@ export class AuthService {
         data: { consumed_at: now }
       });
       await this.promoteFirstAdminIfNeeded(tx, authToken.tenant_id, user.id, settings);
+      if (user.status === "active") {
+        await this.ensurePersonalWorkspaceForUser(tx, authToken.tenant_id, user);
+      }
 
       return {
         user: toPublicUser(user),
@@ -323,35 +329,37 @@ export class AuthService {
     }
 
     const tenant = await this.ensureDefaultTenant();
-    await this.prisma.tenantMembership.upsert({
-      where: {
-        tenant_id_user_id: {
-          tenant_id: tenant.id,
-          user_id: user.id
-        }
-      },
-      create: {
-        tenant_id: tenant.id,
-        user_id: user.id,
-        role: "member",
-        created_at: this.now()
-      },
-      update: {}
-    });
-
     const rawSessionToken = createRawToken();
     const now = this.now();
     const expiresAt = addDays(now, this.sessionTtlDays());
 
-    await this.prisma.authSession.create({
-      data: {
-        tenant_id: tenant.id,
-        user_id: user.id,
-        token_hash: hashToken(rawSessionToken),
-        expires_at: expiresAt,
-        last_seen_at: now,
-        created_at: now
-      }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tenantMembership.upsert({
+        where: {
+          tenant_id_user_id: {
+            tenant_id: tenant.id,
+            user_id: user.id
+          }
+        },
+        create: {
+          tenant_id: tenant.id,
+          user_id: user.id,
+          role: "member",
+          created_at: now
+        },
+        update: {}
+      });
+      await this.ensurePersonalWorkspaceForUser(tx, tenant.id, user);
+      await tx.authSession.create({
+        data: {
+          tenant_id: tenant.id,
+          user_id: user.id,
+          token_hash: hashToken(rawSessionToken),
+          expires_at: expiresAt,
+          last_seen_at: now,
+          created_at: now
+        }
+      });
     });
 
     return {
@@ -562,6 +570,7 @@ export class AuthService {
         },
         update: { role }
       });
+      await this.ensurePersonalWorkspaceForUser(tx, admin.tenantId, user);
 
       const setupOutbox = await this.createAuthTokenAndOutbox(tx, {
         tenantId: admin.tenantId,
@@ -629,6 +638,9 @@ export class AuthService {
           data: { revoked_at: now }
         });
       }
+      if (updated.status === "active") {
+        await this.ensurePersonalWorkspaceForUser(tx, admin.tenantId, updated);
+      }
       await this.writeAuditLog(tx, admin, "admin.user.update", "user", userId, {
         fields: Object.keys(data).filter((field) => field !== "updated_at")
       });
@@ -653,6 +665,7 @@ export class AuthService {
           updated_at: now
         }
       });
+      await this.ensurePersonalWorkspaceForUser(tx, admin.tenantId, updated);
       await this.writeAuditLog(tx, admin, "admin.user.activate", "user", updated.id);
       return updated;
     });
@@ -1231,6 +1244,100 @@ export class AuthService {
     });
   }
 
+  private async ensurePersonalWorkspaceForUser(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    user: {
+      id: string;
+      email: string;
+      display_name: string | null;
+      status: string;
+    }
+  ) {
+    if (user.status !== "active") {
+      return null;
+    }
+
+    const existing = await tx.workspace.findFirst({
+      where: {
+        tenant_id: tenantId,
+        kind: "personal",
+        personal_owner_user_id: user.id
+      }
+    });
+    if (existing) {
+      await tx.workspaceMember.upsert({
+        where: {
+          workspace_id_user_id: {
+            workspace_id: existing.id,
+            user_id: user.id
+          }
+        },
+        create: {
+          tenant_id: tenantId,
+          workspace_id: existing.id,
+          user_id: user.id,
+          role: "owner",
+          created_at: this.now()
+        },
+        update: {
+          role: "owner"
+        }
+      });
+      return existing;
+    }
+
+    const now = this.now();
+    const displayName = user.display_name?.trim() || user.email.split("@")[0] || user.email;
+    const name = `${displayName} 的个人空间`;
+    const avatarInitials =
+      Array.from(displayName.trim())
+        .filter((char) => /\S/u.test(char))
+        .slice(0, 2)
+        .join("") || "我";
+    const baseSlug = `u-${user.id.replaceAll("-", "").slice(0, 24)}`;
+    let slug = baseSlug;
+    for (let suffix = 2; suffix <= 20; suffix += 1) {
+      const conflict = await tx.workspace.findUnique({
+        where: {
+          tenant_id_slug: {
+            tenant_id: tenantId,
+            slug
+          }
+        }
+      });
+      if (!conflict) {
+        break;
+      }
+      slug = `${baseSlug}-${suffix}`;
+    }
+
+    const created = await tx.workspace.create({
+      data: {
+        tenant_id: tenantId,
+        name,
+        slug,
+        kind: "personal",
+        personal_owner_user_id: user.id,
+        avatar_color: "#059669",
+        avatar_initials: avatarInitials.toUpperCase(),
+        created_by: user.id,
+        created_at: now,
+        updated_at: now
+      }
+    });
+    await tx.workspaceMember.create({
+      data: {
+        tenant_id: tenantId,
+        workspace_id: created.id,
+        user_id: user.id,
+        role: "owner",
+        created_at: now
+      }
+    });
+    return created;
+  }
+
   private async createAuthTokenAndOutbox(
     tx: Prisma.TransactionClient,
     input: {
@@ -1513,9 +1620,7 @@ function normalizeAuthSettingsInput(input: UpdateAuthSettingsInput) {
     data.invited_user_auto_active = Boolean(input.invited_user_auto_active);
   }
   if (input.allowed_email_domains !== undefined) {
-    data.allowed_email_domains = input.allowed_email_domains
-      .map((domain) => domain.trim().toLowerCase())
-      .filter(Boolean);
+    data.allowed_email_domains = normalizeAllowedEmailDomains(input.allowed_email_domains);
   }
   if (input.invite_required !== undefined) {
     data.invite_required = Boolean(input.invite_required);
@@ -1604,6 +1709,32 @@ function assertEmailDomainAllowed(email: string, domains: string[]) {
   if (!domain || !domains.map((item) => item.toLowerCase()).includes(domain)) {
     throw new AuthError("EMAIL_DOMAIN_NOT_ALLOWED", "Email domain is not allowed.", 403);
   }
+}
+
+function normalizeAllowedEmailDomains(values: string[]): string[] {
+  const normalized = values
+    .map(normalizeAllowedEmailDomain)
+    .filter((domain): domain is string => Boolean(domain));
+  return Array.from(new Set(normalized));
+}
+
+function normalizeAllowedEmailDomain(value: string): string | null {
+  let domain = value.trim().toLowerCase();
+  if (!domain) {
+    return null;
+  }
+  if (domain.includes("@")) {
+    domain = domain.split("@").pop() ?? "";
+  }
+  domain = domain.replace(/^\*\./, "").replace(/^@/, "");
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+      domain
+    )
+  ) {
+    throw new AuthError("INVALID_INPUT", "allowed_email_domains contains an invalid domain.", 400);
+  }
+  return domain;
 }
 
 function parseOptionalBoolean(value: string | undefined): boolean | null {

@@ -35,6 +35,7 @@ const allTables = [
   "collaborators",
   "document_versions",
   "document_assets",
+  "document_user_activities",
   "documents",
   "knowledge_bases",
   "workspace_members",
@@ -140,6 +141,7 @@ describe("AuthService integration", () => {
     expect(tokens[0]).toMatchObject({ purpose: "email_verification", consumed_at: null });
     expect(outbox).toHaveLength(1);
     expect(outbox[0]?.link_url).toContain("/verify-email?token=");
+    expect(await prisma.workspace.count({ where: { kind: "personal" } })).toBe(0);
   });
 
   it("verifies email, activates by settings, and promotes the first verified user", async () => {
@@ -152,6 +154,15 @@ describe("AuthService integration", () => {
 
     expect(verified.status).toBe("active");
     expect(membership.role).toBe("system_admin");
+    const personalWorkspace = await prisma.workspace.findFirstOrThrow({
+      where: { kind: "personal", personal_owner_user_id: verified.user.id }
+    });
+    expect(personalWorkspace.slug).toMatch(/^u-/);
+    expect(
+      await prisma.workspaceMember.findFirst({
+        where: { workspace_id: personalWorkspace.id, user_id: verified.user.id, role: "owner" }
+      })
+    ).toBeTruthy();
   });
 
   it("honors pending_activation after email verification", async () => {
@@ -163,6 +174,7 @@ describe("AuthService integration", () => {
     const verified = await auth.verifyEmail(tokenFromLink(outbox.link_url ?? ""));
 
     expect(verified.status).toBe("pending_activation");
+    expect(await prisma.workspace.count({ where: { kind: "personal" } })).toBe(0);
   });
 
   it("logs in active users and revokes sessions on logout", async () => {
@@ -172,10 +184,16 @@ describe("AuthService integration", () => {
 
     const login = await auth.login({ email: "active@example.com", password: "password-123" });
     const me = await auth.getMe(login.sessionToken);
+    await auth.login({ email: "active@example.com", password: "password-123" });
     await auth.logout(login.sessionToken);
 
     expect(me.user.email).toBe("active@example.com");
-    expect(await prisma.authSession.count()).toBe(1);
+    expect(
+      await prisma.workspace.count({
+        where: { kind: "personal", personal_owner_user_id: me.user.id }
+      })
+    ).toBe(1);
+    expect(await prisma.authSession.count()).toBe(2);
     await expect(auth.getMe(login.sessionToken)).rejects.toMatchObject({
       code: "AUTHENTICATION_REQUIRED"
     });
@@ -214,6 +232,44 @@ describe("AuthService integration", () => {
     ).rejects.toMatchObject({
       code: "USER_NOT_ACTIVE"
     });
+  });
+
+  it("lazily creates one personal workspace for existing active users on login", async () => {
+    await createDefaultSettings({ email_verification_required: false });
+    const auth = service();
+    const tenant = await prisma.tenant.create({
+      data: { name: "Default Tenant", slug: "default" }
+    });
+    const user = await prisma.user.create({
+      data: {
+        email: "legacy-active@example.com",
+        password_hash: await bcrypt.hash("password-123", 12),
+        display_name: "Legacy Active",
+        status: "active",
+        email_verified_at: new Date()
+      }
+    });
+    await prisma.tenantMembership.create({
+      data: {
+        tenant_id: tenant.id,
+        user_id: user.id,
+        role: "member"
+      }
+    });
+
+    await auth.login({ email: user.email, password: "password-123" });
+    await auth.login({ email: user.email, password: "password-123" });
+
+    expect(
+      await prisma.workspace.count({
+        where: { kind: "personal", personal_owner_user_id: user.id }
+      })
+    ).toBe(1);
+    expect(
+      await prisma.tenantMembership.findUnique({
+        where: { tenant_id_user_id: { tenant_id: tenant.id, user_id: user.id } }
+      })
+    ).toMatchObject({ role: "member" });
   });
 
   it("handles password reset without email enumeration", async () => {
@@ -315,6 +371,11 @@ describe("AuthService integration", () => {
       email: "pending@example.com",
       status: "active"
     });
+    expect(
+      await prisma.workspace.count({
+        where: { kind: "personal", personal_owner_user_id: pending.id }
+      })
+    ).toBe(1);
     await expect(auth.suspendUser(adminLogin.sessionToken, pending.id)).resolves.toMatchObject({
       status: "suspended"
     });
@@ -337,6 +398,12 @@ describe("AuthService integration", () => {
       status: "active",
       tenantRole: "member"
     });
+    expect(
+      await prisma.workspace.count({
+        where: { kind: "personal", personal_owner_user_id: created.user.id }
+      })
+    ).toBe(1);
+    expect(created.user.tenantRole).not.toBe("system_admin");
     expect(created.reset_link).toContain("/password-reset?token=");
     expect(created.setup_link).toBe(created.reset_link);
     expect(await prisma.authEmailOutbox.count({ where: { template: "account_setup" } })).toBe(1);
@@ -600,6 +667,14 @@ describe("AuthService integration", () => {
     ).resolves.toMatchObject({
       user: { email: "user@example.org" }
     });
+
+    await expect(
+      auth.updateAuthSettings(adminLogin.sessionToken, {
+        allowed_email_domains: ["User@SAILUNTIRE.com", "@qq.com", "example.org", "example.org"]
+      })
+    ).resolves.toMatchObject({
+      allowed_email_domains: ["sailuntire.com", "qq.com", "example.org"]
+    });
   });
 
   it("validates bad auth settings input", async () => {
@@ -613,5 +688,12 @@ describe("AuthService integration", () => {
         default_signup_status: "nope" as never
       })
     ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      auth.updateAuthSettings(adminLogin.sessionToken, {
+        allowed_email_domains: ["not-a-domain"]
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    });
   });
 });

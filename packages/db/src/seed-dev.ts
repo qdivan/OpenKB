@@ -241,6 +241,9 @@ async function upsertWorkspace(
       where: { id: existing.id },
       data: {
         name: "Default Workspace",
+        kind: "team",
+        avatar_color: "#0284C7",
+        avatar_initials: "DW",
         updated_at: input.now
       }
     });
@@ -251,6 +254,9 @@ async function upsertWorkspace(
       tenant_id: input.tenantId,
       name: "Default Workspace",
       slug: "default-workspace",
+      kind: "team",
+      avatar_color: "#0284C7",
+      avatar_initials: "DW",
       created_by: input.userId,
       created_at: input.now,
       updated_at: input.now

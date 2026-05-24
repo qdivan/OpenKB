@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Put, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Patch, Post, Put, Req, Res } from "@nestjs/common";
 import { AuthService } from "@openkb/auth";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
@@ -35,6 +35,19 @@ export class WorkspaceController {
     }
   }
 
+  @Get(":id/dashboard")
+  async dashboard(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.getWorkspaceDashboard(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Get(":id")
   async get(
     @Param("id") id: string,
@@ -50,6 +63,24 @@ export class WorkspaceController {
 
   @Put(":id")
   async update(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
+    try {
+      return await this.content.updateWorkspace(
+        getSessionToken(request, this.auth),
+        id,
+        body as never
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Patch(":id")
+  async patch(
     @Param("id") id: string,
     @Body() body: unknown,
     @Req() request: FastifyRequest,

@@ -3,35 +3,50 @@
 import {
   Check,
   Clock3,
+  Copy,
+  Globe2,
+  Link2,
+  Lock,
   MailPlus,
   RefreshCw,
+  RotateCcw,
+  Share2,
   ShieldCheck,
   Trash2,
   UserRound,
+  Users,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useDialog } from "@/components/dialog-provider";
 import { useI18n } from "@/lib/i18n-provider";
 import {
   ApiRequestError,
-  acceptInvitation,
   approveInvitation,
   createInvitation,
+  createShareLink,
   deleteCollaborator,
   deleteWorkspaceMember,
   listCollaborators,
   listInvitations,
+  listShareLinks,
   listWorkspaceMembers,
+  resetShareLink,
   revokeInvitation,
+  revokeShareLink,
   updateCollaborator,
+  updateDocument,
+  updateKnowledgeBase,
   updateWorkspaceMember,
   type AccessObjectType,
   type Collaborator,
   type CollaboratorRole,
+  type DocumentDetail,
   type Invitation,
   type InvitationRole,
+  type KnowledgeBase,
+  type ShareLink,
   type WorkspaceMember,
   type WorkspaceMemberRole
 } from "@/lib/openkb-api";
@@ -43,13 +58,23 @@ export type AccessTarget = {
   subtitle: string;
 };
 
+type Visibility = KnowledgeBase["visibility"];
+
 export function AccessPanel({
+  document,
   initialTargetType,
+  knowledgeBase,
   onClose,
+  onDocumentUpdated,
+  onKnowledgeBaseUpdated,
   targets
 }: {
+  document?: DocumentDetail | null;
   initialTargetType: AccessObjectType;
+  knowledgeBase?: KnowledgeBase | null;
   onClose: () => void;
+  onDocumentUpdated?: (document: DocumentDetail) => void;
+  onKnowledgeBaseUpdated?: (knowledgeBase: KnowledgeBase) => void;
   targets: AccessTarget[];
 }) {
   const { t } = useI18n();
@@ -67,15 +92,35 @@ export function AccessPanel({
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [kbVisibility, setKbVisibility] = useState<Visibility>(
+    knowledgeBase?.visibility ?? "private"
+  );
+  const [documentPermissionMode, setDocumentPermissionMode] = useState<"inherit" | "custom">(
+    document?.permission_mode === "custom" ? "custom" : "inherit"
+  );
+  const [documentVisibility, setDocumentVisibility] = useState<Visibility>(
+    (document?.visibility as Visibility | null) ?? knowledgeBase?.visibility ?? "private"
+  );
+  const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
+  const [sharePassword, setSharePassword] = useState("");
+  const [shareRequireLogin, setShareRequireLogin] = useState(false);
+  const [shareMemberOnly, setShareMemberOnly] = useState(false);
+  const [shareExpiresAt, setShareExpiresAt] = useState("");
+  const [shareLastUrl, setShareLastUrl] = useState("");
+  const [shareLoading, setShareLoading] = useState(false);
 
   const target = useMemo(
     () => targets.find((item) => item.type === targetType) ?? targets[0] ?? null,
     [targetType, targets]
   );
   const isWorkspace = target?.type === "workspace";
+  const isKnowledgeBase = target?.type === "knowledge_base";
+  const isDocument = target?.type === "document";
   const roleOptions = isWorkspace
     ? (["admin", "member", "guest"] as const)
     : (["manager", "editor", "viewer"] as const);
+  const activeShareLink = shareLinks.find((link) => !link.revoked_at) ?? null;
+  const revokedShareLinks = shareLinks.filter((link) => link.revoked_at);
 
   useEffect(() => {
     setTargetType(initialTargetType);
@@ -86,12 +131,32 @@ export function AccessPanel({
   }, [target?.type]);
 
   useEffect(() => {
+    setKbVisibility(knowledgeBase?.visibility ?? "private");
+  }, [knowledgeBase?.id, knowledgeBase?.visibility]);
+
+  useEffect(() => {
+    setDocumentPermissionMode(document?.permission_mode === "custom" ? "custom" : "inherit");
+    setDocumentVisibility(
+      (document?.visibility as Visibility | null) ?? knowledgeBase?.visibility ?? "private"
+    );
+  }, [document?.id, document?.permission_mode, document?.visibility, knowledgeBase?.visibility]);
+
+  useEffect(() => {
     if (!target) {
       return;
     }
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.id, target?.type]);
+
+  useEffect(() => {
+    if (!isDocument || !target) {
+      setShareLinks([]);
+      return;
+    }
+    void refreshShareLinks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDocument, target?.id]);
 
   async function refresh() {
     if (!target) {
@@ -118,6 +183,58 @@ export function AccessPanel({
       setMessage(formatError(error, t("Failed to load access settings.")));
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function refreshShareLinks() {
+    if (!target || target.type !== "document") {
+      return;
+    }
+    setShareLoading(true);
+    try {
+      setShareLinks(await listShareLinks(target.type, target.id));
+      setShareLastUrl("");
+    } catch (error) {
+      setMessage(formatError(error, t("Failed to load share links.")));
+    } finally {
+      setShareLoading(false);
+    }
+  }
+
+  async function handleSaveKnowledgeBaseVisibility() {
+    if (!knowledgeBase) {
+      return;
+    }
+    setIsSaving(true);
+    setMessage("");
+    try {
+      const updated = await updateKnowledgeBase(knowledgeBase.id, { visibility: kbVisibility });
+      onKnowledgeBaseUpdated?.(updated);
+      setMessage(t("Knowledge base visibility saved."));
+    } catch (error) {
+      setMessage(formatError(error, t("Visibility update failed.")));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleSaveDocumentPermission() {
+    if (!document) {
+      return;
+    }
+    setIsSaving(true);
+    setMessage("");
+    try {
+      const updated = await updateDocument(document.id, {
+        permission_mode: documentPermissionMode,
+        visibility: documentPermissionMode === "custom" ? documentVisibility : null
+      });
+      onDocumentUpdated?.(updated);
+      setMessage(t("Document permission saved."));
+    } catch (error) {
+      setMessage(formatError(error, t("Permission update failed.")));
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -148,12 +265,80 @@ export function AccessPanel({
     }
   }
 
+  async function handleCreateShareLink() {
+    if (!target || target.type !== "document") {
+      return;
+    }
+    setIsSaving(true);
+    setMessage("");
+    try {
+      const link = await createShareLink(target.type, target.id, {
+        password: sharePassword.trim() || null,
+        require_login: shareRequireLogin,
+        restrict_to_workspace_members: shareMemberOnly,
+        expires_at: shareExpiresAt ? new Date(shareExpiresAt).toISOString() : null
+      });
+      setSharePassword("");
+      setShareLastUrl(link.url ?? "");
+      setMessage(t("Share link created."));
+      await refreshShareLinks();
+      setShareLastUrl(link.url ?? "");
+    } catch (error) {
+      setMessage(formatError(error, t("Share link failed.")));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleCopyInviteLink() {
     if (!inviteLink) {
       return;
     }
     await navigator.clipboard.writeText(inviteLink);
     setMessage(t("Invite link copied."));
+  }
+
+  async function handleCopyShareLink(url = shareLastUrl) {
+    if (!url) {
+      return;
+    }
+    await navigator.clipboard.writeText(url);
+    setMessage(t("Share link copied."));
+  }
+
+  async function handleCloseShareLink() {
+    if (!activeShareLink) {
+      return;
+    }
+    setIsSaving(true);
+    setMessage("");
+    try {
+      await revokeShareLink(activeShareLink.id);
+      await refreshShareLinks();
+      setMessage(t("Share link closed."));
+    } catch (error) {
+      setMessage(formatError(error, t("Close share failed.")));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleResetShareLink() {
+    if (!activeShareLink) {
+      return;
+    }
+    setIsSaving(true);
+    setMessage("");
+    try {
+      const link = await resetShareLink(activeShareLink.id);
+      await refreshShareLinks();
+      setShareLastUrl(link.url ?? "");
+      setMessage(t("Share link reset."));
+    } catch (error) {
+      setMessage(formatError(error, t("Reset share failed.")));
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   async function handleUpdateMember(member: WorkspaceMember, nextRole: WorkspaceMemberRole) {
@@ -255,10 +440,12 @@ export function AccessPanel({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-zinc-950/20">
-      <section className="flex h-full w-full max-w-xl flex-col border-l border-zinc-200 bg-white shadow-xl">
+      <section className="flex h-full w-full max-w-2xl flex-col border-l border-zinc-200 bg-white shadow-xl">
         <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
           <div className="min-w-0">
-            <p className="text-xs font-medium uppercase text-emerald-700">{t("Access")}</p>
+            <p className="text-xs font-medium uppercase text-emerald-700">
+              {t(permissionPanelEyebrow(target?.type))}
+            </p>
             <h2 className="mt-1 truncate text-lg font-semibold">{target?.title ?? t("Access")}</h2>
             <p className="mt-1 text-sm text-zinc-500">{target?.subtitle ?? ""}</p>
           </div>
@@ -273,6 +460,74 @@ export function AccessPanel({
             targets={targets}
             onChange={setTargetType}
           />
+
+          <RoleReference targetType={target?.type ?? targetType} />
+
+          {isKnowledgeBase && knowledgeBase ? (
+            <VisibilitySection
+              description={t(
+                "Visibility decides who can read the knowledge base before collaborator roles are considered."
+              )}
+              disabled={isSaving}
+              onSave={() => void handleSaveKnowledgeBaseVisibility()}
+              onVisibilityChange={setKbVisibility}
+              title={t("Knowledge base visibility")}
+              value={kbVisibility}
+            />
+          ) : null}
+
+          {isDocument && document ? (
+            <section className="rounded-md border border-zinc-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">{t("Document permission")}</h3>
+                  <p className="mt-1 text-xs leading-5 text-zinc-500">
+                    {t(
+                      "Documents inherit knowledge base visibility by default. Use custom permission only when this document needs an exception."
+                    )}
+                  </p>
+                </div>
+                <button
+                  className="inline-flex h-8 items-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+                  disabled={isSaving}
+                  onClick={() => void handleSaveDocumentPermission()}
+                  type="button"
+                >
+                  {t("Save permission")}
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="block text-sm">
+                  <span className="mb-1 block text-zinc-600">{t("Permission mode")}</span>
+                  <select
+                    className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm"
+                    onChange={(event) =>
+                      setDocumentPermissionMode(event.target.value as "inherit" | "custom")
+                    }
+                    value={documentPermissionMode}
+                  >
+                    <option value="inherit">{t("Inherit knowledge base permission")}</option>
+                    <option value="custom">{t("Custom document permission")}</option>
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1 block text-zinc-600">{t("Document visibility")}</span>
+                  <select
+                    className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm disabled:bg-zinc-50 disabled:text-zinc-400"
+                    disabled={documentPermissionMode !== "custom"}
+                    onChange={(event) => setDocumentVisibility(event.target.value as Visibility)}
+                    value={documentVisibility}
+                  >
+                    {visibilityOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.label)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
+          ) : null}
 
           <section className="rounded-md border border-zinc-200 bg-white p-4">
             <div className="flex items-center justify-between">
@@ -332,6 +587,13 @@ export function AccessPanel({
 
           <section className="rounded-md border border-zinc-200 bg-white p-4">
             <h3 className="text-sm font-semibold">{t("Invite by email")}</h3>
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
+              {isWorkspace
+                ? t("Workspace invitations grant admin, member, or guest roles.")
+                : t(
+                    "Content invitations grant manager, editor, or viewer roles. Owner is not granted by ordinary invitation."
+                  )}
+            </p>
             <div className="mt-3 grid gap-3">
               <label className="block text-sm">
                 <span className="mb-1 block text-zinc-600">{t("Email")}</span>
@@ -409,6 +671,150 @@ export function AccessPanel({
             </div>
           </section>
 
+          {isDocument ? (
+            <section className="rounded-md border border-zinc-200 bg-white p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">{t("Share link")}</h3>
+                  <p className="mt-1 text-xs leading-5 text-zinc-500">
+                    {t("Share links are view-only in this version.")}
+                  </p>
+                </div>
+                <button
+                  className="icon-button h-8 w-8"
+                  disabled={shareLoading}
+                  onClick={() => void refreshShareLinks()}
+                  type="button"
+                >
+                  <RefreshCw className={`h-4 w-4 ${shareLoading ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+              {activeShareLink ? (
+                <div className="mt-3 space-y-3 rounded-md bg-zinc-50 p-3">
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <SmallBadge icon={<Share2 className="h-3 w-3" />}>{t("View only")}</SmallBadge>
+                    {activeShareLink.has_password ? (
+                      <SmallBadge icon={<Lock className="h-3 w-3" />}>
+                        {t("Password protected")}
+                      </SmallBadge>
+                    ) : null}
+                    {activeShareLink.require_login ? (
+                      <SmallBadge icon={<ShieldCheck className="h-3 w-3" />}>
+                        {t("Login required")}
+                      </SmallBadge>
+                    ) : null}
+                    {activeShareLink.restrict_to_workspace_members ? (
+                      <SmallBadge icon={<Users className="h-3 w-3" />}>
+                        {t("Workspace members only")}
+                      </SmallBadge>
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-zinc-500">
+                    {activeShareLink.expires_at
+                      ? t("Expires at {time}", {
+                          time: new Date(activeShareLink.expires_at).toLocaleString()
+                        })
+                      : t("No expiration")}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {shareLastUrl ? (
+                      <button
+                        className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                        onClick={() => void handleCopyShareLink()}
+                        type="button"
+                      >
+                        <Copy className="h-4 w-4" />
+                        {t("Copy link")}
+                      </button>
+                    ) : null}
+                    <button
+                      className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                      disabled={isSaving}
+                      onClick={() => void handleResetShareLink()}
+                      type="button"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      {t("Reset link")}
+                    </button>
+                    <button
+                      className="inline-flex h-9 items-center rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50"
+                      disabled={isSaving}
+                      onClick={() => void handleCloseShareLink()}
+                      type="button"
+                    >
+                      {t("Close share")}
+                    </button>
+                  </div>
+                  {!shareLastUrl ? (
+                    <p className="text-xs text-zinc-500">
+                      {t("Reset the link to reveal a copyable URL.")}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-3 rounded-md bg-zinc-50 px-3 py-3 text-sm text-zinc-500">
+                  {t("No active share link.")}
+                </p>
+              )}
+
+              <div className="mt-4 grid gap-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block text-sm">
+                    <span className="mb-1 block text-zinc-600">{t("Password optional")}</span>
+                    <input
+                      className="h-9 w-full rounded-md border border-zinc-300 px-3 text-sm outline-none focus:border-emerald-500"
+                      onChange={(event) => setSharePassword(event.target.value)}
+                      placeholder={t("Leave blank for no password")}
+                      type="password"
+                      value={sharePassword}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="mb-1 block text-zinc-600">{t("Expires")}</span>
+                    <input
+                      className="h-9 w-full rounded-md border border-zinc-300 px-3 text-sm"
+                      onChange={(event) => setShareExpiresAt(event.target.value)}
+                      type="datetime-local"
+                      value={shareExpiresAt}
+                    />
+                  </label>
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  <label className="inline-flex items-center gap-2 text-sm text-zinc-700">
+                    <input
+                      checked={shareRequireLogin}
+                      onChange={(event) => setShareRequireLogin(event.target.checked)}
+                      type="checkbox"
+                    />
+                    {t("Require login")}
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm text-zinc-700">
+                    <input
+                      checked={shareMemberOnly}
+                      onChange={(event) => setShareMemberOnly(event.target.checked)}
+                      type="checkbox"
+                    />
+                    {t("Workspace members only")}
+                  </label>
+                </div>
+                <button
+                  className="inline-flex h-9 w-fit items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800"
+                  disabled={isSaving}
+                  onClick={() => void handleCreateShareLink()}
+                  type="button"
+                >
+                  <Link2 className="h-4 w-4" />
+                  {t("Create share")}
+                </button>
+                {revokedShareLinks.length > 0 ? (
+                  <p className="text-xs text-zinc-500">
+                    {t("Share history")}: {revokedShareLinks.length}
+                  </p>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
           <InvitationList
             invitations={pendingApproval}
             title={t("Pending approval")}
@@ -429,6 +835,106 @@ export function AccessPanel({
         </div>
       </section>
     </div>
+  );
+}
+
+const visibilityOptions: Array<{ value: Visibility; label: string; icon: ReactNode }> = [
+  { value: "private", label: "Only collaborators", icon: <Lock className="h-4 w-4" /> },
+  { value: "workspace", label: "Space members", icon: <Users className="h-4 w-4" /> },
+  { value: "public", label: "Public", icon: <Globe2 className="h-4 w-4" /> }
+];
+
+function VisibilitySection({
+  description,
+  disabled,
+  onSave,
+  onVisibilityChange,
+  title,
+  value
+}: {
+  description: string;
+  disabled: boolean;
+  onSave: () => void;
+  onVisibilityChange: (value: Visibility) => void;
+  title: string;
+  value: Visibility;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">{title}</h3>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">{description}</p>
+        </div>
+        <button
+          className="inline-flex h-8 items-center rounded-md bg-zinc-950 px-3 text-xs font-medium text-white disabled:bg-zinc-300"
+          disabled={disabled}
+          onClick={onSave}
+          type="button"
+        >
+          {t("Save visibility")}
+        </button>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-3">
+        {visibilityOptions.map((option) => (
+          <button
+            className={`rounded-md border px-3 py-3 text-left ${
+              value === option.value
+                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+            }`}
+            key={option.value}
+            onClick={() => onVisibilityChange(option.value)}
+            type="button"
+          >
+            <span className="flex items-center gap-2 text-sm font-semibold">
+              {option.icon}
+              {t(option.label)}
+            </span>
+            <span className="mt-1 block text-xs leading-5 text-zinc-500">
+              {t(visibilityHelp(option.value))}
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RoleReference({ targetType }: { targetType: AccessObjectType }) {
+  const { t } = useI18n();
+  const rows: Array<[string, string]> =
+    targetType === "workspace"
+      ? [
+          ["owner", "Space owner can manage the space, members, and all space settings."],
+          ["admin", "Space admin can manage members and shared space settings."],
+          ["member", "Space member can access workspace-visible knowledge bases."],
+          ["guest", "Space guest has limited space visibility and needs content permission."]
+        ]
+      : [
+          ["owner", "Content owner keeps full management authority."],
+          ["manager", "Manager can manage content settings and collaborators."],
+          ["editor", "Editor can read and edit content."],
+          ["viewer", "Viewer can read content only."]
+        ];
+  return (
+    <section className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="h-4 w-4 text-emerald-700" />
+        <h3 className="text-sm font-semibold">
+          {targetType === "workspace" ? t("Space member roles") : t("Content collaborator roles")}
+        </h3>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {rows.map(([role, description]) => (
+          <div key={role} className="rounded-md bg-white px-3 py-2 ring-1 ring-zinc-200">
+            <p className="text-xs font-semibold text-zinc-800">{t(role)}</p>
+            <p className="mt-1 text-xs leading-5 text-zinc-500">{t(description)}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -573,10 +1079,32 @@ function InvitationList({
   );
 }
 
+function SmallBadge({ children, icon }: { children: ReactNode; icon: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-zinc-600 ring-1 ring-zinc-200">
+      {icon}
+      {children}
+    </span>
+  );
+}
+
 function accessTargetLabel(type: AccessObjectType): string {
-  if (type === "workspace") return "Workspace";
-  if (type === "knowledge_base") return "Knowledge base";
-  return "Document";
+  if (type === "workspace") return "Space members";
+  if (type === "knowledge_base") return "Knowledge base permission";
+  return "Document permission";
+}
+
+function permissionPanelEyebrow(type?: AccessObjectType): string {
+  if (type === "workspace") return "Space permissions";
+  if (type === "knowledge_base") return "Knowledge base permissions";
+  if (type === "document") return "Document permissions";
+  return "Access";
+}
+
+function visibilityHelp(value: Visibility): string {
+  if (value === "public") return "Anyone with access to the instance can read public content.";
+  if (value === "workspace") return "Space members can read workspace-visible content.";
+  return "Only explicit collaborators can read private content.";
 }
 
 function formatError(error: unknown, fallback: string): string {

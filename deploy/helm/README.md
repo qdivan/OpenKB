@@ -1,4 +1,4 @@
-# Helm
+﻿# Helm
 
 Phase 11 adds the minimal OpenKB chart at:
 
@@ -113,7 +113,7 @@ Example pattern:
 
 ```bash
 kubectl run openkb-migrate --rm -it --restart=Never \
-  --image=openkb:phase-25 \
+  --image=openkb:phase-29 \
   --env-from=configmap/openkb-config \
   --env-from=secret/openkb-secret \
   -- pnpm db:migrate

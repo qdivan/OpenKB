@@ -43,6 +43,7 @@ const allTables = [
   "collaborators",
   "document_versions",
   "document_assets",
+  "document_user_activities",
   "documents",
   "knowledge_bases",
   "workspace_members",

@@ -45,11 +45,19 @@ import { toImportJobDto } from "./import.service";
 type CreateWorkspaceInput = {
   name?: string;
   slug?: string;
+  avatar_color?: string | null;
+  avatar_initials?: string | null;
+  kind?: string;
+  personal_owner_user_id?: string | null;
 };
 
 type UpdateWorkspaceInput = {
   name?: string;
   slug?: string;
+  avatar_color?: string | null;
+  avatar_initials?: string | null;
+  kind?: string;
+  personal_owner_user_id?: string | null;
 };
 
 type CreateKnowledgeBaseInput = {
@@ -296,21 +304,33 @@ export class ContentService {
       memberships.map((membership) => [membership.workspace_id, membership.role])
     );
 
-    return workspaces.map((workspace) => ({
-      ...toWorkspaceDto(workspace),
-      role: roleByWorkspace.get(workspace.id) ?? null,
-      admin_visible:
-        roleByWorkspace.get(workspace.id) === undefined &&
-        this.canAdminViewTenant(me, workspace.tenant_id),
-      can_read_content: isWorkspaceContentReader(roleByWorkspace.get(workspace.id)),
-      requires_takeover: false
-    }));
+    return workspaces
+      .map((workspace) => ({
+        ...toWorkspaceDto(workspace),
+        role: roleByWorkspace.get(workspace.id) ?? null,
+        admin_visible:
+          roleByWorkspace.get(workspace.id) === undefined &&
+          this.canAdminViewTenant(me, workspace.tenant_id),
+        can_read_content: isWorkspaceContentReader(roleByWorkspace.get(workspace.id)),
+        requires_takeover: false
+      }))
+      .sort((left, right) => {
+        const leftPersonal = left.is_personal && left.personal_owner_user_id === me.user.id;
+        const rightPersonal = right.is_personal && right.personal_owner_user_id === me.user.id;
+        if (leftPersonal !== rightPersonal) {
+          return leftPersonal ? -1 : 1;
+        }
+        return left.created_at.localeCompare(right.created_at);
+      });
   }
 
   async createWorkspace(sessionToken: string | null, input: CreateWorkspaceInput) {
     const me = await this.requireMe(sessionToken);
+    rejectClientManagedWorkspaceKind(input);
     const name = requireText(input.name, "name");
     const slug = normalizeSlug(input.slug || name);
+    const avatarColor = normalizeWorkspaceAvatarColor(input.avatar_color, name);
+    const avatarInitials = normalizeWorkspaceAvatarInitials(input.avatar_initials, name);
     const now = new Date();
 
     const workspace = await this.prisma.$transaction(async (tx) => {
@@ -319,6 +339,10 @@ export class ContentService {
           tenant_id: me.tenantId,
           name,
           slug,
+          kind: "team",
+          personal_owner_user_id: null,
+          avatar_color: avatarColor,
+          avatar_initials: avatarInitials,
           created_by: me.user.id,
           created_at: now,
           updated_at: now
@@ -360,25 +384,167 @@ export class ContentService {
     };
   }
 
+  async getWorkspaceDashboard(sessionToken: string | null, workspaceId: string) {
+    const me = await this.requireMe(sessionToken);
+    const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!workspace) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Workspace was not found.", 404);
+    }
+    const role = await this.permissions.resolveWorkspaceRole(me.user.id, workspace.id);
+    if (!role && !this.canAdminViewTenant(me, workspace.tenant_id)) {
+      throw new ContentError("FORBIDDEN", "You do not have access to this object.", 403);
+    }
+
+    const readableKnowledgeBases = (
+      await this.listKnowledgeBases(sessionToken, workspace.id)
+    ).filter((knowledgeBase) => knowledgeBase.can_read_content !== false);
+
+    const [recentEdited, recentViewed] = await Promise.all([
+      this.listRecentEditedDocuments(me, workspace.id),
+      this.listRecentViewedDocuments(me, workspace.id)
+    ]);
+    const knowledgeBases = await this.buildWorkspaceKnowledgeBaseCards(
+      workspace.id,
+      readableKnowledgeBases
+    );
+
+    return {
+      workspace: {
+        ...toWorkspaceDto(workspace),
+        role,
+        admin_visible: !role && this.canAdminViewTenant(me, workspace.tenant_id),
+        can_read_content: isWorkspaceContentReader(role),
+        requires_takeover: false
+      },
+      knowledge_bases: knowledgeBases,
+      recent_edited: recentEdited,
+      recent_viewed: recentViewed,
+      favorites: [],
+      comments: [],
+      counts: {
+        knowledge_bases: knowledgeBases.length,
+        recent_edited: recentEdited.length,
+        recent_viewed: recentViewed.length,
+        favorites: 0,
+        comments: 0
+      }
+    };
+  }
+
+  private async buildWorkspaceKnowledgeBaseCards(
+    workspaceId: string,
+    knowledgeBases: Array<ReturnType<typeof toKnowledgeBaseDto> & Record<string, unknown>>
+  ) {
+    if (knowledgeBases.length === 0) {
+      return [];
+    }
+
+    const knowledgeBaseIds = knowledgeBases.map((knowledgeBase) => knowledgeBase.id);
+    const [documentCounts, reprocessCounts, chunkSettings] = await Promise.all([
+      this.prisma.document.groupBy({
+        by: ["knowledge_base_id", "type"],
+        where: {
+          workspace_id: workspaceId,
+          knowledge_base_id: { in: knowledgeBaseIds },
+          status: { not: "deleted" }
+        },
+        _count: { _all: true }
+      }),
+      this.prisma.document.groupBy({
+        by: ["knowledge_base_id"],
+        where: {
+          workspace_id: workspaceId,
+          knowledge_base_id: { in: knowledgeBaseIds },
+          type: "page",
+          status: { not: "deleted" },
+          processing_status: "needs_reprocess"
+        },
+        _count: { _all: true }
+      }),
+      this.prisma.knowledgeBaseChunkSetting.findMany({
+        where: { knowledge_base_id: { in: knowledgeBaseIds } },
+        select: { knowledge_base_id: true, doc_form: true }
+      })
+    ]);
+
+    const countByKnowledgeBase = new Map<
+      string,
+      { page_count: number; folder_count: number; document_count: number }
+    >();
+    for (const row of documentCounts) {
+      const counts = countByKnowledgeBase.get(row.knowledge_base_id) ?? {
+        page_count: 0,
+        folder_count: 0,
+        document_count: 0
+      };
+      if (row.type === "page") {
+        counts.page_count += row._count._all;
+      } else if (row.type === "folder") {
+        counts.folder_count += row._count._all;
+      }
+      counts.document_count += row._count._all;
+      countByKnowledgeBase.set(row.knowledge_base_id, counts);
+    }
+
+    const reprocessCountByKnowledgeBase = new Map(
+      reprocessCounts.map((row) => [row.knowledge_base_id, row._count._all])
+    );
+    const docFormByKnowledgeBase = new Map(
+      chunkSettings.map((setting) => [setting.knowledge_base_id, setting.doc_form])
+    );
+
+    return knowledgeBases.map((knowledgeBase) => {
+      const counts = countByKnowledgeBase.get(knowledgeBase.id) ?? {
+        page_count: 0,
+        folder_count: 0,
+        document_count: 0
+      };
+      return {
+        ...knowledgeBase,
+        ...counts,
+        needs_reprocess_count: reprocessCountByKnowledgeBase.get(knowledgeBase.id) ?? 0,
+        doc_form: docFormByKnowledgeBase.get(knowledgeBase.id) ?? "text_model"
+      };
+    });
+  }
+
   async updateWorkspace(
     sessionToken: string | null,
     workspaceId: string,
     input: UpdateWorkspaceInput
   ) {
     const me = await this.requireMe(sessionToken);
+    rejectClientManagedWorkspaceKind(input);
+    const existing = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!existing) {
+      throw new ContentError("OBJECT_NOT_FOUND", "Workspace was not found.", 404);
+    }
+    if ((existing.kind ?? "team") === "personal") {
+      throw new ContentError(
+        "INVALID_INPUT",
+        "Personal spaces are managed by the system in this phase.",
+        400
+      );
+    }
     const canManage = await this.permissions.canManage(me.user.id, "workspace", workspaceId);
     if (!canManage) {
-      const existing = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
       if (!existing || !this.canAdminManageTenant(me, existing.tenant_id)) {
         throw new ContentError("FORBIDDEN", "You do not have access to this object.", 403);
       }
     }
 
+    const nextName = input.name !== undefined ? requireText(input.name, "name") : existing.name;
     const workspace = await this.prisma.workspace.update({
       where: { id: workspaceId },
       data: {
-        ...(input.name !== undefined ? { name: requireText(input.name, "name") } : {}),
+        ...(input.name !== undefined ? { name: nextName } : {}),
         ...(input.slug !== undefined ? { slug: normalizeSlug(input.slug) } : {}),
+        ...(input.avatar_color !== undefined
+          ? { avatar_color: normalizeWorkspaceAvatarColor(input.avatar_color, nextName) }
+          : {}),
+        ...(input.avatar_initials !== undefined
+          ? { avatar_initials: normalizeWorkspaceAvatarInitials(input.avatar_initials, nextName) }
+          : {}),
         updated_at: new Date()
       }
     });
@@ -1887,12 +2053,172 @@ export class ContentService {
     const version = document.current_version_id
       ? await this.prisma.documentVersion.findUnique({ where: { id: document.current_version_id } })
       : null;
+    if (document.type === "page") {
+      await this.recordDocumentView(me, document);
+    }
 
     return {
       ...toDocumentDto(document),
       currentVersion: version ? toDocumentVersionDto(version, true) : null,
       role: await this.permissions.resolveObjectRole(me.user.id, "document", document.id)
     };
+  }
+
+  private async recordDocumentView(
+    me: AuthenticatedUser,
+    document: {
+      id: string;
+      tenant_id: string;
+      workspace_id: string;
+      knowledge_base_id: string;
+      type: string;
+      status: string;
+    }
+  ) {
+    if (document.type !== "page" || document.status === "deleted") {
+      return;
+    }
+    const now = new Date();
+    await this.prisma.documentUserActivity.upsert({
+      where: {
+        tenant_id_user_id_document_id_activity_type: {
+          tenant_id: me.tenantId,
+          user_id: me.user.id,
+          document_id: document.id,
+          activity_type: "view"
+        }
+      },
+      create: {
+        tenant_id: me.tenantId,
+        user_id: me.user.id,
+        workspace_id: document.workspace_id,
+        knowledge_base_id: document.knowledge_base_id,
+        document_id: document.id,
+        activity_type: "view",
+        last_activity_at: now,
+        activity_count: 1,
+        created_at: now,
+        updated_at: now
+      },
+      update: {
+        workspace_id: document.workspace_id,
+        knowledge_base_id: document.knowledge_base_id,
+        last_activity_at: now,
+        activity_count: { increment: 1 },
+        updated_at: now
+      }
+    });
+  }
+
+  private async listRecentEditedDocuments(me: AuthenticatedUser, workspaceId: string) {
+    const workspaceDocuments = await this.prisma.document.findMany({
+      where: {
+        tenant_id: me.tenantId,
+        workspace_id: workspaceId,
+        type: "page",
+        status: { not: "deleted" }
+      },
+      select: { id: true }
+    });
+    if (workspaceDocuments.length === 0) {
+      return [];
+    }
+    const versions = await this.prisma.documentVersion.findMany({
+      where: {
+        tenant_id: me.tenantId,
+        created_by: me.user.id,
+        document_id: { in: workspaceDocuments.map((document) => document.id) }
+      },
+      orderBy: { created_at: "desc" },
+      take: 80
+    });
+    return this.toDashboardDocumentItems(
+      me,
+      workspaceId,
+      versions.map((version) => ({
+        documentId: version.document_id,
+        activityAt: version.created_at
+      }))
+    );
+  }
+
+  private async listRecentViewedDocuments(me: AuthenticatedUser, workspaceId: string) {
+    const activities = await this.prisma.documentUserActivity.findMany({
+      where: {
+        tenant_id: me.tenantId,
+        user_id: me.user.id,
+        workspace_id: workspaceId,
+        activity_type: "view"
+      },
+      orderBy: { last_activity_at: "desc" },
+      take: 40
+    });
+    return this.toDashboardDocumentItems(
+      me,
+      workspaceId,
+      activities.map((activity) => ({
+        documentId: activity.document_id,
+        activityAt: activity.last_activity_at
+      }))
+    );
+  }
+
+  private async toDashboardDocumentItems(
+    me: AuthenticatedUser,
+    workspaceId: string,
+    candidates: Array<{ documentId: string; activityAt: Date }>
+  ) {
+    const uniqueCandidates = [];
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      if (seen.has(candidate.documentId)) {
+        continue;
+      }
+      seen.add(candidate.documentId);
+      uniqueCandidates.push(candidate);
+    }
+    const documents = await this.prisma.document.findMany({
+      where: {
+        id: { in: uniqueCandidates.map((candidate) => candidate.documentId) },
+        workspace_id: workspaceId,
+        type: "page",
+        status: { not: "deleted" }
+      }
+    });
+    const knowledgeBases = await this.prisma.knowledgeBase.findMany({
+      where: {
+        id: { in: documents.map((document) => document.knowledge_base_id) }
+      }
+    });
+    const documentById = new Map(documents.map((document) => [document.id, document]));
+    const knowledgeBaseById = new Map(
+      knowledgeBases.map((knowledgeBase) => [knowledgeBase.id, knowledgeBase])
+    );
+    const items = [];
+    for (const candidate of uniqueCandidates) {
+      const document = documentById.get(candidate.documentId);
+      if (!document) {
+        continue;
+      }
+      if (!(await this.permissions.canRead(me.user.id, "document", document.id))) {
+        continue;
+      }
+      const knowledgeBase = knowledgeBaseById.get(document.knowledge_base_id);
+      items.push({
+        id: document.id,
+        title: document.title,
+        slug: document.slug,
+        workspace_id: document.workspace_id,
+        knowledge_base_id: document.knowledge_base_id,
+        knowledge_base_title: knowledgeBase?.title ?? null,
+        activity_at: candidate.activityAt.toISOString(),
+        updated_at: document.updated_at.toISOString()
+      });
+      if (items.length >= 12) {
+        break;
+      }
+    }
+    return items;
   }
 
   async getDocumentMetadata(sessionToken: string | null, documentId: string) {
@@ -2093,7 +2419,12 @@ export class ContentService {
     if (!current || current.status === "deleted") {
       throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
     }
-    if (input.parent_id !== undefined || input.sort_order !== undefined) {
+    if (
+      input.parent_id !== undefined ||
+      input.sort_order !== undefined ||
+      input.permission_mode !== undefined ||
+      input.visibility !== undefined
+    ) {
       await this.permissions.requireCanManage(me.user.id, "document", documentId);
     }
     if (
@@ -3824,6 +4155,71 @@ function normalizeSlug(value: string): string {
   return slug;
 }
 
+const WORKSPACE_AVATAR_COLORS = [
+  "#059669",
+  "#0284C7",
+  "#7C3AED",
+  "#DB2777",
+  "#DC2626",
+  "#D97706",
+  "#4F46E5",
+  "#0F766E"
+] as const;
+
+function rejectClientManagedWorkspaceKind(input: {
+  kind?: unknown;
+  personal_owner_user_id?: unknown;
+}) {
+  if (Object.prototype.hasOwnProperty.call(input, "kind")) {
+    throw new ContentError("INVALID_INPUT", "workspace kind is managed by OpenKB.", 400);
+  }
+  if (Object.prototype.hasOwnProperty.call(input, "personal_owner_user_id")) {
+    throw new ContentError(
+      "INVALID_INPUT",
+      "personal workspace ownership is managed by OpenKB.",
+      400
+    );
+  }
+}
+
+function normalizeWorkspaceAvatarColor(value: string | null | undefined, seed: string): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return pickWorkspaceAvatarColor(seed);
+  }
+  if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+    throw new ContentError("INVALID_INPUT", "avatar_color must be a hex color.", 400);
+  }
+  return normalized.toUpperCase();
+}
+
+function normalizeWorkspaceAvatarInitials(
+  value: string | null | undefined,
+  workspaceName: string
+): string {
+  const normalized = value?.trim();
+  const initials = normalized || deriveWorkspaceAvatarInitials(workspaceName);
+  const codePoints = Array.from(initials).filter((char) => /\S/u.test(char));
+  if (codePoints.length === 0) {
+    throw new ContentError("INVALID_INPUT", "avatar_initials is invalid.", 400);
+  }
+  return codePoints.slice(0, 4).join("").toUpperCase();
+}
+
+function deriveWorkspaceAvatarInitials(name: string): string {
+  const words = name.trim().split(/\s+/u).filter(Boolean);
+  if (words.length >= 2 && words[0] && words[1]) {
+    return `${Array.from(words[0])[0] ?? ""}${Array.from(words[1])[0] ?? ""}`;
+  }
+  return Array.from(name.trim()).slice(0, 2).join("") || "OK";
+}
+
+function pickWorkspaceAvatarColor(seed: string): string {
+  const chars = Array.from(seed || "OpenKB");
+  const hash = chars.reduce((sum, char) => sum + char.codePointAt(0)!, 0);
+  return WORKSPACE_AVATAR_COLORS[hash % WORKSPACE_AVATAR_COLORS.length] ?? "#059669";
+}
+
 function normalizeVisibility(value: string): "private" | "workspace" | "public" {
   if (value === "private" || value === "workspace" || value === "public") {
     return value;
@@ -4041,6 +4437,10 @@ function toWorkspaceDto(workspace: {
   tenant_id: string;
   name: string;
   slug: string;
+  kind?: string;
+  personal_owner_user_id?: string | null;
+  avatar_color?: string | null;
+  avatar_initials?: string | null;
   created_by: string;
   created_at: Date;
   updated_at: Date;
@@ -4050,6 +4450,11 @@ function toWorkspaceDto(workspace: {
     tenant_id: workspace.tenant_id,
     name: workspace.name,
     slug: workspace.slug,
+    kind: workspace.kind ?? "team",
+    personal_owner_user_id: workspace.personal_owner_user_id ?? null,
+    is_personal: (workspace.kind ?? "team") === "personal",
+    avatar_color: workspace.avatar_color ?? null,
+    avatar_initials: workspace.avatar_initials ?? null,
     created_by: workspace.created_by,
     created_at: workspace.created_at.toISOString(),
     updated_at: workspace.updated_at.toISOString()

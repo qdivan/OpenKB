@@ -44,6 +44,7 @@ const allTables = [
   "collaborators",
   "document_versions",
   "document_assets",
+  "document_user_activities",
   "documents",
   "knowledge_bases",
   "workspace_members",
@@ -153,6 +154,139 @@ describe("ContentService integration", () => {
         seed.knowledgeBaseId
       );
       expect(seededOverview.chunks.total).toBeGreaterThan(0);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("returns personal workspace metadata and dashboard activity", async () => {
+    await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const workspaces = await content.listWorkspaces(login.sessionToken);
+      const personalWorkspace = workspaces.find((workspace) => workspace.is_personal);
+      expect(personalWorkspace).toMatchObject({
+        kind: "personal",
+        personal_owner_user_id: login.me.user.id,
+        role: "owner"
+      });
+
+      const knowledgeBase = await content.createKnowledgeBase(login.sessionToken, {
+        workspace_id: personalWorkspace!.id,
+        title: "Personal Notes",
+        slug: "personal-notes",
+        visibility: "private"
+      });
+      const document = await content.createDocument(login.sessionToken, {
+        knowledge_base_id: knowledgeBase.id,
+        title: "Private Note",
+        slug: "private-note",
+        markdown: "# Private Note\n\nOnly visible in my personal space."
+      });
+      await content.getDocument(login.sessionToken, document.id);
+
+      const dashboard = await content.getWorkspaceDashboard(
+        login.sessionToken,
+        personalWorkspace!.id
+      );
+      expect(dashboard.workspace).toMatchObject({ is_personal: true });
+      expect(dashboard.knowledge_bases).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: knowledgeBase.id })])
+      );
+      expect(dashboard.knowledge_bases).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: knowledgeBase.id,
+            doc_form: "text_model",
+            page_count: 1,
+            folder_count: 0,
+            document_count: 1,
+            needs_reprocess_count: 1
+          })
+        ])
+      );
+      expect(dashboard.recent_edited).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: document.id })])
+      );
+      expect(dashboard.recent_viewed).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: document.id })])
+      );
+      expect(dashboard.counts.favorites).toBe(0);
+      expect(dashboard.counts.comments).toBe(0);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("creates and updates team space avatar metadata without allowing client-created personal spaces", async () => {
+    await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const login = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      await expect(
+        content.createWorkspace(login.sessionToken, {
+          name: "Bad Personal",
+          slug: "bad-personal",
+          kind: "personal"
+        } as never)
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      await expect(
+        content.createWorkspace(login.sessionToken, {
+          name: "Bad Owner",
+          slug: "bad-owner",
+          personal_owner_user_id: login.me.user.id
+        } as never)
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+      const workspace = await content.createWorkspace(login.sessionToken, {
+        name: "AI Team",
+        slug: "ai-team",
+        avatar_color: "#0284C7",
+        avatar_initials: "AI"
+      });
+      expect(workspace).toMatchObject({
+        kind: "team",
+        is_personal: false,
+        avatar_color: "#0284C7",
+        avatar_initials: "AI"
+      });
+      const members = await content.listWorkspaceMembers(login.sessionToken, workspace.id);
+      expect(members).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ user_id: login.me.user.id, role: "owner" })
+        ])
+      );
+
+      const updated = await content.updateWorkspace(login.sessionToken, workspace.id, {
+        name: "AI Projects",
+        slug: "ai-projects",
+        avatar_color: "#7C3AED",
+        avatar_initials: "AP"
+      });
+      expect(updated).toMatchObject({
+        name: "AI Projects",
+        slug: "ai-projects",
+        avatar_color: "#7C3AED",
+        avatar_initials: "AP"
+      });
+
+      const personalWorkspace = (await content.listWorkspaces(login.sessionToken)).find(
+        (item) => item.is_personal && item.personal_owner_user_id === login.me.user.id
+      );
+      await expect(
+        content.updateWorkspace(login.sessionToken, personalWorkspace!.id, {
+          name: "Renamed Personal"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     } finally {
       await content.disconnect();
     }
@@ -527,6 +661,50 @@ describe("ContentService integration", () => {
           markdown_hash: "bad"
         })
       ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("requires document manager permission to change document visibility", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+
+    try {
+      const editorUser = await createActiveUser(seed.tenantId, "doc-editor@openkb.local");
+      await prisma.collaborator.create({
+        data: {
+          tenant_id: seed.tenantId,
+          object_type: "document",
+          object_id: seed.documentId,
+          subject_type: "user",
+          subject_id: editorUser.id,
+          role: "editor",
+          source: "direct",
+          created_by: seed.userId
+        }
+      });
+      const editor = await auth.login({
+        email: editorUser.email,
+        password: "OpenKB-test-123456"
+      });
+      const current = await content.getDocument(editor.sessionToken, seed.documentId);
+      const editorMarkdown = "# Editor update\n\nEditors can update content.";
+
+      await expect(
+        content.updateDocument(editor.sessionToken, seed.documentId, {
+          base_version_id: current.currentVersion?.id ?? null,
+          markdown: editorMarkdown,
+          markdown_hash: markdownHash(editorMarkdown)
+        })
+      ).resolves.toMatchObject({ title: current.title });
+
+      await expect(
+        content.updateDocument(editor.sessionToken, seed.documentId, {
+          permission_mode: "custom",
+          visibility: "public"
+        })
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
     } finally {
       await content.disconnect();
     }

@@ -7,11 +7,13 @@ import {
   createShareLink,
   clearAdminModelSecret,
   clearAdminImportToolSecret,
+  createWorkspace,
   createKnowledgeBase,
   createKnowledgeBaseMetadataField,
   createAdminUser,
   createDifyHubDataset,
   deleteDifyHubDataset,
+  getWorkspaceDashboard,
   getShare,
   getDifyHubConnection,
   getDocumentVersion,
@@ -34,6 +36,9 @@ import {
   searchKnowledge,
   setAdminUserTenantRole,
   syncDifyHubMetadata,
+  updateKnowledgeBase,
+  updateWorkspace,
+  updateDocument,
   updateDocumentMetadata,
   updateChunkSettings,
   updateDocumentSegment,
@@ -82,6 +87,43 @@ describe("OpenKB API client", () => {
     );
   });
 
+  it("sends team space avatar fields for create and update", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createWorkspace({
+      name: "AI Team",
+      slug: "ai-team",
+      avatar_color: "#0284C7",
+      avatar_initials: "AI"
+    });
+    await updateWorkspace("workspace_1", {
+      name: "AI Projects",
+      avatar_color: "#7C3AED",
+      avatar_initials: "AP"
+    });
+
+    const firstCall = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const secondCall = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+
+    expect(JSON.parse(firstCall[1].body as string)).toEqual({
+      name: "AI Team",
+      slug: "ai-team",
+      avatar_color: "#0284C7",
+      avatar_initials: "AI"
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:4000/api/workspaces/workspace_1",
+      expect.objectContaining({ method: "PUT" })
+    );
+    expect(JSON.parse(secondCall[1].body as string)).toEqual({
+      name: "AI Projects",
+      avatar_color: "#7C3AED",
+      avatar_initials: "AP"
+    });
+  });
+
   it("keeps API error bodies available to callers", async () => {
     vi.stubGlobal(
       "fetch",
@@ -123,6 +165,18 @@ describe("OpenKB API client", () => {
         body: JSON.stringify({ reset_override: true, status: "deleted" }),
         method: "PUT"
       })
+    );
+  });
+
+  it("loads workspace dashboard data", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getWorkspaceDashboard("workspace_1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/workspaces/workspace_1/dashboard",
+      expect.objectContaining({ credentials: "include" })
     );
   });
 
@@ -194,6 +248,40 @@ describe("OpenKB API client", () => {
           visibility: "workspace",
           doc_form: "qa_model"
         })
+      })
+    );
+  });
+
+  it("sends Yuque-style permission updates for knowledge bases and documents", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateKnowledgeBase("kb_1", { visibility: "workspace" });
+    await updateDocument("doc_1", { permission_mode: "custom", visibility: "private" });
+    await updateDocument("doc_1", { permission_mode: "inherit", visibility: null });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:4000/api/knowledge-bases/kb_1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ visibility: "workspace" })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:4000/api/documents/doc_1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ permission_mode: "custom", visibility: "private" })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "http://localhost:4000/api/documents/doc_1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ permission_mode: "inherit", visibility: null })
       })
     );
   });

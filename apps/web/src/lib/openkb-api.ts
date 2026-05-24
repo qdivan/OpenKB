@@ -386,12 +386,54 @@ export type Workspace = {
   tenant_id: string;
   name: string;
   slug: string;
+  kind: "personal" | "team";
+  personal_owner_user_id: string | null;
+  is_personal: boolean;
+  avatar_color: string | null;
+  avatar_initials: string | null;
   role?: string | null;
   admin_visible?: boolean;
   can_read_content?: boolean;
   requires_takeover?: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type WorkspaceDashboardDocument = {
+  id: string;
+  title: string;
+  slug: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  knowledge_base_title: string | null;
+  activity_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeBaseDocForm = "text_model" | "hierarchical_model" | "qa_model";
+
+export type WorkspaceDashboardKnowledgeBase = KnowledgeBase & {
+  page_count: number;
+  folder_count: number;
+  document_count: number;
+  needs_reprocess_count: number;
+  doc_form: KnowledgeBaseDocForm;
+};
+
+export type WorkspaceDashboard = {
+  workspace: Workspace;
+  knowledge_bases: WorkspaceDashboardKnowledgeBase[];
+  recent_edited: WorkspaceDashboardDocument[];
+  recent_viewed: WorkspaceDashboardDocument[];
+  favorites: WorkspaceDashboardDocument[];
+  comments: WorkspaceDashboardDocument[];
+  counts: {
+    knowledge_bases: number;
+    recent_edited: number;
+    recent_viewed: number;
+    favorites: number;
+    comments: number;
+  };
 };
 
 export type AccessObjectType = "workspace" | "knowledge_base" | "document";
@@ -1103,6 +1145,8 @@ export type UpdateDocumentInput = {
   markdown?: string;
   markdown_hash?: string;
   base_version_id?: string | null;
+  permission_mode?: "inherit" | "custom";
+  visibility?: KnowledgeBase["visibility"] | null;
 };
 
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
@@ -1202,14 +1246,31 @@ export function listWorkspaces() {
   return apiFetch<Workspace[]>("/api/workspaces");
 }
 
-export function createWorkspace(input: { name: string; slug?: string }) {
+export function getWorkspaceDashboard(id: string) {
+  return apiFetch<WorkspaceDashboard>(`/api/workspaces/${id}/dashboard`);
+}
+
+export function createWorkspace(input: {
+  name: string;
+  slug?: string;
+  avatar_color?: string | null;
+  avatar_initials?: string | null;
+}) {
   return apiFetch<Workspace>("/api/workspaces", {
     method: "POST",
     body: JSON.stringify(input)
   });
 }
 
-export function updateWorkspace(id: string, input: { name?: string; slug?: string }) {
+export function updateWorkspace(
+  id: string,
+  input: {
+    name?: string;
+    slug?: string;
+    avatar_color?: string | null;
+    avatar_initials?: string | null;
+  }
+) {
   return apiFetch<Workspace>(`/api/workspaces/${id}`, {
     method: "PUT",
     body: JSON.stringify(input)
@@ -1254,6 +1315,21 @@ export function createKnowledgeBase(input: {
 
 export function getKnowledgeBase(id: string) {
   return apiFetch<KnowledgeBase>(`/api/knowledge-bases/${id}`);
+}
+
+export function updateKnowledgeBase(
+  id: string,
+  input: {
+    title?: string;
+    slug?: string;
+    visibility?: KnowledgeBase["visibility"];
+    status?: string;
+  }
+) {
+  return apiFetch<KnowledgeBase>(`/api/knowledge-bases/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
 }
 
 export function takeoverContentAccess(

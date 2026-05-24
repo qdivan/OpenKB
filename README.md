@@ -1,58 +1,17 @@
-<p align="center">
-  <img src="docs/assets/openkb-logo.png" width="88" alt="OpenKB logo" />
-</p>
+# OpenKB
 
-<h1 align="center">OpenKB</h1>
+OpenKB 是一个 Markdown-first、可自托管的知识库系统。它把正文、版本、协作者和权限留在 PostgreSQL；Milvus 只作为可重建的检索索引。Web、MCP 和 Dify External Knowledge 返回结果前，都会回到 PostgreSQL 做最终权限检查。
 
-<p align="center">
-  <strong>像语雀一样写文档，把团队知识库留在自己的基础设施里。</strong>
-</p>
-
-<p align="center">
-  Markdown-first · Self-hosted · Permission-safe retrieval · MCP · Dify External Knowledge
-</p>
-
-<p align="center">
-  <a href="docs/25-local-quickstart.zh-CN.md">本地快速开始</a>
-  ·
-  <a href="docs/13-deployment.zh-CN.md">部署</a>
-  ·
-  <a href="docs/00-index.zh-CN.md">文档</a>
-  ·
-  <a href="docs/26-dify-external-knowledge-setup.zh-CN.md">Dify 配置</a>
-  ·
-  <a href="docs/31-dify-parity-next-phases.zh-CN.md">后续路线</a>
-</p>
-
-<p align="center">
-  <img alt="Phase 26" src="https://img.shields.io/badge/phase-26-10B981" />
-  <img alt="Docker Compose" src="https://img.shields.io/badge/deploy-Docker%20Compose-2563EB" />
-  <img alt="Helm" src="https://img.shields.io/badge/k8s-Helm-0F766E" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-user--bound-7C3AED" />
-  <img alt="Dify" src="https://img.shields.io/badge/Dify-external%20knowledge-111827" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/openkb-cover.png" alt="OpenKB knowledge base settings" />
-</p>
-
-OpenKB 是一个开源、自托管的团队知识库。它把文档正文、版本、协作者和权限放在 PostgreSQL 里，把 Milvus 当作可重建的检索索引。Web、MCP 和 Dify 返回结果前都会回到 PostgreSQL 做最终权限检查。
-
-当前主线处于 `v0.3.x / Phase 26`：OpenKB 已支持 Dify External Knowledge 接入、Dify 风格的知识库处理配置、QA/摘要派生内容、图片与附件检索底座、同模型检索验证，以及通过 Dify Hub 管理 external dataset 和 metadata 字段。它适合本地开发、公网测试平台和私有化试跑，还不是生产 GA 版本。
-
-最近的收口重点是稳定产品路径：Dify Hub 不使用 Console cookie、不写 Dify 数据库；Dify dataset 删除只允许已导入且已映射的 external dataset；语雀式空间路线采用“个人空间 / 团队空间 / 知识库”模型，不新增独立 Team 层。
+当前主线：`v0.3.x / Phase 31`。Phase 31 在语雀式空间、知识库归属和权限入口之上，补齐旧 workspace 的兼容迁移报告与 runbook：`Default Workspace / OpenKB Demo` 默认作为团队空间处理，迁移报告只做只读审计，不自动搬迁私有内容或重写权限。项目适合本地开发、公网测试平台和私有化试跑，还不是生产 GA。
 
 ## Highlights
 
-- 语雀式知识库结构：空间（个人空间 / 团队空间）、知识库、目录、文档、协作者、邀请和只读分享。
-- Markdown-first 编辑：Milkdown 富文本体验，Markdown 版本仍是正文真相。
-- Dify 配合：OpenKB 可以作为 Dify External Knowledge API 使用，按 `knowledge_id` 映射到授权知识库。
-- Dify Hub：通过 Dify Dataset Service API 管理 external dataset，并把 OpenKB 文档元数据同步到 Dify 的过滤字段列表；不使用 Console cookie，不写 Dify 数据库。
-- Dify 风格知识库处理：普通 RAG、父子检索、QA 知识库、显式 reprocess、segment override、summary index、图片/附件命中回源。
-- Phase 25 已跑真实验收：同一 corpus、同一 qwen3-vl embedding/rerank、同一 hybrid/rerank 开关完成 240 条检索兼容性测试；内部 `asset://` 图片完成 image vector smoke。
-- 检索策略可解释：BM25、semantic、hybrid、rerank、parent-child 回填、metadata filters 和命中解释。
-- 安全接入：MCP 绑定真实用户；Dify 绑定 app key 和 allowed KB scope。
-- 运维控制台：用户、模型、导入工具、Dify、MCP、索引、SMTP、审计和安全运维入口。
+- 空间与知识库：个人空间、团队空间、归属空间、知识库、目录、文档、公开性、协作者和只读分享。
+- 语雀式工作台：左侧空间与知识库入口，中间编辑/分段/源码，右侧大纲、元数据和版本。
+- Markdown-first：Milkdown 富文本编辑，Markdown 版本仍是正文真相。
+- Dify 配合：OpenKB 可作为 Dify External Knowledge API 使用，并可通过 Dify Hub 管理 external dataset 和 metadata 字段。
+- 检索派生层：显式 reprocess、segment override、QA、summary、图片/附件回源，不反写 Markdown 正文。
+- 权限边界：MCP 绑定真实用户；Dify 绑定 app key 和 allowed KB scope；所有检索结果做 PostgreSQL final permission check。
 
 ## Preview
 
@@ -90,60 +49,36 @@ pnpm dev:local:api
 pnpm dev:local:web
 ```
 
-此模式下 Web 是 `http://localhost:3100`，API 是 `http://localhost:4101`。运行 `next dev` 时不要同时执行 Web `next build`，两者会争用同一个 `.next` 目录。
+源码模式下 Web 是 `http://localhost:3100`，API 是 `http://localhost:4101`。运行 `next dev` 时不要同时执行 Web `next build`，两者会争用同一个 `.next` 目录。
 
 ## Upgrade Acceptance
 
-`/health` is a liveness and display endpoint. Do not use `phase` alone as the
-upgrade gate. For a Phase 26 deployment, verify the release image or commit,
-then check the database, schema, and interfaces:
+`/health.phase` 只是展示字段，不作为升级验收标准。Phase 31 部署应按以下内容验收：
 
-- Prisma migrations include `0014_account_setup_admin_visibility`,
-  `0015_dify_knowledge_alignment`, `0016_qa_summary_generation`,
-  `0017_dashscope_model_provider`, `0018_asset_bindings`, and
-  `0019_qa_mock_source`. Dify Hub deployments also include
-  `0020_dify_hub_connections`.
-- Phase 25/26 tables and columns exist, especially `document_qa_pairs`,
-  `document_segment_summaries`, `document_summaries`,
-  `document_asset_bindings`, `document_chunks.index_role`,
-  `document_chunks.source_chunk_id`, the asset-derived chunk roles,
-  `dify_hub_connections`, and the Dify dataset linkage fields on
-  `dify_knowledge_mappings`.
-- Key APIs respond after authentication: KB chunk settings, document processing,
-  document reprocess, segment management, QA, summaries, search, Dify
-  `/retrieval`, and asset/image hit metadata.
-- Docker Compose deployments pass through the Phase 20-25 SMTP, CSRF, MCP OAuth,
-  model, import-tool, metrics, backup, embedding/rerank request format, and
-  image-vector environment variables.
-- Existing derived data is not migrated automatically. Reprocess documents and
-  rebuild the Milvus index explicitly when upgrading older data.
-- Phase 26 also requires Dify Hub API checks: Service API connection probe,
-  paginated dataset list, safe external dataset deletion, and metadata dry-run.
-
-Local Phase 25 evidence is kept out of git:
-
-- Live retrieval compatibility run: `.codex-runtime/parity-runs/20260517T135537Z/retrieval/`
-- Image-capable smoke: `.codex-runtime/phase25-smoke/image-smoke-summary.json`
+- Prisma migrations 至少包含 `0014_account_setup_admin_visibility` 到 `0023_workspace_compatibility`。
+- 关键表/字段存在：`workspaces.kind`、`workspaces.personal_owner_user_id`、`workspaces.avatar_color`、`workspaces.avatar_initials`、`document_user_activities`、`dify_hub_connections`、`document_asset_bindings`、`document_chunks.index_role`、`document_chunks.source_chunk_id`。
+- 关键接口和脚本认证后可用：workspace dashboard、workspace create/update、KB visibility/collaborators、document permission/share links、workspace migration report、KB chunk settings、document processing、document reprocess、segment management、QA、summaries、search、Dify `/retrieval`、Dify Hub metadata sync。
+- 旧派生数据不会自动迁移。升级旧数据后，管理员需要显式 reprocess 文档，再重建 Milvus 索引。
 
 ## Releases
 
-- [`phase-21`](https://github.com/qdivan/OpenKB/releases/tag/phase-21): Dify External Knowledge 接入体验补强，包含配置向导、Dify 可读 metadata、KB metadata schema 和文档 metadata values。
-- [`phase-22`](https://github.com/qdivan/OpenKB/releases/tag/phase-22): Dify 风格知识库处理与检索配置，包含分块/reprocess、retrieval model、segment 管理、QA/summary 和 Web 信息层级。
-- [`phase-25`](https://github.com/qdivan/OpenKB/releases/tag/phase-25): Phase 23-25 稳定收口，包含 chunk 参数一致性、QA 兼容语义、图片与附件检索、同模型检索兼容性测试和 image-capable smoke 验收。
-- [`phase-26`](https://github.com/qdivan/OpenKB/releases/tag/phase-26): Dify Hub Service API、metadata sync、external dataset 安全管理，以及语雀式个人空间/团队空间路线图收口。
+- [`phase-21`](https://github.com/qdivan/OpenKB/releases/tag/phase-21): Dify External Knowledge 接入体验补强。
+- [`phase-22`](https://github.com/qdivan/OpenKB/releases/tag/phase-22): Dify 风格知识库处理与检索配置。
+- [`phase-25`](https://github.com/qdivan/OpenKB/releases/tag/phase-25): chunk 参数一致性、QA 兼容语义、图片与附件检索底座和同模型检索验证。
+- [`phase-25.1`](https://github.com/qdivan/OpenKB/releases/tag/phase-25.1): Workbench 与 Dify 设置稳定修复。
+- [`phase-26`](https://github.com/qdivan/OpenKB/releases/tag/phase-26): Dify Hub Service API、metadata sync 和语雀式空间路线图。
 
 ## Documentation
 
 - [文档索引](docs/00-index.zh-CN.md)
+- [产品愿景](docs/01-product-vision.zh-CN.md)
 - [权限模型](docs/05-permission-spec.zh-CN.md)
+- [注册与账号](docs/06-auth-registration.zh-CN.md)
+- [数据模型](docs/07-data-model.zh-CN.md)
 - [检索与 Milvus](docs/09-search-rag-milvus-native.zh-CN.md)
-- [Dify Adapter](docs/11-dify-adapter.zh-CN.md)
-- [Dify External Knowledge 配置指南](docs/26-dify-external-knowledge-setup.zh-CN.md)
-- [Dify 配合与兼容性基线](docs/27-dify-knowledge-alignment.zh-CN.md)
-- [Dify 1.14.1 工程审计记录](docs/28-dify-1.14.1-knowledge-gap-audit.zh-CN.md)
-- [Dify 兼容性测试基线](docs/30-dify-parity-v2-analysis.zh-CN.md)
-- [Dify 集成后续路线](docs/31-dify-parity-next-phases.zh-CN.md)
-- [语雀式空间与知识库路线图](docs/32-yuque-space-kb-model.zh-CN.md)
+- [Dify External Knowledge 配置](docs/26-dify-external-knowledge-setup.zh-CN.md)
+- [语雀式空间与知识库模型](docs/32-yuque-space-kb-model.zh-CN.md)
+- [空间迁移与兼容 Runbook](docs/33-workspace-migration-compatibility.zh-CN.md)
 - [本地快速开始](docs/25-local-quickstart.zh-CN.md)
 - [部署说明](docs/13-deployment.zh-CN.md)
 
@@ -176,4 +111,4 @@ pnpm mcp:test
 - 管理员可以管理对象元数据，但不会默认读取所有私有正文；紧急接管必须审计。
 - Dify key 只能访问显式授权的 KB，不能模拟任意用户。
 - 模型、SMTP、导入工具等 secret 只允许实例级加密保存，不做知识库级密钥配置。
-- Segment、QA 和 summary 是检索派生层，不反写 Markdown 正文版本。
+- Segment、QA、summary 和图片/附件索引是检索派生层，不反写 Markdown 正文版本。

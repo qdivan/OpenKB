@@ -157,16 +157,22 @@ model GroupMember {
 }
 
 model Workspace {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id  String   @db.Uuid
-  name       String
-  slug       String
-  created_by String   @db.Uuid
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id              String   @db.Uuid
+  name                   String
+  slug                   String
+  kind                   String   @default("team")
+  personal_owner_user_id String?  @db.Uuid
+  avatar_color           String?
+  avatar_initials        String?
+  created_by             String   @db.Uuid
+  created_at             DateTime @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@unique([tenant_id, slug])
+  @@index([kind])
   @@index([created_by])
+  @@index([personal_owner_user_id])
   @@map("workspaces")
 }
 
@@ -377,6 +383,29 @@ model DocumentVersion {
   @@index([tenant_id])
   @@index([source_file_id])
   @@map("document_versions")
+}
+
+model DocumentUserActivity {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String   @db.Uuid
+  user_id           String   @db.Uuid
+  workspace_id      String   @db.Uuid
+  knowledge_base_id String   @db.Uuid
+  document_id       String   @db.Uuid
+  activity_type     String
+  last_activity_at  DateTime @default(now()) @db.Timestamptz(6)
+  activity_count    Int      @default(1)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenant_id, user_id, document_id, activity_type])
+  @@index([tenant_id])
+  @@index([user_id])
+  @@index([workspace_id])
+  @@index([knowledge_base_id])
+  @@index([document_id])
+  @@index([activity_type, last_activity_at])
+  @@map("document_user_activities")
 }
 
 model Collaborator {

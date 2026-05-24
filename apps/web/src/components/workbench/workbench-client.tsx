@@ -91,6 +91,7 @@ import {
   getKnowledgeBaseTree,
   getDocumentVersion,
   getMe,
+  getWorkspaceDashboard,
   importDocumentQaPairs,
   isUnauthorized,
   listDocumentQaPairs,
@@ -126,7 +127,10 @@ import {
   type ImportJob,
   type ChunkSettings,
   type KnowledgeBase,
-  type Workspace
+  type KnowledgeBaseDocForm,
+  type Workspace,
+  type WorkspaceDashboard,
+  type WorkspaceDashboardDocument
 } from "@/lib/openkb-api";
 
 export type WorkbenchClientProps = {
@@ -145,6 +149,17 @@ type DocumentSideTab =
   | "summary"
   | "versions"
   | "metadata";
+
+const WORKSPACE_AVATAR_COLORS = [
+  "#059669",
+  "#0284C7",
+  "#7C3AED",
+  "#DB2777",
+  "#DC2626",
+  "#D97706",
+  "#4F46E5",
+  "#0F766E"
+];
 type TreeNode = DocumentSummary & { children: TreeNode[] };
 type TreeDropPosition = "before" | "inside" | "after";
 type DocumentMoveUpdate = {
@@ -193,6 +208,7 @@ export function WorkbenchClient({
   const [me, setMe] = useState<AuthMe | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [workspaceDashboard, setWorkspaceDashboard] = useState<WorkspaceDashboard | null>(null);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
@@ -238,11 +254,36 @@ export function WorkbenchClient({
   const [documentMetadataLoading, setDocumentMetadataLoading] = useState(false);
   const [documentMetadataSaving, setDocumentMetadataSaving] = useState(false);
   const [documentSideRefreshKey, setDocumentSideRefreshKey] = useState(0);
+  const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
+  const [createWorkspaceDialogOpen, setCreateWorkspaceDialogOpen] = useState(false);
+  const [createWorkspaceName, setCreateWorkspaceName] = useState("");
+  const [createWorkspaceSlug, setCreateWorkspaceSlug] = useState("");
+  const [createWorkspaceAvatarColor, setCreateWorkspaceAvatarColor] = useState(
+    WORKSPACE_AVATAR_COLORS[0] ?? "#059669"
+  );
+  const [createWorkspaceAvatarInitials, setCreateWorkspaceAvatarInitials] = useState("");
+  const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
+  const [workspaceSettingsName, setWorkspaceSettingsName] = useState("");
+  const [workspaceSettingsSlug, setWorkspaceSettingsSlug] = useState("");
+  const [workspaceSettingsAvatarColor, setWorkspaceSettingsAvatarColor] = useState(
+    WORKSPACE_AVATAR_COLORS[0] ?? "#059669"
+  );
+  const [workspaceSettingsAvatarInitials, setWorkspaceSettingsAvatarInitials] = useState("");
   const [createKbDialogOpen, setCreateKbDialogOpen] = useState(false);
   const [createKbTitle, setCreateKbTitle] = useState("");
   const [createKbDocForm, setCreateKbDocForm] = useState<ChunkSettings["doc_form"]>("text_model");
+  const [createKbWorkspaceId, setCreateKbWorkspaceId] = useState("");
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
+  const personalSpaces = workspaces.filter(
+    (workspace) => workspace.is_personal && workspace.personal_owner_user_id === me?.user.id
+  );
+  const teamSpaces = workspaces.filter((workspace) => workspace.kind === "team");
+  const knowledgeBaseTargetSpaces = workspaces.filter(canCreateKnowledgeBaseInWorkspace);
+  const canManageSelectedWorkspace =
+    selectedWorkspace?.role === "owner" ||
+    selectedWorkspace?.role === "admin" ||
+    selectedWorkspace?.admin_visible === true;
   const selectedKnowledgeBase = knowledgeBases.find(
     (knowledgeBase) => knowledgeBase.id === selectedKnowledgeBaseId
   );
@@ -633,6 +674,7 @@ export function WorkbenchClient({
   const loadKnowledgeBase = useCallback(
     async (knowledgeBaseId: string, preferredDocumentId?: string) => {
       const knowledgeBase = await getKnowledgeBase(knowledgeBaseId);
+      setWorkspaceDashboard(null);
       setSelectedKnowledgeBaseId(knowledgeBase.id);
       setKnowledgeBases((items) =>
         items.some((item) => item.id === knowledgeBase.id) ? items : [knowledgeBase, ...items]
@@ -677,11 +719,17 @@ export function WorkbenchClient({
       setMe(nextMe);
       setWorkspaces(nextWorkspaces);
 
+      const hasExplicitKnowledgeTarget = Boolean(initialKnowledgeBaseId || initialDocumentId);
+      const personalWorkspace =
+        nextWorkspaces.find(
+          (item) => item.is_personal && item.personal_owner_user_id === nextMe.user.id
+        ) ?? null;
       const workspace =
         (requestedKnowledgeBase
           ? (nextWorkspaces.find((item) => item.id === requestedKnowledgeBase.workspace_id) ?? null)
           : null) ??
         nextWorkspaces.find((item) => item.id === initialWorkspaceId) ??
+        personalWorkspace ??
         nextWorkspaces[0] ??
         null;
       setSelectedWorkspaceId(workspace?.id ?? null);
@@ -691,6 +739,7 @@ export function WorkbenchClient({
         if (requestedKnowledgeBase) {
           await loadKnowledgeBase(requestedKnowledgeBase.id, initialDocumentId);
         } else {
+          setWorkspaceDashboard(null);
           setDocuments([]);
           setImportJobs([]);
           clearDocumentState();
@@ -708,12 +757,15 @@ export function WorkbenchClient({
       const knowledgeBase =
         requestedKnowledgeBase ??
         visibleKnowledgeBases.find((item) => item.id === initialKnowledgeBaseId) ??
-        visibleKnowledgeBases[0] ??
         null;
 
-      if (knowledgeBase) {
+      if (knowledgeBase && hasExplicitKnowledgeTarget) {
+        setWorkspaceDashboard(null);
         await loadKnowledgeBase(knowledgeBase.id, initialDocumentId);
       } else {
+        const dashboard = await getWorkspaceDashboard(workspace.id);
+        setWorkspaceDashboard(dashboard);
+        setKnowledgeBases(dashboard.knowledge_bases);
         setSelectedKnowledgeBaseId(null);
         setDocuments([]);
         setImportJobs([]);
@@ -914,7 +966,7 @@ export function WorkbenchClient({
   }, [handleApiError, hasActiveImportJobs, selectedKnowledgeBaseId]);
 
   async function selectWorkspace(workspaceId: string) {
-    if (workspaceId === selectedWorkspaceId) {
+    if (workspaceId === selectedWorkspaceId && !selectedKnowledgeBaseId && !currentDocument) {
       return;
     }
     if (!(await confirmDiscardDraft())) {
@@ -925,19 +977,14 @@ export function WorkbenchClient({
     setMessage("");
     try {
       setSelectedWorkspaceId(workspaceId);
-      const nextKnowledgeBases = await listKnowledgeBases(workspaceId);
-      setKnowledgeBases(nextKnowledgeBases);
-      const firstKnowledgeBase = nextKnowledgeBases[0] ?? null;
-      if (firstKnowledgeBase) {
-        pushWorkbenchUrl(`/app/kb/${firstKnowledgeBase.id}`);
-        await loadKnowledgeBase(firstKnowledgeBase.id);
-      } else {
-        pushWorkbenchUrl(`/app/workspaces/${workspaceId}`);
-        setSelectedKnowledgeBaseId(null);
-        setDocuments([]);
-        setImportJobs([]);
-        clearDocumentState();
-      }
+      const dashboard = await getWorkspaceDashboard(workspaceId);
+      setWorkspaceDashboard(dashboard);
+      setKnowledgeBases(dashboard.knowledge_bases);
+      pushWorkbenchUrl(`/app/workspaces/${workspaceId}`);
+      setSelectedKnowledgeBaseId(null);
+      setDocuments([]);
+      setImportJobs([]);
+      clearDocumentState();
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -1008,6 +1055,27 @@ export function WorkbenchClient({
     }
   }
 
+  function handleKnowledgeBasePermissionUpdated(updated: KnowledgeBase) {
+    setKnowledgeBases((items) =>
+      items.map((knowledgeBase) => (knowledgeBase.id === updated.id ? updated : knowledgeBase))
+    );
+    setWorkspaceDashboard((dashboard) =>
+      dashboard
+        ? {
+            ...dashboard,
+            knowledge_bases: dashboard.knowledge_bases.map((knowledgeBase) =>
+              knowledgeBase.id === updated.id ? { ...knowledgeBase, ...updated } : knowledgeBase
+            )
+          }
+        : dashboard
+    );
+  }
+
+  function handleDocumentPermissionUpdated(updated: DocumentDetail) {
+    setCurrentDocument(updated);
+    setDocuments((items) => updateDocumentInList(items, updated));
+  }
+
   async function selectDocument(documentId: string) {
     if (documentId === currentDocument?.id) {
       return;
@@ -1029,23 +1097,32 @@ export function WorkbenchClient({
   }
 
   async function handleCreateWorkspace() {
-    const name = await dialog.requestTextInput({
-      title: t("Create workspace"),
-      label: t("Workspace name"),
-      placeholder: t("Workspace name"),
-      confirmLabel: t("Create")
-    });
+    setCreateWorkspaceName("");
+    setCreateWorkspaceSlug("");
+    setCreateWorkspaceAvatarColor(WORKSPACE_AVATAR_COLORS[0] ?? "#059669");
+    setCreateWorkspaceAvatarInitials("");
+    setCreateWorkspaceDialogOpen(true);
+  }
+
+  async function handleSubmitCreateWorkspace(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = createWorkspaceName.trim();
     if (!name) {
       return;
     }
-
     setIsBusy(true);
     try {
       const workspace = await createWorkspace({
         name,
-        slug: slugFromTitle(name, "workspace")
+        slug: createWorkspaceSlug.trim() || slugFromTitle(name, "space"),
+        avatar_color: createWorkspaceAvatarColor,
+        avatar_initials: createWorkspaceAvatarInitials.trim() || deriveWorkspaceAvatarInitials(name)
       });
       setWorkspaces((items) => [...items, workspace]);
+      setCreateWorkspaceDialogOpen(false);
+      setCreateWorkspaceName("");
+      setCreateWorkspaceSlug("");
+      setCreateWorkspaceAvatarInitials("");
       await selectWorkspace(workspace.id);
     } catch (error) {
       handleApiError(error);
@@ -1058,22 +1135,49 @@ export function WorkbenchClient({
     if (!selectedWorkspace) {
       return;
     }
-    const name = await dialog.requestTextInput({
-      title: t("Rename workspace"),
-      label: t("Workspace name"),
-      defaultValue: selectedWorkspace.name,
-      confirmLabel: t("Rename")
-    });
-    if (!name || name === selectedWorkspace.name) {
+    if (selectedWorkspace.is_personal) {
+      setMessage(t("Personal space settings are managed by OpenKB in this phase."));
+      return;
+    }
+    setWorkspaceSettingsName(selectedWorkspace.name);
+    setWorkspaceSettingsSlug(selectedWorkspace.slug);
+    setWorkspaceSettingsAvatarColor(
+      selectedWorkspace.avatar_color || pickWorkspaceAvatarColor(selectedWorkspace.name)
+    );
+    setWorkspaceSettingsAvatarInitials(
+      selectedWorkspace.avatar_initials || deriveWorkspaceAvatarInitials(selectedWorkspace.name)
+    );
+    setWorkspaceSettingsOpen(true);
+  }
+
+  async function handleSubmitWorkspaceSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedWorkspace || selectedWorkspace.is_personal) {
+      return;
+    }
+    const name = workspaceSettingsName.trim();
+    if (!name) {
       return;
     }
 
     setIsBusy(true);
     try {
-      const workspace = await updateWorkspace(selectedWorkspace.id, { name });
+      const workspace = await updateWorkspace(selectedWorkspace.id, {
+        name,
+        slug: workspaceSettingsSlug.trim() || slugFromTitle(name, "space"),
+        avatar_color: workspaceSettingsAvatarColor,
+        avatar_initials:
+          workspaceSettingsAvatarInitials.trim() || deriveWorkspaceAvatarInitials(name)
+      });
       setWorkspaces((items) =>
         items.map((item) => (item.id === workspace.id ? { ...item, ...workspace } : item))
       );
+      setWorkspaceDashboard((current) =>
+        current && current.workspace.id === workspace.id
+          ? { ...current, workspace: { ...current.workspace, ...workspace } }
+          : current
+      );
+      setWorkspaceSettingsOpen(false);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -1082,17 +1186,26 @@ export function WorkbenchClient({
   }
 
   async function handleCreateKnowledgeBase() {
-    if (!selectedWorkspaceId) {
+    const targetWorkspace =
+      (selectedWorkspace && canCreateKnowledgeBaseInWorkspace(selectedWorkspace)
+        ? selectedWorkspace
+        : null) ??
+      knowledgeBaseTargetSpaces.find((workspace) => workspace.is_personal) ??
+      knowledgeBaseTargetSpaces[0] ??
+      null;
+    if (!targetWorkspace) {
+      setMessage(t("No writable space is available for creating a knowledge base."));
       return;
     }
     setCreateKbTitle("");
     setCreateKbDocForm("text_model");
+    setCreateKbWorkspaceId(targetWorkspace.id);
     setCreateKbDialogOpen(true);
   }
 
   async function handleSubmitCreateKnowledgeBase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedWorkspaceId) {
+    if (!createKbWorkspaceId) {
       return;
     }
     const title = createKbTitle.trim();
@@ -1103,15 +1216,23 @@ export function WorkbenchClient({
     setIsBusy(true);
     try {
       const knowledgeBase = await createKnowledgeBase({
-        workspace_id: selectedWorkspaceId,
+        workspace_id: createKbWorkspaceId,
         title,
         slug: slugFromTitle(title, "kb"),
         visibility: "workspace",
         doc_form: createKbDocForm
       });
-      setKnowledgeBases((items) => [...items, knowledgeBase]);
+      const dashboard = await getWorkspaceDashboard(knowledgeBase.workspace_id);
+      setSelectedWorkspaceId(dashboard.workspace.id);
+      setWorkspaceDashboard(null);
+      setKnowledgeBases(
+        dashboard.knowledge_bases.some((item) => item.id === knowledgeBase.id)
+          ? dashboard.knowledge_bases
+          : [...dashboard.knowledge_bases, knowledgeBase]
+      );
       setCreateKbDialogOpen(false);
       setCreateKbTitle("");
+      setCreateKbWorkspaceId("");
       await loadKnowledgeBase(knowledgeBase.id);
       pushWorkbenchUrl(`/app/kb/${knowledgeBase.id}`);
     } catch (error) {
@@ -1155,6 +1276,21 @@ export function WorkbenchClient({
     } finally {
       setIsBusy(false);
     }
+  }
+
+  async function handleWorkspaceContentShortcut(kind: "document" | "import") {
+    const firstKnowledgeBase = workspaceDashboard?.knowledge_bases[0] ?? null;
+    if (!firstKnowledgeBase) {
+      setMessage(t("Create a knowledge base before adding documents or importing files."));
+      await handleCreateKnowledgeBase();
+      return;
+    }
+    await selectKnowledgeBase(firstKnowledgeBase.id);
+    setMessage(
+      kind === "document"
+        ? t("Select New document in the document tree to add a page to this knowledge base.")
+        : t("Select Import file in the document tree to import into this knowledge base.")
+    );
   }
 
   async function handleImportClick() {
@@ -1912,20 +2048,19 @@ export function WorkbenchClient({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
-          <PanelHeader title={t("Workspaces")} onAdd={handleCreateWorkspace} disabled={isBusy} />
-          <div className="space-y-1">
-            {workspaces.map((workspace) => (
-              <button
-                key={workspace.id}
-                className={navButtonClass(workspace.id === selectedWorkspaceId)}
-                onClick={() => void selectWorkspace(workspace.id)}
-                type="button"
-              >
-                <BookOpen className="h-4 w-4" />
-                <span className="truncate">{workspace.name}</span>
-              </button>
-            ))}
-          </div>
+          <SpaceSwitcher
+            currentWorkspace={selectedWorkspace}
+            disabled={isBusy}
+            onCreateSpace={handleCreateWorkspace}
+            onSelect={(workspaceId) => {
+              setSpaceSwitcherOpen(false);
+              void selectWorkspace(workspaceId);
+            }}
+            open={spaceSwitcherOpen}
+            personalSpaces={personalSpaces}
+            teamSpaces={teamSpaces}
+            setOpen={setSpaceSwitcherOpen}
+          />
 
           <div className="mt-6">
             <PanelHeader
@@ -1994,7 +2129,7 @@ export function WorkbenchClient({
               className="icon-button"
               disabled={accessTargets.length === 0}
               onClick={() => setActiveWorkbenchPanel("access")}
-              title={t("Collaborators")}
+              title={t("Permissions")}
               type="button"
             >
               <Users className="h-4 w-4" />
@@ -2182,6 +2317,22 @@ export function WorkbenchClient({
                         ) : null}
                         <button
                           className="icon-button"
+                          onClick={() => setActiveWorkbenchPanel("access")}
+                          title={t("Document permissions")}
+                          type="button"
+                        >
+                          <Users className="h-4 w-4" />
+                        </button>
+                        <button
+                          className="icon-button"
+                          onClick={() => setActiveWorkbenchPanel("share")}
+                          title={t("Share document")}
+                          type="button"
+                        >
+                          <Share2 className="h-4 w-4" />
+                        </button>
+                        <button
+                          className="icon-button"
                           disabled={!canEditCurrentDocument || saveState === "saving"}
                           onClick={() => void persistDraft()}
                           title={t("Save now (Ctrl+S)")}
@@ -2358,6 +2509,25 @@ export function WorkbenchClient({
                   onCreateDocument={() => void handleCreateDocument("page")}
                   onError={handleApiError}
                   onOpenDocument={(documentId) => void selectDocument(documentId)}
+                  onOpenPermissions={() => setActiveWorkbenchPanel("access")}
+                />
+              ) : workspaceDashboard ? (
+                <WorkspaceDashboardView
+                  dashboard={workspaceDashboard}
+                  onCreateKnowledgeBase={() => void handleCreateKnowledgeBase()}
+                  onCreateDocumentShortcut={() => void handleWorkspaceContentShortcut("document")}
+                  onImportShortcut={() => void handleWorkspaceContentShortcut("import")}
+                  onOpenMembers={() => setActiveWorkbenchPanel("access")}
+                  onOpenSpaceSettings={() => void handleRenameWorkspace()}
+                  onOpenDocument={(documentId, knowledgeBaseId) => {
+                    void (async () => {
+                      await loadKnowledgeBase(knowledgeBaseId, documentId);
+                      pushWorkbenchUrl(`/app/kb/${knowledgeBaseId}/docs/${documentId}`);
+                    })();
+                  }}
+                  onOpenKnowledgeBase={(knowledgeBaseId) =>
+                    void selectKnowledgeBase(knowledgeBaseId)
+                  }
                 />
               ) : (
                 <EmptyMain
@@ -2422,28 +2592,15 @@ export function WorkbenchClient({
                     onOpenDocument={(documentId) => void selectDocument(documentId)}
                   />
                 ) : (
-                  <KnowledgeBaseSidePanel
-                    contentLocked={selectedKnowledgeBaseContentLocked}
-                    documents={documents}
-                    isBusy={isBusy}
+                  <SpaceContextSidePanel
+                    canManageWorkspace={Boolean(canManageSelectedWorkspace)}
                     knowledgeBase={selectedKnowledgeBase}
-                    onCreateDocument={() => void handleCreateDocument("page")}
-                    onCreateFolder={() => void handleCreateDocument("folder")}
+                    knowledgeBaseCount={knowledgeBases.length}
                     onOpenAccess={() => setActiveWorkbenchPanel("access")}
-                    onOpenShare={() => setActiveWorkbenchPanel("share")}
+                    onOpenSpaceSettings={() => void handleRenameWorkspace()}
                     workspace={selectedWorkspace}
                   />
                 )}
-              </div>
-              <div className="border-t border-zinc-200 px-4 py-4">
-                <button
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-                  onClick={() => void handleRenameWorkspace()}
-                  type="button"
-                >
-                  <Pencil className="h-4 w-4" />
-                  {t("Rename workspace")}
-                </button>
               </div>
             </aside>
           </div>
@@ -2451,8 +2608,12 @@ export function WorkbenchClient({
       </section>
       {activeWorkbenchPanel === "access" && accessTargets.length > 0 ? (
         <AccessPanel
+          document={currentDocument}
           initialTargetType={defaultAccessTargetType}
+          knowledgeBase={selectedKnowledgeBase}
           onClose={() => setActiveWorkbenchPanel(null)}
+          onDocumentUpdated={handleDocumentPermissionUpdated}
+          onKnowledgeBaseUpdated={handleKnowledgeBasePermissionUpdated}
           targets={accessTargets}
         />
       ) : null}
@@ -2471,7 +2632,57 @@ export function WorkbenchClient({
           onDocFormChange={setCreateKbDocForm}
           onSubmit={handleSubmitCreateKnowledgeBase}
           onTitleChange={setCreateKbTitle}
+          onWorkspaceChange={setCreateKbWorkspaceId}
           title={createKbTitle}
+          workspaceId={createKbWorkspaceId}
+          workspaces={knowledgeBaseTargetSpaces}
+        />
+      ) : null}
+      {createWorkspaceDialogOpen ? (
+        <WorkspaceFormDialog
+          avatarColor={createWorkspaceAvatarColor}
+          avatarInitials={createWorkspaceAvatarInitials}
+          disabled={isBusy}
+          name={createWorkspaceName}
+          onAvatarColorChange={setCreateWorkspaceAvatarColor}
+          onAvatarInitialsChange={setCreateWorkspaceAvatarInitials}
+          onClose={() => setCreateWorkspaceDialogOpen(false)}
+          onNameChange={(value) => {
+            setCreateWorkspaceName(value);
+            if (!createWorkspaceSlug.trim()) {
+              setCreateWorkspaceSlug(slugFromTitle(value, "space"));
+            }
+            if (!createWorkspaceAvatarInitials.trim()) {
+              setCreateWorkspaceAvatarInitials(deriveWorkspaceAvatarInitials(value));
+            }
+          }}
+          onSlugChange={setCreateWorkspaceSlug}
+          onSubmit={handleSubmitCreateWorkspace}
+          slug={createWorkspaceSlug}
+          subtitle={t("Team spaces are for shared knowledge bases and members.")}
+          title={t("Create space")}
+        />
+      ) : null}
+      {workspaceSettingsOpen && selectedWorkspace ? (
+        <WorkspaceFormDialog
+          avatarColor={workspaceSettingsAvatarColor}
+          avatarInitials={workspaceSettingsAvatarInitials}
+          disabled={isBusy}
+          name={workspaceSettingsName}
+          onAvatarColorChange={setWorkspaceSettingsAvatarColor}
+          onAvatarInitialsChange={setWorkspaceSettingsAvatarInitials}
+          onClose={() => setWorkspaceSettingsOpen(false)}
+          onNameChange={(value) => {
+            setWorkspaceSettingsName(value);
+            if (!workspaceSettingsAvatarInitials.trim()) {
+              setWorkspaceSettingsAvatarInitials(deriveWorkspaceAvatarInitials(value));
+            }
+          }}
+          onSlugChange={setWorkspaceSettingsSlug}
+          onSubmit={handleSubmitWorkspaceSettings}
+          slug={workspaceSettingsSlug}
+          subtitle={t("Update the team space name, slug, and avatar.")}
+          title={t("Space settings")}
         />
       ) : null}
     </main>
@@ -2504,6 +2715,279 @@ function PanelHeader({
   );
 }
 
+function SpaceSwitcher({
+  currentWorkspace,
+  disabled,
+  onCreateSpace,
+  onSelect,
+  open,
+  personalSpaces,
+  setOpen,
+  teamSpaces
+}: {
+  currentWorkspace: Workspace | undefined;
+  disabled?: boolean;
+  onCreateSpace: () => void;
+  onSelect: (workspaceId: string) => void;
+  open: boolean;
+  personalSpaces: Workspace[];
+  setOpen: (open: boolean) => void;
+  teamSpaces: Workspace[];
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="relative">
+      <button
+        className="flex w-full items-center gap-2 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-left text-sm hover:bg-zinc-50"
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+        type="button"
+      >
+        <WorkspaceAvatar workspace={currentWorkspace} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium text-zinc-800">
+            {currentWorkspace?.name ?? t("Select space")}
+          </span>
+          <span className="block truncate text-xs text-zinc-500">
+            {currentWorkspace?.is_personal ? t("Personal space") : t("Team space")}
+          </span>
+        </span>
+        <ChevronDown className="h-4 w-4 text-zinc-400" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-12 z-40 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+          <SpaceSwitcherGroup
+            currentWorkspaceId={currentWorkspace?.id}
+            emptyText={t("No personal space yet")}
+            items={personalSpaces}
+            onSelect={onSelect}
+            title={t("Personal")}
+          />
+          <div className="my-2 h-px bg-zinc-100" />
+          <SpaceSwitcherGroup
+            currentWorkspaceId={currentWorkspace?.id}
+            emptyText={t("No team spaces yet")}
+            items={teamSpaces}
+            onSelect={onSelect}
+            title={t("Spaces")}
+          />
+          <button
+            className="mt-2 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+            onClick={() => {
+              setOpen(false);
+              onCreateSpace();
+            }}
+            type="button"
+          >
+            <Plus className="h-4 w-4" />
+            {t("Create space")}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SpaceSwitcherGroup({
+  currentWorkspaceId,
+  emptyText,
+  items,
+  onSelect,
+  title
+}: {
+  currentWorkspaceId?: string;
+  emptyText: string;
+  items: Workspace[];
+  onSelect: (workspaceId: string) => void;
+  title: string;
+}) {
+  return (
+    <div>
+      <p className="px-2 pb-1 text-xs font-semibold uppercase text-zinc-500">{title}</p>
+      {items.length > 0 ? (
+        <div className="space-y-1">
+          {items.map((workspace) => (
+            <button
+              key={workspace.id}
+              className={navButtonClass(workspace.id === currentWorkspaceId)}
+              onClick={() => onSelect(workspace.id)}
+              type="button"
+            >
+              <WorkspaceAvatar small workspace={workspace} />
+              <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+              {workspace.id === currentWorkspaceId ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-md px-2 py-2 text-xs text-zinc-500">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
+function WorkspaceAvatar({
+  small = false,
+  workspace
+}: {
+  small?: boolean;
+  workspace: Workspace | undefined;
+}) {
+  const name = workspace?.name ?? "OpenKB";
+  const color = workspace?.avatar_color || pickWorkspaceAvatarColor(name);
+  const initials = workspace?.avatar_initials || deriveWorkspaceAvatarInitials(name);
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-md font-semibold text-white ${
+        small ? "h-6 w-6 text-[10px]" : "h-8 w-8 text-xs"
+      }`}
+      style={{ backgroundColor: color }}
+    >
+      {initials}
+    </span>
+  );
+}
+
+function WorkspaceFormDialog({
+  avatarColor,
+  avatarInitials,
+  disabled,
+  name,
+  onAvatarColorChange,
+  onAvatarInitialsChange,
+  onClose,
+  onNameChange,
+  onSlugChange,
+  onSubmit,
+  slug,
+  subtitle,
+  title
+}: {
+  avatarColor: string;
+  avatarInitials: string;
+  disabled: boolean;
+  name: string;
+  onAvatarColorChange: (value: string) => void;
+  onAvatarInitialsChange: (value: string) => void;
+  onClose: () => void;
+  onNameChange: (value: string) => void;
+  onSlugChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  slug: string;
+  subtitle: string;
+  title: string;
+}) {
+  const { t } = useI18n();
+  const previewWorkspace = {
+    id: "preview",
+    tenant_id: "preview",
+    name: name || title,
+    slug,
+    kind: "team" as const,
+    personal_owner_user_id: null,
+    is_personal: false,
+    avatar_color: avatarColor,
+    avatar_initials: avatarInitials || deriveWorkspaceAvatarInitials(name || title),
+    created_at: "",
+    updated_at: ""
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <form
+        className="w-full max-w-lg rounded-md border border-zinc-200 bg-white p-5 shadow-xl"
+        onSubmit={onSubmit}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">{title}</h2>
+            <p className="mt-1 text-sm text-zinc-500">{subtitle}</p>
+          </div>
+          <button className="icon-button" disabled={disabled} onClick={onClose} type="button">
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-[auto_minmax(0,1fr)]">
+          <div className="flex flex-col items-center gap-2">
+            <WorkspaceAvatar workspace={previewWorkspace} />
+            <span className="text-xs text-zinc-500">{t("Space avatar")}</span>
+          </div>
+          <div className="grid gap-3">
+            <label className="grid gap-1 text-sm">
+              <span className="font-medium">{t("Space name")}</span>
+              <input
+                className="h-10 rounded-md border border-zinc-200 px-3"
+                disabled={disabled}
+                onChange={(event) => onNameChange(event.target.value)}
+                placeholder={t("Space name")}
+                value={name}
+              />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="font-medium">slug</span>
+              <input
+                className="h-10 rounded-md border border-zinc-200 px-3"
+                disabled={disabled}
+                onChange={(event) => onSlugChange(event.target.value)}
+                placeholder="team-space"
+                value={slug}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">{t("Avatar initials")}</span>
+            <input
+              className="h-10 rounded-md border border-zinc-200 px-3"
+              disabled={disabled}
+              maxLength={4}
+              onChange={(event) => onAvatarInitialsChange(event.target.value)}
+              value={avatarInitials}
+            />
+          </label>
+          <div className="grid gap-1 text-sm">
+            <span className="font-medium">{t("Avatar color")}</span>
+            <div className="flex h-10 items-center gap-2">
+              {WORKSPACE_AVATAR_COLORS.map((color) => (
+                <button
+                  key={color}
+                  aria-label={color}
+                  className={`h-7 w-7 rounded-full border-2 ${
+                    avatarColor === color ? "border-zinc-900" : "border-white"
+                  } shadow-sm`}
+                  disabled={disabled}
+                  onClick={() => onAvatarColorChange(color)}
+                  style={{ backgroundColor: color }}
+                  type="button"
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            disabled={disabled}
+            onClick={onClose}
+            type="button"
+          >
+            {t("Cancel")}
+          </button>
+          <button
+            className="rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+            disabled={disabled || !name.trim()}
+            type="submit"
+          >
+            {t("Save")}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function CreateKnowledgeBaseDialog({
   disabled,
   docForm,
@@ -2511,7 +2995,10 @@ function CreateKnowledgeBaseDialog({
   onDocFormChange,
   onSubmit,
   onTitleChange,
-  title
+  onWorkspaceChange,
+  title,
+  workspaceId,
+  workspaces
 }: {
   disabled: boolean;
   docForm: ChunkSettings["doc_form"];
@@ -2520,8 +3007,13 @@ function CreateKnowledgeBaseDialog({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onTitleChange: (value: string) => void;
   title: string;
+  onWorkspaceChange: (value: string) => void;
+  workspaceId: string;
+  workspaces: Workspace[];
 }) {
   const { t } = useI18n();
+  const personalWorkspaces = workspaces.filter((workspace) => workspace.is_personal);
+  const teamWorkspaces = workspaces.filter((workspace) => workspace.kind === "team");
   const options: Array<{
     docForm: ChunkSettings["doc_form"];
     icon: ReactNode;
@@ -2586,6 +3078,38 @@ function CreateKnowledgeBaseDialog({
           />
         </label>
 
+        <label className="mt-4 block text-sm">
+          <span className="mb-1 block font-medium text-zinc-600">{t("Belonging space")}</span>
+          <select
+            className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-500"
+            disabled={disabled}
+            onChange={(event) => onWorkspaceChange(event.target.value)}
+            value={workspaceId}
+          >
+            {personalWorkspaces.length > 0 ? (
+              <optgroup label={t("Personal")}>
+                {personalWorkspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            {teamWorkspaces.length > 0 ? (
+              <optgroup label={t("Spaces")}>
+                {teamWorkspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+          </select>
+          <span className="mt-1 block text-xs leading-5 text-zinc-500">
+            {t("Knowledge bases belong to one personal or team space.")}
+          </span>
+        </label>
+
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           {options.map((option) => {
             const selected = docForm === option.docForm;
@@ -2630,7 +3154,7 @@ function CreateKnowledgeBaseDialog({
           </button>
           <button
             className="inline-flex h-9 items-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
-            disabled={disabled || !title.trim()}
+            disabled={disabled || !title.trim() || !workspaceId}
             type="submit"
           >
             {t("Create")}
@@ -2788,162 +3312,88 @@ function TreeGuides({ depth }: { depth: number }) {
   );
 }
 
-function KnowledgeBaseSidePanel({
-  contentLocked,
-  documents,
-  isBusy,
+function SpaceContextSidePanel({
+  canManageWorkspace,
   knowledgeBase,
-  onCreateDocument,
-  onCreateFolder,
+  knowledgeBaseCount,
   onOpenAccess,
-  onOpenShare,
+  onOpenSpaceSettings,
   workspace
 }: {
-  contentLocked: boolean;
-  documents: DocumentSummary[];
-  isBusy: boolean;
+  canManageWorkspace: boolean;
   knowledgeBase: KnowledgeBase | undefined;
-  onCreateDocument: () => void;
-  onCreateFolder: () => void;
+  knowledgeBaseCount: number;
   onOpenAccess: () => void;
-  onOpenShare: () => void;
+  onOpenSpaceSettings: () => void;
   workspace: Workspace | undefined;
 }) {
   const { t } = useI18n();
-  const pages = documents.filter((document) => document.type === "page").length;
-  const folders = documents.filter((document) => document.type === "folder").length;
-  const needsReprocess = documents.filter(
-    (document) => document.processing_status === "needs_reprocess"
-  ).length;
-  const canCreate = Boolean(knowledgeBase) && !contentLocked && !isBusy;
 
   return (
-    <div className="min-h-0">
+    <div className="min-h-0 overflow-y-auto">
       <div className="border-b border-zinc-200 px-4 py-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
-            <BookOpen className="h-4 w-4" />
-          </div>
+          {workspace ? <WorkspaceAvatar workspace={workspace} /> : null}
           <div className="min-w-0">
             <p className="text-sm font-semibold text-zinc-950">
-              {knowledgeBase?.title ?? t("No knowledge base selected")}
+              {workspace?.name ?? t("No workspace selected")}
             </p>
             <p className="mt-1 text-xs text-zinc-500">
-              {workspace?.name ?? t("No workspace selected")}
+              {workspace?.is_personal ? t("Personal space") : t("Team space")}
             </p>
           </div>
         </div>
         <p className="mt-3 text-xs leading-5 text-zinc-500">
           {t(
-            "This side panel follows the knowledge base home. Select a page to view document outline, segments, QA, summary, metadata, and versions."
+            "This side panel shows the current space context. Document outline, metadata, and versions appear only after opening a document."
           )}
         </p>
       </div>
 
-      {knowledgeBase ? (
-        <div className="space-y-4 px-4 py-4">
-          <div className="grid grid-cols-2 gap-2">
-            <KnowledgeBaseSideMetric
-              icon={<FileText className="h-4 w-4" />}
-              label={t("Pages")}
-              value={pages}
-            />
-            <KnowledgeBaseSideMetric
-              icon={<Folder className="h-4 w-4" />}
-              label={t("Folders")}
-              value={folders}
-            />
-          </div>
-
-          <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
-            <div className="grid gap-2">
-              <SnapshotRow label={t("Visibility")} value={t(knowledgeBase.visibility)} />
-              <SnapshotRow label={t("Status")} value={t(knowledgeBase.status)} />
-              <SnapshotRow label={t("Role")} value={t(knowledgeBase.role ?? "-")} />
-              <SnapshotRow
-                label={t("Needs reprocess")}
-                value={t("{count} documents", { count: needsReprocess })}
-              />
-            </div>
-          </div>
-
-          {contentLocked ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-              <p className="font-semibold">{t("Admin visible, content locked")}</p>
-              <p className="mt-1">
-                {t(
-                  "You can manage metadata here, but private content requires an audited takeover before document panels are available."
-                )}
-              </p>
-            </div>
+      <div className="space-y-4 px-4 py-4">
+        <div className="grid gap-2 rounded-md border border-zinc-200 bg-white p-3 text-xs">
+          <SnapshotRow
+            label={t("Space type")}
+            value={
+              workspace ? (workspace.is_personal ? t("Personal space") : t("Team space")) : "-"
+            }
+          />
+          <SnapshotRow label={t("Role")} value={t(workspace?.role ?? "-")} />
+          <SnapshotRow
+            label={t("Knowledge bases")}
+            value={t("{count} items", { count: knowledgeBaseCount })}
+          />
+          {knowledgeBase ? (
+            <SnapshotRow label={t("Current knowledge base")} value={knowledgeBase.title} />
           ) : null}
+        </div>
 
+        {workspace?.is_personal ? (
+          <p className="rounded-md bg-zinc-100 px-3 py-2 text-xs leading-5 text-zinc-500">
+            {t("Personal space settings are managed by OpenKB in this phase.")}
+          </p>
+        ) : (
           <div className="grid gap-2">
             <button
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-zinc-300"
-              disabled={!canCreate}
-              onClick={onCreateDocument}
-              type="button"
-            >
-              <Plus className="h-4 w-4" />
-              {t("New document")}
-            </button>
-            <button
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:text-zinc-300"
-              disabled={!canCreate}
-              onClick={onCreateFolder}
-              type="button"
-            >
-              <FolderPlus className="h-4 w-4" />
-              {t("New folder")}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
               onClick={onOpenAccess}
               type="button"
             >
-              <Users className="h-3.5 w-3.5" />
-              {t("Access")}
+              <Users className="h-4 w-4" />
+              {t("Members")}
             </button>
             <button
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-              onClick={onOpenShare}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:text-zinc-300"
+              disabled={!workspace || !canManageWorkspace}
+              onClick={onOpenSpaceSettings}
               type="button"
             >
-              <Share2 className="h-3.5 w-3.5" />
-              {t("Share")}
+              <Pencil className="h-4 w-4" />
+              {t("Space settings")}
             </button>
           </div>
-        </div>
-      ) : (
-        <EmptyPanel
-          title={t("No knowledge base selected")}
-          action={t("Select or create a knowledge base from the left rail.")}
-        />
-      )}
-    </div>
-  );
-}
-
-function KnowledgeBaseSideMetric({
-  icon,
-  label,
-  value
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number;
-}) {
-  return (
-    <div className="rounded-md border border-zinc-200 bg-white p-3">
-      <div className="flex items-center gap-2 text-xs text-zinc-500">
-        {icon}
-        {label}
+        )}
       </div>
-      <p className="mt-2 text-xl font-semibold text-zinc-950">{value}</p>
     </div>
   );
 }
@@ -5332,6 +5782,295 @@ function ModeSwitch({
   );
 }
 
+function WorkspaceDashboardView({
+  dashboard,
+  onCreateDocumentShortcut,
+  onCreateKnowledgeBase,
+  onImportShortcut,
+  onOpenMembers,
+  onOpenDocument,
+  onOpenKnowledgeBase,
+  onOpenSpaceSettings
+}: {
+  dashboard: WorkspaceDashboard;
+  onCreateDocumentShortcut: () => void;
+  onCreateKnowledgeBase: () => void;
+  onImportShortcut: () => void;
+  onOpenMembers: () => void;
+  onOpenDocument: (documentId: string, knowledgeBaseId: string) => void;
+  onOpenKnowledgeBase: (knowledgeBaseId: string) => void;
+  onOpenSpaceSettings: () => void;
+}) {
+  const { t } = useI18n();
+  const workspace = dashboard.workspace;
+  const canManageWorkspace =
+    workspace.role === "owner" || workspace.role === "admin" || workspace.admin_visible;
+  return (
+    <div className="h-full overflow-y-auto bg-white px-5 py-5">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-200 pb-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <WorkspaceAvatar workspace={workspace} />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-2xl font-semibold">{workspace.name}</h1>
+                <span
+                  className={
+                    workspace.is_personal
+                      ? "rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
+                      : "rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
+                  }
+                >
+                  {workspace.is_personal ? t("Personal space") : t("Team space")}
+                </span>
+                {workspace.role ? (
+                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+                    {t("Role")}: {workspace.role}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm text-zinc-500">
+                {workspace.is_personal
+                  ? t("Your personal space keeps your own knowledge bases and recent activity.")
+                  : t("Team spaces collect shared knowledge bases and collaboration activity.")}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {!workspace.is_personal ? (
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={onOpenMembers}
+                type="button"
+              >
+                <Users className="h-4 w-4" />
+                {t("Members")}
+              </button>
+            ) : null}
+            {!workspace.is_personal && canManageWorkspace ? (
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={onOpenSpaceSettings}
+                type="button"
+              >
+                <Pencil className="h-4 w-4" />
+                {t("Space settings")}
+              </button>
+            ) : null}
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700"
+              onClick={onCreateKnowledgeBase}
+              type="button"
+            >
+              <Plus className="h-4 w-4" />
+              {t("New knowledge base")}
+            </button>
+          </div>
+        </div>
+
+        <section className="mt-5 grid gap-3 md:grid-cols-3">
+          <WorkspaceQuickAction
+            description={t("Create a knowledge base in this space.")}
+            icon={<BookOpen className="h-4 w-4" />}
+            onClick={onCreateKnowledgeBase}
+            title={t("New knowledge base")}
+          />
+          <WorkspaceQuickAction
+            description={t("Add a page after choosing a target knowledge base.")}
+            icon={<FileText className="h-4 w-4" />}
+            onClick={onCreateDocumentShortcut}
+            title={t("New document")}
+          />
+          <WorkspaceQuickAction
+            description={t("Import files into a target knowledge base.")}
+            icon={<Upload className="h-4 w-4" />}
+            onClick={onImportShortcut}
+            title={t("Import file")}
+          />
+        </section>
+
+        <section className="mt-5">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold">
+              {workspace.is_personal ? t("My knowledge bases") : t("Space knowledge bases")}
+            </h2>
+            <span className="text-xs text-zinc-500">
+              {dashboard.counts.knowledge_bases} {t("items")}
+            </span>
+          </div>
+          {dashboard.knowledge_bases.length > 0 ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {dashboard.knowledge_bases.map((knowledgeBase) => (
+                <button
+                  key={knowledgeBase.id}
+                  className="rounded-md border border-zinc-200 bg-white p-4 text-left hover:border-emerald-300 hover:bg-emerald-50/40"
+                  onClick={() => onOpenKnowledgeBase(knowledgeBase.id)}
+                  type="button"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-emerald-600" />
+                    <span className="min-w-0 truncate text-sm font-semibold">
+                      {knowledgeBase.title}
+                    </span>
+                    <span className="ml-auto shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600">
+                      {t(knowledgeBaseDocFormLabel(knowledgeBase.doc_form))}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-zinc-500">
+                    <span className="rounded-md bg-zinc-50 px-2 py-1">
+                      {t("Pages")}: {knowledgeBase.page_count}
+                    </span>
+                    <span className="rounded-md bg-zinc-50 px-2 py-1">
+                      {t("Folders")}: {knowledgeBase.folder_count}
+                    </span>
+                    <span className="rounded-md bg-zinc-50 px-2 py-1">
+                      {t("Needs reprocess")}: {knowledgeBase.needs_reprocess_count}
+                    </span>
+                  </div>
+                  <p className="mt-2 truncate text-xs text-zinc-500">
+                    {t("Visibility")}: {t(knowledgeBase.visibility)} · {t("Status")}:{" "}
+                    {t(knowledgeBase.status)}
+                  </p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-8 text-center">
+              <BookOpen className="mx-auto h-8 w-8 text-zinc-400" />
+              <p className="mt-3 text-sm font-medium">{t("No knowledge bases in this space")}</p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {t("Create a knowledge base to start organizing documents.")}
+              </p>
+              <button
+                className="mt-4 inline-flex h-9 items-center gap-2 rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700"
+                onClick={onCreateKnowledgeBase}
+                type="button"
+              >
+                <Plus className="h-4 w-4" />
+                {t("New knowledge base")}
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="mt-6 rounded-md border border-zinc-200 bg-white">
+          <div className="border-b border-zinc-100 px-4 py-3">
+            <h2 className="text-sm font-semibold">{t("Recent content")}</h2>
+          </div>
+          <div className="grid gap-0 xl:grid-cols-2">
+            <WorkspaceActivityList
+              emptyText={t("Documents you edit will appear here.")}
+              items={dashboard.recent_edited}
+              onOpenDocument={onOpenDocument}
+              title={t("Recently edited")}
+            />
+            <WorkspaceActivityList
+              emptyText={t("Documents you open will appear here.")}
+              items={dashboard.recent_viewed}
+              onOpenDocument={onOpenDocument}
+              title={t("Recently viewed")}
+            />
+          </div>
+        </section>
+
+        <section className="mt-6 grid gap-4 xl:grid-cols-2">
+          <WorkspaceEmptyFeature
+            description={t("Favorites are reserved for a later phase.")}
+            title={t("Favorites")}
+          />
+          <WorkspaceEmptyFeature
+            description={t("Comments are reserved for a later phase.")}
+            title={t("Comments")}
+          />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceQuickAction({
+  description,
+  icon,
+  onClick,
+  title
+}: {
+  description: string;
+  icon: ReactNode;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      className="rounded-md border border-zinc-200 bg-white p-4 text-left transition hover:border-emerald-300 hover:bg-emerald-50/40"
+      onClick={onClick}
+      type="button"
+    >
+      <span className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+          {icon}
+        </span>
+        {title}
+      </span>
+      <span className="mt-2 block text-xs leading-5 text-zinc-500">{description}</span>
+    </button>
+  );
+}
+
+function WorkspaceActivityList({
+  emptyText,
+  items,
+  onOpenDocument,
+  title
+}: {
+  emptyText: string;
+  items: WorkspaceDashboardDocument[];
+  onOpenDocument: (documentId: string, knowledgeBaseId: string) => void;
+  title: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="bg-white">
+      <div className="border-b border-zinc-100 px-4 py-3">
+        <h2 className="text-sm font-semibold">{title}</h2>
+      </div>
+      {items.length > 0 ? (
+        <div className="divide-y divide-zinc-100">
+          {items.map((item) => (
+            <button
+              key={`${title}:${item.id}`}
+              className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-zinc-50"
+              onClick={() => onOpenDocument(item.id, item.knowledge_base_id)}
+              type="button"
+            >
+              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-zinc-800">
+                  {item.title}
+                </span>
+                <span className="mt-0.5 block truncate text-xs text-zinc-500">
+                  {item.knowledge_base_title ?? t("Knowledge base")} ·{" "}
+                  {formatDateTime(item.activity_at)}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="px-4 py-8 text-center text-sm text-zinc-500">{emptyText}</div>
+      )}
+    </div>
+  );
+}
+
+function WorkspaceEmptyFeature({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-5">
+      <p className="text-sm font-semibold text-zinc-700">{title}</p>
+      <p className="mt-1 text-xs text-zinc-500">{description}</p>
+    </div>
+  );
+}
+
 function EmptyMain({
   hasKnowledgeBase,
   onCreate
@@ -5525,6 +6264,22 @@ function toggleSet(items: Set<string>, id: string): Set<string> {
 
 function canEditDocumentRole(role: string | null | undefined): boolean {
   return role === "owner" || role === "manager" || role === "editor";
+}
+
+function canCreateKnowledgeBaseInWorkspace(workspace: Workspace): boolean {
+  return (
+    workspace.role === "owner" || workspace.role === "admin" || workspace.admin_visible === true
+  );
+}
+
+function knowledgeBaseDocFormLabel(docForm: KnowledgeBaseDocForm | string | null | undefined) {
+  if (docForm === "hierarchical_model") {
+    return "Parent-child knowledge base";
+  }
+  if (docForm === "qa_model") {
+    return "QA knowledge base";
+  }
+  return "Segment knowledge base";
 }
 
 function navButtonClass(active: boolean): string {
@@ -5757,6 +6512,17 @@ function slugFromTitle(title: string, fallback: string): string {
     .replace(/^-+|-+$/g, "");
 
   return slug || `${fallback}-${Date.now()}`;
+}
+
+function deriveWorkspaceAvatarInitials(name: string): string {
+  const chars = Array.from(name.trim()).filter((char) => /\S/u.test(char));
+  return chars.slice(0, 2).join("").toUpperCase() || "OK";
+}
+
+function pickWorkspaceAvatarColor(name: string): string {
+  const chars = Array.from(name || "OpenKB");
+  const hash = chars.reduce((sum, char) => sum + (char.codePointAt(0) ?? 0), 0);
+  return WORKSPACE_AVATAR_COLORS[hash % WORKSPACE_AVATAR_COLORS.length] ?? "#059669";
 }
 
 function delay(ms: number): Promise<void> {

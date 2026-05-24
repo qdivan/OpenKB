@@ -72,5 +72,10 @@ describe("i18n helpers", () => {
     expect(translate("zh-CN", "Workspace name")).toBe("工作区名称");
     expect(translate("zh-CN", "Collaborators")).toBe("协作者");
     expect(translate("zh-CN", "External Knowledge ID")).toBe("外部知识库 ID");
+    expect(translate("zh-CN", "Knowledge base permissions")).toBe("知识库权限");
+    expect(translate("zh-CN", "Only collaborators")).toBe("仅协作者");
+    expect(translate("zh-CN", "Space members")).toBe("空间成员");
+    expect(translate("zh-CN", "Document permission")).toBe("文档权限");
+    expect(translate("zh-CN", "Inherit knowledge base permission")).toBe("继承知识库权限");
   });
 });

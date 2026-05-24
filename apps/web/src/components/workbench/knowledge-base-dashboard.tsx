@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  ShieldCheck,
   Settings2,
   Trash2
 } from "lucide-react";
@@ -51,13 +52,15 @@ export function KnowledgeBaseDashboard({
   knowledgeBaseId,
   onCreateDocument,
   onError,
-  onOpenDocument
+  onOpenDocument,
+  onOpenPermissions
 }: {
   documents: DocumentSummary[];
   knowledgeBaseId: string;
   onCreateDocument: () => void;
   onError: (error: unknown) => void;
   onOpenDocument: (documentId: string) => void;
+  onOpenPermissions: () => void;
 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<DashboardTab>("overview");
@@ -311,6 +314,14 @@ export function KnowledgeBaseDashboard({
           >
             <RefreshCw className="h-4 w-4" />
             {t("Refresh")}
+          </button>
+          <button
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-800"
+            onClick={onOpenPermissions}
+            type="button"
+          >
+            <ShieldCheck className="h-4 w-4" />
+            {t("Permissions")}
           </button>
           <button
             className="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"

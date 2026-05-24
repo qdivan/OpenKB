@@ -1,6 +1,6 @@
 "use client";
 
-import { LoaderCircle, RefreshCw, Save, ShieldCheck } from "lucide-react";
+import { Edit3, LoaderCircle, RefreshCw, Save, ShieldCheck, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
@@ -21,6 +21,10 @@ export function AuthSettingsAdminClient() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<AdminAuthSettings | null>(null);
   const [domains, setDomains] = useState("");
+  const [domainRestrictionEnabled, setDomainRestrictionEnabled] = useState(false);
+  const [domainDialogOpen, setDomainDialogOpen] = useState(false);
+  const [domainDraft, setDomainDraft] = useState("");
+  const [domainError, setDomainError] = useState("");
   const [scope, setScope] = useState<"instance" | "tenant">("tenant");
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -37,6 +41,10 @@ export function AuthSettingsAdminClient() {
       const next = await getAdminAuthSettings({ scope });
       setSettings(next);
       setDomains(next.allowed_email_domains.join(", "));
+      setDomainRestrictionEnabled(next.allowed_email_domains.length > 0);
+      setDomainDialogOpen(false);
+      setDomainDraft("");
+      setDomainError("");
     } catch (error) {
       handleError(error);
     } finally {
@@ -52,21 +60,25 @@ export function AuthSettingsAdminClient() {
     setIsSaving(true);
     setMessage("");
     try {
+      const allowedDomains = domainRestrictionEnabled ? parseAllowedEmailDomains(domains) : [];
+      if (domainRestrictionEnabled && allowedDomains.length === 0) {
+        setMessage(t("Add at least one allowed email domain before saving."));
+        openDomainDialog();
+        return;
+      }
       const saved = await updateAdminAuthSettings({
         scope,
         registration_enabled: settings.registration_enabled,
         email_verification_required: settings.email_verification_required,
         default_signup_status: settings.default_signup_status,
         invited_user_auto_active: settings.invited_user_auto_active,
-        allowed_email_domains: domains
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean),
+        allowed_email_domains: allowedDomains,
         invite_required: settings.invite_required,
         first_user_becomes_admin: settings.first_user_becomes_admin
       });
       setSettings(saved);
       setDomains(saved.allowed_email_domains.join(", "));
+      setDomainRestrictionEnabled(saved.allowed_email_domains.length > 0);
       setMessage(t("Auth settings saved."));
     } catch (error) {
       handleError(error);
@@ -90,6 +102,42 @@ export function AuthSettingsAdminClient() {
   function patch(next: Partial<AdminAuthSettings>) {
     setSettings((current) => (current ? { ...current, ...next } : current));
   }
+
+  function openDomainDialog() {
+    setDomainDraft(domains);
+    setDomainError("");
+    setDomainDialogOpen(true);
+  }
+
+  function closeDomainDialog() {
+    setDomainDialogOpen(false);
+    setDomainError("");
+  }
+
+  function saveDomainDialog() {
+    try {
+      const nextDomains = parseAllowedEmailDomains(domainDraft);
+      if (nextDomains.length === 0) {
+        setDomainError(t("Add at least one allowed email domain."));
+        return;
+      }
+      setDomains(nextDomains.join(", "));
+      setDomainRestrictionEnabled(true);
+      setDomainDialogOpen(false);
+      setDomainError("");
+    } catch (error) {
+      setDomainError(error instanceof Error ? error.message : t("Invalid email domain."));
+    }
+  }
+
+  function toggleDomainRestriction(enabled: boolean) {
+    setDomainRestrictionEnabled(enabled);
+    if (enabled && parseAllowedEmailDomainsLenient(domains).length === 0) {
+      openDomainDialog();
+    }
+  }
+
+  const domainItems = parseAllowedEmailDomainsLenient(domains);
 
   return (
     <div className="space-y-4">
@@ -178,17 +226,60 @@ export function AuthSettingsAdminClient() {
               </label>
             </div>
 
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-zinc-700">
-                {t("Allowed email domains")}
-              </span>
-              <input
-                className={inputClass}
-                onChange={(event) => setDomains(event.target.value)}
-                placeholder="example.com, openkb.local"
-                value={domains}
-              />
-            </label>
+            <div className="rounded-md border border-zinc-200 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <label className="flex min-w-0 flex-1 items-start gap-3 text-sm">
+                  <input
+                    checked={domainRestrictionEnabled}
+                    className="mt-1 h-4 w-4 accent-emerald-600"
+                    onChange={(event) => toggleDomainRestriction(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className="min-w-0">
+                    <span className="block font-medium text-zinc-800">
+                      {t("Restrict registration to allowed email domains")}
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-zinc-500">
+                      {t(
+                        "Only users whose email domain is in the whitelist can self-register. Admin-created users are not affected."
+                      )}
+                    </span>
+                  </span>
+                </label>
+                <button
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
+                  disabled={!domainRestrictionEnabled}
+                  onClick={openDomainDialog}
+                  type="button"
+                >
+                  <Edit3 className="h-4 w-4" />
+                  {t("Edit whitelist")}
+                </button>
+              </div>
+
+              <div className="mt-3 rounded-md bg-zinc-50 px-3 py-2">
+                {domainRestrictionEnabled && domainItems.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {domainItems.map((domain) => (
+                      <span
+                        className="rounded-full bg-white px-2 py-1 text-xs font-medium text-zinc-700 ring-1 ring-zinc-200"
+                        key={domain}
+                      >
+                        @{domain}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500">
+                    {domainRestrictionEnabled
+                      ? t("No allowed email domains configured yet.")
+                      : t(
+                          "Domain restriction is off. Any valid email can register if registration is enabled."
+                        )}
+                  </p>
+                )}
+              </div>
+            </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -208,6 +299,65 @@ export function AuthSettingsAdminClient() {
           </form>
         ) : null}
       </section>
+
+      {domainDialogOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/30 px-4 py-6">
+          <div
+            aria-modal="true"
+            className="w-full max-w-lg rounded-md bg-white shadow-xl"
+            role="dialog"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-900">
+                  {t("Edit allowed email domains")}
+                </h2>
+                <p className="mt-1 text-sm text-zinc-500">
+                  {t("Add one domain per line or separate them with commas.")}
+                </p>
+              </div>
+              <button className="icon-button" onClick={closeDomainDialog} type="button">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3 px-4 py-4">
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-zinc-700">
+                  {t("Allowed email domains")}
+                </span>
+                <textarea
+                  className="min-h-32 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                  onChange={(event) => setDomainDraft(event.target.value)}
+                  placeholder={"sailuntire.com\n@qq.com\nuser@example.org"}
+                  value={domainDraft}
+                />
+              </label>
+              <p className="text-xs leading-5 text-zinc-500">
+                {t("You can enter domains like sailuntire.com, @qq.com, or user@example.org.")}
+              </p>
+              {domainError ? (
+                <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{domainError}</p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-zinc-200 px-4 py-3">
+              <button
+                className="h-9 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={closeDomainDialog}
+                type="button"
+              >
+                {t("Cancel")}
+              </button>
+              <button
+                className="h-9 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"
+                onClick={saveDomainDialog}
+                type="button"
+              >
+                {t("Save whitelist")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -232,4 +382,59 @@ function Toggle({
       />
     </label>
   );
+}
+
+function parseAllowedEmailDomains(input: string): string[] {
+  const domains = parseAllowedEmailDomainsLenient(input);
+  const invalid = splitDomainInput(input).find((item) => {
+    try {
+      normalizeAllowedEmailDomain(item);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (invalid) {
+    throw new Error(`Invalid email domain: ${invalid}`);
+  }
+  return domains;
+}
+
+function parseAllowedEmailDomainsLenient(input: string): string[] {
+  const domains = splitDomainInput(input)
+    .map((item) => {
+      try {
+        return normalizeAllowedEmailDomain(item);
+      } catch {
+        return null;
+      }
+    })
+    .filter((domain): domain is string => Boolean(domain));
+  return Array.from(new Set(domains));
+}
+
+function splitDomainInput(input: string): string[] {
+  return input
+    .split(/[\s,;，；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeAllowedEmailDomain(value: string): string | null {
+  let domain = value.trim().toLowerCase();
+  if (!domain) {
+    return null;
+  }
+  if (domain.includes("@")) {
+    domain = domain.split("@").pop() ?? "";
+  }
+  domain = domain.replace(/^\*\./, "").replace(/^@/, "");
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+      domain
+    )
+  ) {
+    throw new Error(`Invalid email domain: ${value}`);
+  }
+  return domain;
 }

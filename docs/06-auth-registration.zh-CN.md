@@ -1,43 +1,22 @@
-# 06 — 用户注册、登录和激活
+# 06 — 注册、激活与个人空间
 
-## 1. 注册方式
+本文描述 OpenKB v0.x 的账号注册、邮箱验证、管理员创建账号、密码设置和 Phase 27 个人空间语义。
 
-v0.x 支持邮箱注册和邮箱密码登录。
+## 1. 用户状态
 
-不做：
+`users.status` 允许值：
 
-- LDAP。
-- SCIM。
-- 企业组织架构同步。
-- 第三方 OAuth 登录，后续可加。
+- `pending_email_verification`
+- `pending_activation`
+- `active`
+- `suspended`
+- `deleted`
 
-## 2. 用户状态
+只有 `active` 用户可以登录。`suspended` 和 `deleted` 用户不能登录。
 
-```text
-pending_email_verification
-pending_activation
-active
-suspended
-deleted
-```
+## 2. 注册策略
 
-## 3. 管理员设置
-
-后台注册设置：
-
-```text
-允许邮箱注册：开/关
-必须验证邮箱：开/关
-注册后默认状态：active / pending_activation
-被邀请用户验证邮箱后是否自动激活：开/关
-允许邮箱域名白名单：可选
-仅允许邀请注册：开/关
-第一位用户自动成为 system_admin：开/关，默认开
-```
-
-## 3.1 auth_settings 表结构
-
-`auth_settings` 必须在 `docs/07-data-model.zh-CN.md` 中实现。核心字段包括：
+注册策略由 `auth_settings` 控制：
 
 ```text
 registration_enabled
@@ -49,69 +28,107 @@ invite_required
 first_user_becomes_admin
 ```
 
-实现时优先读取租户级设置；如果不存在租户级设置，则读取 `tenant_id = null` 的实例默认设置。
+`allowed_email_domains` 为空时表示不限制邮箱域名；有值时，只有邮箱域名命中的用户可以自行注册。Admin -> 认证设置中通过“只允许白名单邮箱域名注册”开关启用限制，再用“编辑白名单”弹窗维护域名。管理员可以输入 `sailuntire.com`、`@qq.com` 或 `user@sailuntire.com` 这类形式，系统会统一保存为域名（例如 `sailuntire.com`、`qq.com`）。管理员手动创建账号不受该自助注册白名单影响。
 
-## 4. 注册流程
+优先读取租户级设置；如果租户级设置不存在，则读取 `tenant_id = null` 的实例默认设置。
+
+## 3. 注册流程
 
 ```text
 用户提交邮箱和密码
   -> 创建 user
+  -> 写入 tenant_memberships(role=member)
   -> 如果需要邮箱验证：pending_email_verification
-  -> 用户点击验证链接
-  -> 如果默认需要管理员激活：pending_activation
-  -> 否则 active
+  -> 否则按 default_signup_status 进入 active 或 pending_activation
 ```
 
-## 5. 激活流程
+如果最终状态为 `active`，系统必须在同一事务内确认个人空间存在。
 
-管理员后台可查看 pending_activation 用户，并执行：
+## 4. 邮箱验证与激活
 
-- 激活。
-- 拒绝/删除。
-- 禁用 active 用户。
-- 重发验证邮件。
-
-所有操作写入 audit_logs。
-
-管理员创建账号时不生成临时明文密码，也不使用普通“重置密码”文案。系统创建 `account_setup` 一次性 token，并写入“欢迎设置密码”邮件。若生产 SMTP 已配置，系统会立即尝试投递；未配置或投递失败时，记录保留在 `auth_email_outbox`，管理员可以在邮件队列中重试。
-
-`account_setup` 和 `password_reset` 链接都只能使用一次。同一用户再次生成设置/重置链接时，旧的未使用设置/重置链接必须失效。设置或重置成功后，用户应回到登录页；当前链接再次提交必须返回 `INVALID_OR_EXPIRED_TOKEN`。
-
-## 6. 邀请注册
-
-用户通过邀请链接注册时：
+邮箱验证 token 使用 `auth_tokens.purpose = email_verification`。用户点击验证链接后：
 
 ```text
-打开邀请链接
-  -> 注册/登录
-  -> 邮箱验证
-  -> 如果链接需要审批：进入待审批
-  -> 否则根据 object_type 授权：
-      workspace -> 写入 workspace_members
-      knowledge_base/document -> 写入 collaborators
+验证 token
+  -> 根据 default_signup_status 更新 user.status
+  -> 消费 token
+  -> 若 user.status = active，创建或确认个人空间
 ```
 
-被邀请用户是否自动 active 由后台设置决定。
+如果用户进入 `pending_activation`，不会创建个人空间；管理员激活后再创建。
 
-## 7. 第一位用户
+## 5. 管理员创建账号
 
-如果系统中不存在任何 system_admin，且 `first_user_becomes_admin = true`，第一位完成注册/验证流程的用户必须被授予：
+管理员创建账号时：
+
+- 用户状态为 `active`。
+- 系统生成 `account_setup` 一次性 token。
+- 邮件文案是欢迎设置密码，不是普通重置密码。
+- 如果 SMTP 可用，系统立即尝试投递；失败时保留 outbox 记录供重试。
+- 创建 active 用户时必须创建或确认个人空间。
+
+`account_setup` 和 `password_reset` 链接都只能使用一次。再次生成新链接会让旧的未使用链接失效。
+
+## 6. 第一个用户成为管理员
+
+如果系统中不存在任何 `system_admin`，且 `first_user_becomes_admin = true`，第一位完成注册/验证并进入 active 的用户会获得：
 
 ```text
 tenant_memberships.role = system_admin
 ```
 
-如果系统采用多租户初始化流程，该用户也应成为默认 tenant 的 tenant_admin。
+这只影响租户/后台角色，不影响个人空间语义。个人空间 owner 不等于 `system_admin`。
 
-## 8. 个人空间路线图
+## 7. Phase 27 个人空间
 
-Phase 27 起，新用户完成注册、验证和激活后，应自动拥有一个个人空间：
+Phase 27 起，active 用户必须拥有一个个人空间：
 
 ```text
-用户完成注册/激活
-  -> 创建或确认 personal workspace
-  -> 写入 workspace_members(owner)
-  -> 首次登录进入个人空间 dashboard
+active user
+  -> workspaces.kind = personal
+  -> workspaces.personal_owner_user_id = users.id
+  -> workspace_members.role = owner
 ```
 
-个人空间 owner 不等于 `system_admin`。租户继续是后台和部署边界，不显示为普通用户的空间入口。团队协作通过用户显式创建团队空间实现。
+创建触发点：
+
+- 注册无需邮箱验证且最终状态为 `active`。
+- 邮箱验证后状态变为 `active`。
+- 管理员创建 active 用户。
+- 管理员激活用户，或把用户状态改为 `active`。
+- active 存量用户登录时懒创建，作为修复路径。
+
+不会创建个人空间的状态：
+
+- `pending_email_verification`
+- `pending_activation`
+- `suspended`
+- `deleted`
+
+默认名称：`{displayName 或邮箱前缀} 的个人空间`。
+
+默认 slug：`u-{userId 前缀}`，避免暴露邮箱。
+
+同一 tenant 下，同一个 user 只能有一个个人空间。
+
+## 8. 登录后的默认入口
+
+`/app` 无显式 workspace/kb/doc 参数时，默认进入当前用户的个人空间 dashboard。
+
+直接访问以下路径时，不会被个人空间默认逻辑覆盖：
+
+```text
+/app/workspaces/:workspaceId
+/app/kb/:kbId
+/app/kb/:kbId/docs/:docId
+```
+
+个人 dashboard 当前展示：
+
+- 我的知识库。
+- 最近编辑。
+- 最近浏览。
+- 收藏入口和空状态。
+- 评论入口和空状态。
+
+收藏和评论数据模型留到后续阶段。

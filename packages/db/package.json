@@ -22,7 +22,8 @@
     "db:test": "vitest run --config vitest.db.config.ts",
     "dev:seed": "tsx src/seed-dev.cli.ts",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "workspace:migration-report": "tsx src/workspace-migration-report.cli.ts"
   },
   "dependencies": {
     "@openkb/markdown": "workspace:*",

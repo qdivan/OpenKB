@@ -1,4 +1,16 @@
 export { Prisma, PrismaClient } from "@prisma/client";
+export {
+  classifyWorkspaceForMigration,
+  formatWorkspaceMigrationReportMarkdown,
+  generateWorkspaceMigrationReport
+} from "./workspace-migration-report";
+export type {
+  WorkspaceMigrationConfidence,
+  WorkspaceMigrationReport,
+  WorkspaceMigrationReportItem,
+  WorkspaceMigrationSuggestion,
+  WorkspaceMigrationWorkspaceInput
+} from "./workspace-migration-report";
 
 import { PrismaClient } from "@prisma/client";
 
@@ -29,6 +41,9 @@ export type TenantRole = (typeof TENANT_ROLES)[number];
 
 export const WORKSPACE_ROLES = ["owner", "admin", "member", "guest"] as const;
 export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
+
+export const WORKSPACE_KINDS = ["personal", "team"] as const;
+export type WorkspaceKind = (typeof WORKSPACE_KINDS)[number];
 
 export const CONTENT_ROLES = ["owner", "manager", "editor", "viewer"] as const;
 export type ContentRole = (typeof CONTENT_ROLES)[number];
