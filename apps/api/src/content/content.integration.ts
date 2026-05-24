@@ -69,6 +69,29 @@ function tokenFromLink(link: string): string {
   return token;
 }
 
+async function createTypedPage(
+  content: ContentService,
+  sessionToken: string,
+  workspaceId: string,
+  docForm: "text_model" | "hierarchical_model" | "qa_model",
+  options: { title?: string; markdown?: string } = {}
+) {
+  const suffix = randomUUID().slice(0, 8);
+  const knowledgeBase = await content.createKnowledgeBase(sessionToken, {
+    workspace_id: workspaceId,
+    title: options.title ?? `Typed ${docForm} ${suffix}`,
+    slug: `typed-${docForm.replaceAll("_", "-")}-${suffix}`,
+    doc_form: docForm
+  });
+  const document = await content.createDocument(sessionToken, {
+    knowledge_base_id: knowledgeBase.id,
+    title: options.title ?? `Typed ${docForm}`,
+    slug: `typed-doc-${suffix}`,
+    markdown: options.markdown ?? "# Typed document\n\nContent for typed knowledge base tests."
+  });
+  return { knowledgeBase, document };
+}
+
 describe("ContentService integration", () => {
   beforeEach(async () => {
     await prisma.$executeRawUnsafe(
@@ -105,11 +128,26 @@ describe("ContentService integration", () => {
         slug: "roadmap",
         markdown: "# Roadmap"
       });
+      await content.createDocument(login.sessionToken, {
+        knowledge_base_id: knowledgeBase.id,
+        title: "Planning",
+        slug: "planning",
+        type: "folder"
+      });
 
       expect(login.me.roles).toContain("system_admin");
       expect(workspace.slug).toBe("product");
       expect(knowledgeBase.visibility).toBe("private");
       expect(document.currentVersion).toMatchObject({ markdown: "# Roadmap" });
+      const productOverview = await content.getKnowledgeBaseOverview(
+        login.sessionToken,
+        knowledgeBase.id
+      );
+      expect(productOverview.documents).toMatchObject({
+        total: 1,
+        pages: 1,
+        folders: 1
+      });
       const seededOverview = await content.getKnowledgeBaseOverview(
         login.sessionToken,
         seed.knowledgeBaseId
@@ -191,6 +229,26 @@ describe("ContentService integration", () => {
         doc_form: "qa_model",
         process_rule_mode: "automatic"
       });
+
+      await expect(
+        content.updateChunkSettings(login.sessionToken, hierarchicalKb.id, {
+          doc_form: "text_model"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      await expect(
+        content.updateChunkSettings(login.sessionToken, hierarchicalKb.id, {
+          doc_form: "hierarchical_model",
+          indexing_technique: "economy"
+        })
+      ).resolves.toMatchObject({
+        doc_form: "hierarchical_model",
+        indexing_technique: "economy"
+      });
+      await expect(
+        content.updateChunkSettings(login.sessionToken, hierarchicalKb.id, {
+          parent_mode: "full_doc"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     } finally {
       await content.disconnect();
     }
@@ -750,8 +808,18 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
         email: "admin@openkb.local",
         password: DEV_ADMIN_PASSWORD
       });
+      const { knowledgeBase, document: page } = await createTypedPage(
+        content,
+        login.sessionToken,
+        seed.workspaceId,
+        "text_model",
+        {
+          title: "Chunk Rule Roundtrip",
+          markdown: "# Chunk Rule Roundtrip\n\nThis document checks custom overlap settings."
+        }
+      );
 
-      const settings = await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+      const settings = await content.updateChunkSettings(login.sessionToken, knowledgeBase.id, {
         doc_form: "text_model",
         process_rule_mode: "custom",
         parent_delimiter: " ",
@@ -771,9 +839,9 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
         summary_prompt: "Summarize for retrieval."
       });
 
-      let document = await content.getDocument(login.sessionToken, seed.documentId);
+      let document = await content.getDocument(login.sessionToken, page.id);
       expect(document.processing_status).toBe("needs_reprocess");
-      const reprocessed = await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const reprocessed = await content.reprocessDocument(login.sessionToken, page.id);
       expect(reprocessed.processing_status).toBe("current");
       expect(reprocessed.process_rule_snapshot).toMatchObject({
         doc_form: "text_model",
@@ -785,16 +853,14 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
         content_markdown_hash: reprocessed.currentVersion?.markdown_hash
       });
 
-      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
-        doc_form: "qa_model"
-      });
-      document = await content.getDocument(login.sessionToken, seed.documentId);
-      expect(document.doc_form).toBe("qa_model");
-      expect(document.processing_status).toBe("needs_reprocess");
-
       await expect(
         content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
-          doc_form: "qa_model",
+          doc_form: "qa_model"
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      await expect(
+        content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
+          doc_form: "text_model",
           process_rule_mode: "hierarchical"
         })
       ).rejects.toMatchObject({ code: "INVALID_INPUT" });
@@ -953,24 +1019,30 @@ This new version should not use stale chunks for derived QA or summary generatio
         email: "admin@openkb.local",
         password: DEV_ADMIN_PASSWORD
       });
-      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
-        doc_form: "qa_model",
-        process_rule_mode: "automatic"
-      });
-      const imported = await content.importQaPairs(login.sessionToken, seed.documentId, {
+      const { knowledgeBase, document } = await createTypedPage(
+        content,
+        login.sessionToken,
+        seed.workspaceId,
+        "qa_model",
+        {
+          title: "QA Import",
+          markdown: "# QA Import\n\nA QA knowledge base indexes questions and returns answers."
+        }
+      );
+      const imported = await content.importQaPairs(login.sessionToken, document.id, {
         csv: "question,answer\nWho swore brotherhood?,Liu Bei Guan Yu and Zhang Fei."
       });
       expect(imported).toMatchObject({ created: 1, skipped: 0 });
       await expect(
         prisma.documentChunk.count({
-          where: { document_id: seed.documentId, metadata: { path: ["qa_pair_id"], not: null } }
+          where: { document_id: document.id, metadata: { path: ["qa_pair_id"], not: null } }
         })
       ).resolves.toBe(0);
 
-      const reprocessed = await content.reprocessDocument(login.sessionToken, seed.documentId);
+      const reprocessed = await content.reprocessDocument(login.sessionToken, document.id);
       expect(reprocessed.processing_status).toBe("current");
       const chunks = await prisma.documentChunk.findMany({
-        where: { document_id: seed.documentId, status: "active" },
+        where: { document_id: document.id, knowledge_base_id: knowledgeBase.id, status: "active" },
         select: { content_text: true, metadata: true, index_role: true }
       });
       expect(chunks).toHaveLength(1);
@@ -996,8 +1068,33 @@ This new version should not use stale chunks for derived QA or summary generatio
         email: "admin@openkb.local",
         password: DEV_ADMIN_PASSWORD
       });
-      await content.reprocessDocument(login.sessionToken, seed.documentId);
-      const generated = await content.generateQaPairs(login.sessionToken, seed.documentId, {
+      const { document } = await createTypedPage(
+        content,
+        login.sessionToken,
+        seed.workspaceId,
+        "qa_model",
+        {
+          title: "QA Mock",
+          markdown: "# QA Mock\n\nA seeded source segment exists only for QA generation."
+        }
+      );
+      const sourceChunk = await prisma.documentChunk.create({
+        data: {
+          tenant_id: document.tenant_id,
+          workspace_id: document.workspace_id,
+          knowledge_base_id: document.knowledge_base_id,
+          document_id: document.id,
+          version_id: document.currentVersion!.id,
+          ordinal: 0,
+          chunk_type: "general",
+          settings_revision: 1,
+          content_text: "A seeded source segment exists only for QA generation.",
+          content_markdown: "A seeded source segment exists only for QA generation.",
+          token_count: 9,
+          metadata: {}
+        }
+      });
+      const generated = await content.generateQaPairs(login.sessionToken, document.id, {
         mode: "mock",
         scope: "segments",
         count: 1
@@ -1009,21 +1106,16 @@ This new version should not use stale chunks for derived QA or summary generatio
       });
       expect(generated.items[0]?.source_chunk_id).toEqual(expect.any(String));
 
-      await content.updateDocumentSegment(
-        login.sessionToken,
-        seed.documentId,
-        generated.items[0]!.source_chunk_id!,
-        { status: "disabled" }
-      );
-      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
-        doc_form: "qa_model",
-        process_rule_mode: "automatic"
+      expect(generated.items[0]?.source_chunk_id).toBe(sourceChunk.id);
+
+      await content.updateDocumentSegment(login.sessionToken, document.id, sourceChunk.id, {
+        status: "disabled"
       });
-      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      await content.reprocessDocument(login.sessionToken, document.id);
 
       await expect(
         prisma.documentChunk.count({
-          where: { document_id: seed.documentId, metadata: { path: ["hit_type"], equals: "qa" } }
+          where: { document_id: document.id, metadata: { path: ["hit_type"], equals: "qa" } }
         })
       ).resolves.toBe(0);
     } finally {
@@ -1194,15 +1286,14 @@ Paragraph one. ${"Shu Han ".repeat(50)}
 Paragraph two. ${"Wei kingdom ".repeat(50)}
 
 Paragraph three. ${"Wu fleet ".repeat(50)}`;
-      const current = await content.getDocument(login.sessionToken, seed.documentId);
-      await content.updateDocument(login.sessionToken, seed.documentId, {
-        base_version_id: current.currentVersion?.id ?? null,
-        markdown,
-        markdown_hash: markdownHash(markdown)
-      });
-      await content.updateChunkSettings(login.sessionToken, seed.knowledgeBaseId, {
-        doc_form: "hierarchical_model",
-        parent_mode: "paragraph",
+      const { knowledgeBase, document } = await createTypedPage(
+        content,
+        login.sessionToken,
+        seed.workspaceId,
+        "hierarchical_model",
+        { title: "Parent Child", markdown }
+      );
+      await content.updateChunkSettings(login.sessionToken, knowledgeBase.id, {
         process_rule: {
           parent_mode: "paragraph",
           segmentation: { separator: "\n\n", max_tokens: 180, chunk_overlap: 0 },
@@ -1210,11 +1301,11 @@ Paragraph three. ${"Wu fleet ".repeat(50)}`;
         }
       });
 
-      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      await content.reprocessDocument(login.sessionToken, document.id);
       const paragraphChunks = await content.listKnowledgeBaseChunks(
         login.sessionToken,
-        seed.knowledgeBaseId,
-        { document_id: seed.documentId, limit: 500 }
+        knowledgeBase.id,
+        { document_id: document.id, limit: 500 }
       );
       const paragraphParents = paragraphChunks.filter((chunk) => chunk.chunk_type === "parent");
       const paragraphChildren = paragraphChunks.filter((chunk) => chunk.chunk_type === "child");
@@ -1227,14 +1318,14 @@ Paragraph three. ${"Wu fleet ".repeat(50)}`;
         parent_mode: "paragraph"
       });
 
-      await content.updateDocumentProcessing(login.sessionToken, seed.documentId, {
+      await content.updateDocumentProcessing(login.sessionToken, document.id, {
         parent_mode: "full_doc"
       });
-      await content.reprocessDocument(login.sessionToken, seed.documentId);
+      await content.reprocessDocument(login.sessionToken, document.id);
       const fullDocChunks = await content.listKnowledgeBaseChunks(
         login.sessionToken,
-        seed.knowledgeBaseId,
-        { document_id: seed.documentId, limit: 500 }
+        knowledgeBase.id,
+        { document_id: document.id, limit: 500 }
       );
       const fullDocParents = fullDocChunks.filter((chunk) => chunk.chunk_type === "parent");
       const fullDocChildren = fullDocChunks.filter((chunk) => chunk.chunk_type === "child");

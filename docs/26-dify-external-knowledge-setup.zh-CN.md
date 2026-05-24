@@ -60,6 +60,36 @@ OpenKB Admin -> Dify 的配置向导会展示 endpoint、External Knowledge ID�
 
 ![OpenKB Dify Admin](assets/openkb-admin-dify.png)
 
+## Dify Hub：用 Service API 管理外部知识库和 metadata
+
+OpenKB Admin -> Dify 还提供 `Dify Hub`。它使用 Dify Dataset Service API token 调用 Dify `/v1` 接口，用于发现、创建、删除 Dify external dataset，并把 OpenKB 文档 metadata schema 同步到 Dify，方便 Workflow 的 Knowledge Retrieval 节点显示 metadata filter 条件。
+
+Dify Hub 的边界：
+
+- 不使用 Dify Console cookie。
+- 不写 Dify 数据库。
+- 不保存 Dify 数据库连接。
+- Dify Service API token 会用 `OPENKB_CONFIG_ENCRYPTION_KEY` 加密保存；页面只显示 last4。
+- OpenKB 只管理 Dify dataset 和 metadata schema，不删除 OpenKB KB 内容。
+- OpenKB Hub 只删除已导入并映射到当前租户的 Dify external dataset；未导入的 Dify dataset 需要先导入，或在 Dify 侧删除。
+
+首次配置顺序：
+
+1. 在 Dify UI 中创建一次 External Knowledge API 模板，填入 OpenKB Dify Adapter endpoint 和 OpenKB Dify API key。
+2. 在 Dify 中创建 Dataset Service API token。
+3. 在 OpenKB Admin -> Dify -> Dify Hub 保存 Dify base URL 和 Service API token。这里的 Dify base URL 是 OpenKB API 进程或容器能访问到的地址；本地 compose 场景通常要填宿主机/WSL 网关地址，而不是浏览器里的 `localhost:18080`。
+4. 点击 Probe，确认 OpenKB 能通过 `/v1/datasets` 访问 Dify。
+5. 如果 Dify 中已有 external dataset，选择它并导入到 OpenKB mapping；OpenKB 会读取 `external_knowledge_id`、`external_knowledge_api_id`、endpoint 等信息。
+6. 如果要从 OpenKB 创建新的 Dify external dataset，需要填写已有 External Knowledge API 模板的 ID。
+7. 对导入或创建的 dataset 执行 metadata dry-run，再执行同步。默认只创建缺失字段，不删除 Dify 侧多余字段。
+
+Dify Hub 同步的 metadata 规则：
+
+- `document_name`、`uploader`、`upload_date`、`last_update_date`、`source` 走 Dify built-in metadata。
+- OpenKB KB Metadata schema 中的 `string`、`number`、`time` 字段同步为 Dify custom metadata。
+- `tags` 作为 Dify 友好的 `string` 字段同步。
+- `openkb_*`、chunk 技术字段和检索诊断字段默认不同步到 Dify 业务 metadata schema。
+
 ## Dify 端配置
 
 Dify UI 会自动在 API Endpoint 后拼接 `/retrieval`。因此 API Endpoint 填 base URL，不要填 `/retrieval`。
@@ -87,6 +117,8 @@ Dify UI 会自动在 API Endpoint 后拼接 `/retrieval`。因此 API Endpoint �
 ## Docker / WSL 本地网络
 
 浏览器里的 `localhost:4200` 通常只对宿主机浏览器可用。Dify API 容器调用 OpenKB adapter 时，必须使用容器可达地址。
+
+反过来也一样：Dify Hub 保存的 Dify base URL 是 OpenKB API 进程或容器要访问 Dify `/v1` Service API 的地址。如果 OpenKB API 运行在容器内，`localhost:18080` 指的是 OpenKB API 容器自己，不是浏览器访问到的 Dify Web。
 
 在当前 WSL2 Docker 开发环境里，可用 WSL nameserver 作为 Windows host 地址：
 

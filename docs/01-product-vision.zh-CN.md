@@ -6,7 +6,7 @@ OpenKB 是一个 Markdown-first、语雀式权限和编辑体验、支持私有�
 
 ## 目标用户
 
-- 想自托管知识库的团队。
+- 想自托管个人空间和团队空间知识库的用户与团队。
 - 想把内部知识库接入 AI/RAG 的团队。
 - 想把文档系统通过 MCP 暴露给 IDE、Agent、企业系统的团队。
 - 想把所有文件统一转换为 Markdown 管理的用户。
@@ -15,7 +15,7 @@ OpenKB 是一个 Markdown-first、语雀式权限和编辑体验、支持私有�
 
 ```text
 文档编辑：Milkdown 富文本式 Markdown 编辑器。
-知识管理：空间、知识库、目录、文档、版本。
+知识管理：个人空间、团队空间、知识库、目录、文档、版本。
 权限：语雀式协作者、邀请、分享、审批、密码访问、成员可见。
 导入：PDF/DOCX/PPTX/XLSX/图片 -> Markdown + assets。
 检索：Milvus BM25 + OpenKB 直连 embedding/rerank；后续可演进到 Milvus 原生 Function。
@@ -30,6 +30,7 @@ OpenKB 是一个 Markdown-first、语雀式权限和编辑体验、支持私有�
 - 不做 LDAP/SCIM/OpenFGA/Casbin/OPA 权限系统。
 - 不做知识库级模型配置。
 - 不允许 MCP 或 Dify 绕过文档权限。
+- v0.x 不拆出独立 Team 层；团队协作由团队空间承载，租户只作为实例、部署和后台管理边界。
 
 ## 内容真相
 

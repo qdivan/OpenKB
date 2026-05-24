@@ -10,7 +10,10 @@ import {
   createKnowledgeBase,
   createKnowledgeBaseMetadataField,
   createAdminUser,
+  createDifyHubDataset,
+  deleteDifyHubDataset,
   getShare,
+  getDifyHubConnection,
   getDocumentVersion,
   getDifyFilterableMetadata,
   getDifySetupSummary,
@@ -27,8 +30,10 @@ import {
   probeAdminModel,
   resetShareLink,
   restoreDocumentVersion,
+  saveDifyHubConnection,
   searchKnowledge,
   setAdminUserTenantRole,
+  syncDifyHubMetadata,
   updateDocumentMetadata,
   updateChunkSettings,
   updateDocumentSegment,
@@ -190,6 +195,68 @@ describe("OpenKB API client", () => {
           doc_form: "qa_model"
         })
       })
+    );
+  });
+
+  it("builds Dify Hub admin requests", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getDifyHubConnection();
+    await saveDifyHubConnection({
+      dify_base_url: "http://localhost:18080",
+      service_api_token: "token"
+    });
+    await createDifyHubDataset({
+      name: "OpenKB Demo",
+      external_knowledge_api_id: "external-api",
+      external_knowledge_id: "openkb-demo",
+      knowledge_base_id: "kb_1"
+    });
+    await syncDifyHubMetadata({ dify_dataset_id: "dataset_1", dry_run: true });
+    await deleteDifyHubDataset("dataset_1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:4000/api/admin/dify/hub/connection",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:4000/api/admin/dify/hub/connection",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          dify_base_url: "http://localhost:18080",
+          service_api_token: "token"
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "http://localhost:4000/api/admin/dify/hub/datasets",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          name: "OpenKB Demo",
+          external_knowledge_api_id: "external-api",
+          external_knowledge_id: "openkb-demo",
+          knowledge_base_id: "kb_1"
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "http://localhost:4000/api/admin/dify/hub/metadata-sync",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ dify_dataset_id: "dataset_1", dry_run: true })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "http://localhost:4000/api/admin/dify/hub/datasets/dataset_1",
+      expect.objectContaining({ method: "DELETE" })
     );
   });
 

@@ -2,7 +2,7 @@
 
 本文档把 OpenKB 文档分为四类：当前规范、路线图、Dify 配合与兼容、历史/工程审计。Codex 开始任何代码工作前，应优先阅读“最高优先级”和“当前规范”；历史快照和工程审计只用于追溯，不应覆盖当前规范。
 
-当前主线状态：Phase 25 稳定收口中。只读用户可查看文档分段，Dify key 默认最小化授权到当前选择知识库，创建知识库时严格校验 `doc_form`；Dify 相关公开表述统一使用“配合 / 兼容 / 接入”。
+当前主线状态：Phase 26 发布收口中。Dify Hub 使用 Dify Dataset Service API 管理 external dataset 和 metadata，不使用 Console cookie、不写 Dify 数据库；语雀式空间路线采用“个人空间 / 团队空间 / 知识库”二层产品模型，内部继续用 `workspace` 承载空间。
 
 ## 最高优先级
 
@@ -21,6 +21,7 @@
 
 - `docs/01-product-vision.zh-CN.md`：产品目标和范围。
 - `docs/02-yuque-reference-model.zh-CN.md`：语雀式产品模型抽象。
+- `docs/32-yuque-space-kb-model.zh-CN.md`：语雀式个人空间、团队空间、知识库和权限路线图。
 - `docs/03-system-architecture.zh-CN.md`：整体系统架构。
 
 ## 核心模块

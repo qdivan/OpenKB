@@ -1144,7 +1144,7 @@ export function WorkbenchClient({
         type,
         title,
         slug: slugFromTitle(title, type),
-        markdown: type === "page" ? `# ${title}\n` : ""
+        markdown: ""
       });
       const nextTree = await getKnowledgeBaseTree(selectedKnowledgeBaseId);
       setDocuments(nextTree);
@@ -2558,7 +2558,9 @@ function CreateKnowledgeBaseDialog({
           <div>
             <h2 className="text-base font-semibold text-zinc-950">{t("Create knowledge base")}</h2>
             <p className="mt-1 text-sm text-zinc-500">
-              {t("Choose a knowledge base type first. You can change it later in settings.")}
+              {t(
+                "Choose a knowledge base type first. It cannot be changed directly later; create another knowledge base or migrate content if the type is wrong."
+              )}
             </p>
           </div>
           <button
@@ -4126,10 +4128,10 @@ function DocumentSidePanel({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="shrink-0 border-b border-zinc-200 px-3 py-3">
-        <div className="grid grid-cols-3 gap-1 rounded-md bg-zinc-100 p-1 xl:grid-cols-4 2xl:grid-cols-7">
+        <div className="grid grid-cols-3 gap-1 rounded-md bg-zinc-100 p-1">
           {visibleTabs.map((item) => (
             <button
-              className={`rounded px-2 py-1.5 text-xs font-medium ${
+              className={`min-w-0 rounded px-2 py-1.5 text-center text-xs font-medium whitespace-nowrap ${
                 visibleTab === item
                   ? "bg-white text-zinc-950 shadow-sm"
                   : "text-zinc-500 hover:text-zinc-950"

@@ -5,6 +5,13 @@ import { AuthError, AuthService, type AuthenticatedUser } from "@openkb/auth";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import { decryptModelSecret, encryptModelSecret, getModelSecretLast4 } from "@openkb/model-client";
 
+import {
+  DifyHubClient,
+  DifyHubClientError,
+  type DifyHubDataset,
+  type DifyHubMetadataField
+} from "./dify-hub-client";
+
 type ListInput = {
   limit?: number;
   offset?: number;
@@ -32,6 +39,34 @@ export type UpsertDifyMappingInput = {
   dify_knowledge_id?: string;
   knowledge_base_id?: string;
   status?: string;
+};
+
+export type UpsertDifyHubConnectionInput = {
+  dify_base_url?: string;
+  service_api_token?: string;
+  status?: string;
+};
+
+export type ImportDifyHubDatasetInput = {
+  dify_dataset_id?: string;
+  knowledge_base_id?: string;
+  status?: string;
+};
+
+export type CreateDifyHubDatasetInput = {
+  name?: string;
+  description?: string | null;
+  external_knowledge_api_id?: string;
+  external_knowledge_id?: string;
+  knowledge_base_id?: string;
+};
+
+export type SyncDifyHubMetadataInput = {
+  dify_dataset_id?: string;
+  knowledge_base_id?: string;
+  dry_run?: boolean;
+  include_built_ins?: boolean;
+  delete_extra?: boolean;
 };
 
 export type CreateMcpPatInput = {
@@ -283,6 +318,430 @@ export class AdminOpsService {
       source: "document_metadata",
       description: `OpenKB document metadata value from ${knowledgeBaseTitles.get(field.knowledge_base_id) ?? "a mapped knowledge base"}; preferred for Dify metadata_condition.`
     }));
+  }
+
+  async getDifyHubConnection(sessionToken: string | null) {
+    const me = await this.requireAdmin(sessionToken);
+    const connection = await this.prisma.difyHubConnection.findUnique({
+      where: { tenant_id: this.writeTenantId(me) }
+    });
+    return { item: connection ? toDifyHubConnectionDto(connection) : null };
+  }
+
+  async upsertDifyHubConnection(sessionToken: string | null, input: UpsertDifyHubConnectionInput) {
+    const me = await this.requireAdmin(sessionToken);
+    const tenantId = this.writeTenantId(me);
+    const current = await this.prisma.difyHubConnection.findUnique({
+      where: { tenant_id: tenantId }
+    });
+    const baseUrl = input.dify_base_url
+      ? normalizeDifyHubBaseUrl(input.dify_base_url)
+      : current?.dify_base_url;
+    if (!baseUrl) {
+      throw new AuthError("INVALID_INPUT", "dify_base_url is required.", 400);
+    }
+    const status = input.status ? normalizeHubStatus(input.status) : (current?.status ?? "active");
+    const token = input.service_api_token?.trim();
+    if (!current && !token) {
+      throw new AuthError("INVALID_INPUT", "service_api_token is required.", 400);
+    }
+    const tokenData = token
+      ? {
+          encrypted_service_api_token: encryptDifyHubToken(token),
+          service_api_token_last4: getModelSecretLast4(token)
+        }
+      : {};
+    const now = new Date();
+    const connection = await this.prisma.difyHubConnection.upsert({
+      where: { tenant_id: tenantId },
+      create: {
+        tenant_id: tenantId,
+        dify_base_url: baseUrl,
+        encrypted_service_api_token: tokenData.encrypted_service_api_token as string,
+        service_api_token_last4: tokenData.service_api_token_last4 ?? null,
+        status,
+        updated_by: me.user.id,
+        created_at: now,
+        updated_at: now
+      },
+      update: {
+        dify_base_url: baseUrl,
+        status,
+        updated_by: me.user.id,
+        updated_at: now,
+        ...tokenData
+      }
+    });
+    await this.writeAudit(
+      this.prisma,
+      me,
+      "admin.dify.hub.connection.update",
+      "dify_hub_connection",
+      connection.id,
+      {
+        dify_base_url: baseUrl,
+        status,
+        token_updated: Boolean(token),
+        token_last4: connection.service_api_token_last4 ?? null
+      },
+      tenantId
+    );
+    return toDifyHubConnectionDto(connection);
+  }
+
+  async probeDifyHubConnection(sessionToken: string | null) {
+    const me = await this.requireAdmin(sessionToken);
+    const { connection, client } = await this.getDifyHubClient(me);
+    try {
+      const datasets = await client.listDatasets();
+      const updated = await this.prisma.difyHubConnection.update({
+        where: { id: connection.id },
+        data: {
+          last_probe_status: "ok",
+          last_probe_error: null,
+          last_probe_at: new Date()
+        }
+      });
+      return {
+        ok: true,
+        dataset_count: datasets.length,
+        external_dataset_count: datasets.filter((dataset) => dataset.provider === "external")
+          .length,
+        connection: toDifyHubConnectionDto(updated)
+      };
+    } catch (error) {
+      const message = errorToSafeMessage(error);
+      const updated = await this.prisma.difyHubConnection.update({
+        where: { id: connection.id },
+        data: {
+          last_probe_status: "failed",
+          last_probe_error: message,
+          last_probe_at: new Date()
+        }
+      });
+      return {
+        ok: false,
+        error: message,
+        connection: toDifyHubConnectionDto(updated)
+      };
+    }
+  }
+
+  async listDifyHubDatasets(sessionToken: string | null) {
+    const me = await this.requireAdmin(sessionToken);
+    const { client } = await this.getDifyHubClient(me);
+    const [datasets, mappings] = await Promise.all([
+      client.listDatasets(),
+      this.prisma.difyKnowledgeMapping.findMany({ where: this.tenantWhere(me) })
+    ]);
+    const mappingsByDatasetId = new Map(
+      mappings
+        .filter((mapping) => mapping.dify_dataset_id)
+        .map((mapping) => [mapping.dify_dataset_id, mapping])
+    );
+    const mappingsByKnowledgeId = new Map(
+      mappings.map((mapping) => [mapping.dify_knowledge_id, mapping])
+    );
+    return {
+      items: datasets.map((dataset) => {
+        const external = extractExternalKnowledgeInfo(dataset);
+        const mapping =
+          mappingsByDatasetId.get(dataset.id) ??
+          (external.external_knowledge_id
+            ? mappingsByKnowledgeId.get(external.external_knowledge_id)
+            : undefined);
+        return {
+          ...toDifyHubDatasetDto(dataset),
+          mapping: mapping ? toDifyMappingDto(mapping) : null
+        };
+      })
+    };
+  }
+
+  async importDifyHubDataset(sessionToken: string | null, input: ImportDifyHubDatasetInput) {
+    const me = await this.requireAdmin(sessionToken);
+    const datasetId = requireText(input.dify_dataset_id, "dify_dataset_id");
+    const knowledgeBaseId = requireText(input.knowledge_base_id, "knowledge_base_id");
+    const status = normalizeMappingStatus(input.status ?? "active");
+    const { client } = await this.getDifyHubClient(me);
+    const dataset = await client.getDataset(datasetId);
+    if (dataset.provider !== "external") {
+      throw new AuthError("INVALID_INPUT", "Only Dify external datasets can be imported.", 400);
+    }
+    const external = extractExternalKnowledgeInfo(dataset);
+    const knowledgeId = requireText(external.external_knowledge_id, "external_knowledge_id");
+    const targetScope = await this.resolveKnowledgeBaseScope(me, [knowledgeBaseId]);
+    const mapping = await this.upsertDifyHubMapping({
+      me,
+      tenantId: targetScope.tenantId,
+      knowledgeId,
+      knowledgeBaseId,
+      status,
+      dataset,
+      external
+    });
+    await this.writeAudit(
+      this.prisma,
+      me,
+      "admin.dify.hub.dataset.import",
+      "dify_mapping",
+      mapping.id,
+      {
+        dify_dataset_id: dataset.id,
+        dify_dataset_name: dataset.name,
+        external_knowledge_api_id: external.external_knowledge_api_id ?? null
+      },
+      mapping.tenant_id
+    );
+    return {
+      dataset: toDifyHubDatasetDto(dataset),
+      mapping: toDifyMappingDto(mapping)
+    };
+  }
+
+  async createDifyHubDataset(sessionToken: string | null, input: CreateDifyHubDatasetInput) {
+    const me = await this.requireAdmin(sessionToken);
+    const name = requireText(input.name, "name");
+    const knowledgeBaseId = requireText(input.knowledge_base_id, "knowledge_base_id");
+    const externalKnowledgeApiId = requireText(
+      input.external_knowledge_api_id,
+      "external_knowledge_api_id"
+    );
+    const knowledgeId = requireText(input.external_knowledge_id, "external_knowledge_id");
+    const targetScope = await this.resolveKnowledgeBaseScope(me, [knowledgeBaseId]);
+    const { client } = await this.getDifyHubClient(me);
+    const dataset = await client.createExternalDataset({
+      name,
+      description: input.description ?? "",
+      external_knowledge_api_id: externalKnowledgeApiId,
+      external_knowledge_id: knowledgeId
+    });
+    const external = extractExternalKnowledgeInfo(dataset, {
+      external_knowledge_api_id: externalKnowledgeApiId,
+      external_knowledge_id: knowledgeId
+    });
+    const mapping = await this.upsertDifyHubMapping({
+      me,
+      tenantId: targetScope.tenantId,
+      knowledgeId,
+      knowledgeBaseId,
+      status: "active",
+      dataset,
+      external
+    });
+    await this.writeAudit(
+      this.prisma,
+      me,
+      "admin.dify.hub.dataset.create",
+      "dify_mapping",
+      mapping.id,
+      {
+        dify_dataset_id: dataset.id,
+        dify_dataset_name: dataset.name,
+        external_knowledge_api_id: externalKnowledgeApiId
+      },
+      mapping.tenant_id
+    );
+    return {
+      dataset: toDifyHubDatasetDto(dataset),
+      mapping: toDifyMappingDto(mapping)
+    };
+  }
+
+  async deleteDifyHubDataset(sessionToken: string | null, difyDatasetId: string) {
+    const me = await this.requireAdmin(sessionToken);
+    const datasetId = requireText(difyDatasetId, "dify_dataset_id");
+    const { client } = await this.getDifyHubClient(me);
+    const dataset = await client.getDataset(datasetId);
+    if (dataset.provider !== "external") {
+      throw new AuthError("INVALID_INPUT", "Only Dify external datasets can be deleted.", 400);
+    }
+    const mapping = await this.prisma.difyKnowledgeMapping.findFirst({
+      where: { ...this.tenantWhere(me), dify_dataset_id: datasetId }
+    });
+    if (!mapping) {
+      throw new AuthError(
+        "OBJECT_NOT_FOUND",
+        "Dify external dataset was not imported into OpenKB. Import it before deleting from Hub.",
+        404
+      );
+    }
+    await client.deleteDataset(datasetId);
+    const updatedMapping = await this.prisma.difyKnowledgeMapping.update({
+      where: { id: mapping.id },
+      data: {
+        dify_dataset_id: null,
+        dify_dataset_name: null,
+        dify_external_api_id: null,
+        dify_external_api_name: null,
+        dify_endpoint: null,
+        last_sync_status: "deleted",
+        last_sync_error: null,
+        updated_at: new Date()
+      }
+    });
+    await this.writeAudit(
+      this.prisma,
+      me,
+      "admin.dify.hub.dataset.delete",
+      "dify_mapping",
+      updatedMapping.id,
+      {
+        dify_dataset_id: datasetId,
+        dify_dataset_name: dataset.name,
+        openkb_content_deleted: false
+      },
+      updatedMapping.tenant_id
+    );
+    return {
+      deleted: true,
+      mapping: toDifyMappingDto(updatedMapping)
+    };
+  }
+
+  async syncDifyHubMetadata(sessionToken: string | null, input: SyncDifyHubMetadataInput) {
+    const me = await this.requireAdmin(sessionToken);
+    const dryRun = input.dry_run !== false;
+    const includeBuiltIns = input.include_built_ins !== false;
+    const deleteExtra = input.delete_extra === true;
+    const { client } = await this.getDifyHubClient(me);
+    const mapping = await this.resolveDifyHubMetadataMapping(me, input);
+    const datasetId = requireText(mapping.dify_dataset_id, "dify_dataset_id");
+    const [dataset, metadataState, existingBuiltInFields] = await Promise.all([
+      client.getDataset(datasetId),
+      client.getMetadataState(datasetId),
+      includeBuiltIns ? client.listBuiltInMetadata(datasetId) : Promise.resolve([])
+    ]);
+    const existingCustomFields = metadataState.doc_metadata;
+    const desired = await this.buildDifyHubDesiredMetadata(
+      mapping.knowledge_base_id,
+      includeBuiltIns
+    );
+    const customDesired = desired.filter((field) => field.source === "custom");
+    const existingByName = new Map(existingCustomFields.map((field) => [field.name, field]));
+    const desiredNames = new Set(customDesired.map((field) => field.name));
+    const actions: Array<{
+      action: string;
+      name: string;
+      type: string;
+      source: string;
+      detail?: string;
+    }> = [];
+
+    const existingBuiltInsByName = new Map(
+      existingBuiltInFields.map((field) => [field.name, field])
+    );
+    if (includeBuiltIns) {
+      for (const builtIn of desired.filter((field) => field.source === "built_in")) {
+        const existing = existingBuiltInsByName.get(builtIn.name);
+        actions.push({
+          action: metadataState.built_in_field_enabled ? "exists" : "enable",
+          name: builtIn.name,
+          type: builtIn.type,
+          source: builtIn.source,
+          detail: existing ? undefined : "Dify did not return this built-in field definition."
+        });
+      }
+    }
+
+    for (const field of customDesired) {
+      const existing = existingByName.get(field.name);
+      if (!existing) {
+        actions.push({
+          action: "create",
+          name: field.name,
+          type: field.type,
+          source: field.source
+        });
+        continue;
+      }
+      if (existing.type !== field.type) {
+        actions.push({
+          action: "conflict",
+          name: field.name,
+          type: field.type,
+          source: field.source,
+          detail: `Dify has type ${existing.type}.`
+        });
+        continue;
+      }
+      actions.push({ action: "exists", name: field.name, type: field.type, source: field.source });
+    }
+
+    if (deleteExtra) {
+      for (const field of existingCustomFields) {
+        if (!desiredNames.has(field.name) && field.id) {
+          actions.push({
+            action: "delete",
+            name: field.name,
+            type: field.type,
+            source: "dify_extra"
+          });
+        }
+      }
+    } else {
+      for (const field of existingCustomFields) {
+        if (!desiredNames.has(field.name)) {
+          actions.push({
+            action: "skip",
+            name: field.name,
+            type: field.type,
+            source: "dify_extra"
+          });
+        }
+      }
+    }
+
+    if (!dryRun) {
+      try {
+        if (actions.some((action) => action.action === "enable")) {
+          await client.enableBuiltInMetadata(datasetId);
+        }
+        for (const action of actions) {
+          if (action.action === "create") {
+            await client.createMetadata(datasetId, {
+              name: action.name,
+              type: action.type as "string" | "number" | "time"
+            });
+          }
+          if (action.action === "delete") {
+            const existing = existingByName.get(action.name);
+            if (existing?.id) {
+              await client.deleteMetadata(datasetId, existing.id);
+            }
+          }
+        }
+        await this.prisma.difyKnowledgeMapping.update({
+          where: { id: mapping.id },
+          data: {
+            last_metadata_synced_at: new Date(),
+            last_sync_status: "ok",
+            last_sync_error: null,
+            updated_at: new Date()
+          }
+        });
+      } catch (error) {
+        const message = errorToSafeMessage(error);
+        await this.prisma.difyKnowledgeMapping.update({
+          where: { id: mapping.id },
+          data: {
+            last_sync_status: "failed",
+            last_sync_error: message,
+            updated_at: new Date()
+          }
+        });
+        throw new AuthError("INVALID_INPUT", message, 502);
+      }
+    }
+
+    const summary = summarizeMetadataActions(actions);
+    return {
+      dry_run: dryRun,
+      dataset: toDifyHubDatasetDto(dataset),
+      mapping: toDifyMappingDto(mapping),
+      actions,
+      summary
+    };
   }
 
   async listDifyApiKeys(sessionToken: string | null, input: ListInput = {}) {
@@ -915,6 +1374,125 @@ export class AdminOpsService {
     return user ? toPublicUser(user) : null;
   }
 
+  private async getDifyHubClient(me: AuthenticatedUser) {
+    const connection = await this.prisma.difyHubConnection.findUnique({
+      where: { tenant_id: this.writeTenantId(me) }
+    });
+    if (!connection || connection.status !== "active") {
+      throw new AuthError("INVALID_INPUT", "Dify Hub connection is not configured or active.", 400);
+    }
+    const token = decryptDifyHubToken(connection.encrypted_service_api_token);
+    return {
+      connection,
+      client: new DifyHubClient({
+        baseUrl: connection.dify_base_url,
+        token
+      })
+    };
+  }
+
+  private async upsertDifyHubMapping(input: {
+    me: AuthenticatedUser;
+    tenantId: string;
+    knowledgeId: string;
+    knowledgeBaseId: string;
+    status: string;
+    dataset: DifyHubDataset;
+    external: {
+      external_knowledge_id?: string | null;
+      external_knowledge_api_id?: string | null;
+      external_knowledge_api_name?: string | null;
+      external_knowledge_api_endpoint?: string | null;
+    };
+  }) {
+    const now = new Date();
+    return this.prisma.difyKnowledgeMapping.upsert({
+      where: {
+        tenant_id_dify_knowledge_id: {
+          tenant_id: input.tenantId,
+          dify_knowledge_id: input.knowledgeId
+        }
+      },
+      create: {
+        tenant_id: input.tenantId,
+        dify_knowledge_id: input.knowledgeId,
+        knowledge_base_id: input.knowledgeBaseId,
+        status: input.status,
+        created_by: input.me.user.id,
+        created_at: now,
+        updated_at: now,
+        dify_dataset_id: input.dataset.id,
+        dify_dataset_name: input.dataset.name,
+        dify_external_api_id: input.external.external_knowledge_api_id ?? null,
+        dify_external_api_name: input.external.external_knowledge_api_name ?? null,
+        dify_endpoint: input.external.external_knowledge_api_endpoint ?? null
+      },
+      update: {
+        knowledge_base_id: input.knowledgeBaseId,
+        status: input.status,
+        created_by: input.me.user.id,
+        updated_at: now,
+        dify_dataset_id: input.dataset.id,
+        dify_dataset_name: input.dataset.name,
+        dify_external_api_id: input.external.external_knowledge_api_id ?? null,
+        dify_external_api_name: input.external.external_knowledge_api_name ?? null,
+        dify_endpoint: input.external.external_knowledge_api_endpoint ?? null
+      }
+    });
+  }
+
+  private async resolveDifyHubMetadataMapping(
+    me: AuthenticatedUser,
+    input: SyncDifyHubMetadataInput
+  ) {
+    const where = this.tenantWhere(me);
+    if (input.dify_dataset_id) {
+      const mapping = await this.prisma.difyKnowledgeMapping.findFirst({
+        where: { ...where, dify_dataset_id: input.dify_dataset_id }
+      });
+      if (mapping) return mapping;
+    }
+    if (input.knowledge_base_id) {
+      const mapping = await this.prisma.difyKnowledgeMapping.findFirst({
+        where: { ...where, knowledge_base_id: input.knowledge_base_id }
+      });
+      if (mapping?.dify_dataset_id) return mapping;
+    }
+    throw new AuthError(
+      "OBJECT_NOT_FOUND",
+      "Dify dataset mapping was not found. Import or create the external dataset first.",
+      404
+    );
+  }
+
+  private async buildDifyHubDesiredMetadata(knowledgeBaseId: string, includeBuiltIns: boolean) {
+    await this.prisma.knowledgeBase.findUniqueOrThrow({ where: { id: knowledgeBaseId } });
+    const fields = await this.prisma.knowledgeBaseMetadataField.findMany({
+      where: { knowledge_base_id: knowledgeBaseId, status: "active" },
+      orderBy: [{ sort_order: "asc" }, { created_at: "asc" }]
+    });
+    const custom = fields
+      .filter((field) => !field.name.startsWith("openkb_"))
+      .map((field) => ({
+        name: field.name,
+        type: normalizeDifyHubMetadataType(field.type),
+        source: "custom"
+      }));
+    if (!custom.some((field) => field.name === "tags")) {
+      custom.push({ name: "tags", type: "string", source: "custom" });
+    }
+    return [
+      ...(includeBuiltIns
+        ? DIFY_BUILT_IN_FILTERABLE_FIELDS.map((field) => ({
+            name: field.name,
+            type: normalizeDifyHubMetadataType(field.type),
+            source: "built_in"
+          }))
+        : []),
+      ...custom
+    ];
+  }
+
   private async writeAudit(
     tx: Prisma.TransactionClient | PrismaClient,
     me: AuthenticatedUser,
@@ -1035,6 +1613,53 @@ function normalizeMappingStatus(value: string): string {
   throw new AuthError("INVALID_INPUT", "Unsupported mapping status.", 400);
 }
 
+function normalizeHubStatus(value: string): string {
+  if (value === "active" || value === "disabled") {
+    return value;
+  }
+  throw new AuthError("INVALID_INPUT", "Unsupported Dify Hub connection status.", 400);
+}
+
+function normalizeDifyHubBaseUrl(value: string): string {
+  const text = requireText(value, "dify_base_url");
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new AuthError("INVALID_INPUT", "Dify base URL is invalid.", 400);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new AuthError("INVALID_INPUT", "Dify base URL must use http or https.", 400);
+  }
+  if (url.username || url.password) {
+    throw new AuthError("INVALID_INPUT", "Dify base URL must not include credentials.", 400);
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
+function requireConfigEncryptionKey(): void {
+  if (!process.env.OPENKB_CONFIG_ENCRYPTION_KEY?.trim()) {
+    throw new AuthError(
+      "INVALID_INPUT",
+      "OPENKB_CONFIG_ENCRYPTION_KEY is required to save or read Dify Service API tokens.",
+      400
+    );
+  }
+}
+
+function encryptDifyHubToken(token: string): string {
+  requireConfigEncryptionKey();
+  return encryptModelSecret(token);
+}
+
+function decryptDifyHubToken(encryptedToken: string): string {
+  requireConfigEncryptionKey();
+  return decryptModelSecret(encryptedToken);
+}
+
 function normalizeJsonObject(value: Prisma.InputJsonValue): Prisma.InputJsonValue {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return value;
@@ -1085,6 +1710,14 @@ function toDifyMappingDto(mapping: {
   created_by: string;
   created_at: Date;
   updated_at: Date;
+  dify_dataset_id?: string | null;
+  dify_dataset_name?: string | null;
+  dify_external_api_id?: string | null;
+  dify_external_api_name?: string | null;
+  dify_endpoint?: string | null;
+  last_metadata_synced_at?: Date | null;
+  last_sync_status?: string | null;
+  last_sync_error?: string | null;
 }) {
   return {
     id: mapping.id,
@@ -1094,8 +1727,101 @@ function toDifyMappingDto(mapping: {
     status: mapping.status,
     created_by: mapping.created_by,
     created_at: mapping.created_at.toISOString(),
-    updated_at: mapping.updated_at.toISOString()
+    updated_at: mapping.updated_at.toISOString(),
+    dify_dataset_id: mapping.dify_dataset_id ?? null,
+    dify_dataset_name: mapping.dify_dataset_name ?? null,
+    dify_external_api_id: mapping.dify_external_api_id ?? null,
+    dify_external_api_name: mapping.dify_external_api_name ?? null,
+    dify_endpoint: mapping.dify_endpoint ?? null,
+    last_metadata_synced_at: mapping.last_metadata_synced_at
+      ? mapping.last_metadata_synced_at.toISOString()
+      : null,
+    last_sync_status: mapping.last_sync_status ?? null,
+    last_sync_error: mapping.last_sync_error ?? null
   };
+}
+
+function toDifyHubConnectionDto(connection: {
+  id: string;
+  tenant_id: string;
+  dify_base_url: string;
+  service_api_token_last4: string | null;
+  status: string;
+  last_probe_status: string | null;
+  last_probe_error: string | null;
+  last_probe_at: Date | null;
+  updated_by: string;
+  created_at: Date;
+  updated_at: Date;
+}) {
+  return {
+    id: connection.id,
+    tenant_id: connection.tenant_id,
+    dify_base_url: connection.dify_base_url,
+    service_api_token_last4: connection.service_api_token_last4,
+    status: connection.status,
+    last_probe_status: connection.last_probe_status,
+    last_probe_error: connection.last_probe_error,
+    last_probe_at: connection.last_probe_at ? connection.last_probe_at.toISOString() : null,
+    updated_by: connection.updated_by,
+    created_at: connection.created_at.toISOString(),
+    updated_at: connection.updated_at.toISOString()
+  };
+}
+
+function toDifyHubDatasetDto(dataset: DifyHubDataset) {
+  const external = extractExternalKnowledgeInfo(dataset);
+  return {
+    id: dataset.id,
+    name: dataset.name,
+    provider: dataset.provider ?? null,
+    indexing_technique: dataset.indexing_technique ?? null,
+    permission: dataset.permission ?? null,
+    description: dataset.description ?? null,
+    external_knowledge_info: external.external_knowledge_id ? external : null,
+    created_at: dataset.created_at ?? null,
+    updated_at: dataset.updated_at ?? null
+  };
+}
+
+function extractExternalKnowledgeInfo(
+  dataset: DifyHubDataset,
+  fallback: {
+    external_knowledge_id?: string | null;
+    external_knowledge_api_id?: string | null;
+    external_knowledge_api_name?: string | null;
+    external_knowledge_api_endpoint?: string | null;
+  } = {}
+) {
+  const info = dataset.external_knowledge_info ?? {};
+  return {
+    external_knowledge_id: info.external_knowledge_id ?? fallback.external_knowledge_id ?? null,
+    external_knowledge_api_id:
+      info.external_knowledge_api_id ?? fallback.external_knowledge_api_id ?? null,
+    external_knowledge_api_name:
+      info.external_knowledge_api_name ?? fallback.external_knowledge_api_name ?? null,
+    external_knowledge_api_endpoint:
+      info.external_knowledge_api_endpoint ?? fallback.external_knowledge_api_endpoint ?? null
+  };
+}
+
+function normalizeDifyHubMetadataType(value: string): "string" | "number" | "time" {
+  if (value === "number" || value === "time") return value;
+  return "string";
+}
+
+function summarizeMetadataActions(actions: Array<{ action: string }>): Record<string, number> {
+  return actions.reduce<Record<string, number>>((summary, action) => {
+    summary[action.action] = (summary[action.action] ?? 0) + 1;
+    return summary;
+  }, {});
+}
+
+function errorToSafeMessage(error: unknown): string {
+  if (error instanceof DifyHubClientError) {
+    return `${error.code}: ${error.message}`.slice(0, 500);
+  }
+  return (error instanceof Error ? error.message : "Request failed.").slice(0, 500);
 }
 
 function toPublicUser(user: { id: string; email: string; display_name: string; status: string }) {

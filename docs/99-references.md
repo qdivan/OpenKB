@@ -31,6 +31,15 @@ This project intentionally follows public product/API documentation where useful
 
 The Yuque MCP references above are public server/API references used for capability comparison. OpenKB does not copy Yuque internal implementation details.
 
+## Yuque Product Model
+
+- Yuque spaces: https://www.yuque.com/about/groups
+- Yuque organizations guide: https://www.yuque.com/yuque/organizations/rfwopm
+- Yuque dashboard: https://www.yuque.com/dashboard
+- Yuque knowledge base permission explainer: https://www.idctalk.com/16873.html
+
+See also `docs/32-yuque-space-kb-model.zh-CN.md` for the OpenKB personal/team space and knowledge base roadmap.
+
 ## Codex
 
 - AGENTS.md guide: https://developers.openai.com/codex/guides/agents-md

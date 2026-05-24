@@ -14,19 +14,30 @@ import { FormEvent, useEffect, useState, type ReactNode } from "react";
 
 import {
   ApiRequestError,
+  createDifyHubDataset,
   createDifyApiKey,
+  deleteDifyHubDataset,
   getDifyFilterableMetadata,
+  getDifyHubConnection,
   getDifySetupSummary,
+  importDifyHubDataset,
   isUnauthorized,
+  listDifyHubDatasets,
   listKnowledgeBases,
   listDifyApiKeys,
   listDifyMappings,
+  probeDifyHubConnection,
   revealDifyApiKey,
   revokeDifyApiKey,
   rotateDifyApiKey,
+  saveDifyHubConnection,
+  syncDifyHubMetadata,
   upsertDifyMapping,
   type DifyApiKey,
   type DifyFilterableMetadataField,
+  type DifyHubConnection,
+  type DifyHubDataset,
+  type DifyHubMetadataSyncResult,
   type DifyKnowledgeMapping,
   type DifySetupSummary,
   type KnowledgeBase
@@ -44,6 +55,25 @@ export function DifyAdminClient() {
   const [setup, setSetup] = useState<DifySetupSummary | null>(null);
   const [filterableFields, setFilterableFields] = useState<DifyFilterableMetadataField[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [hubConnection, setHubConnection] = useState<DifyHubConnection | null>(null);
+  const [hubDatasets, setHubDatasets] = useState<DifyHubDataset[]>([]);
+  const [hubForm, setHubForm] = useState({
+    dify_base_url: "",
+    service_api_token: ""
+  });
+  const [hubImportForm, setHubImportForm] = useState({
+    dify_dataset_id: "",
+    knowledge_base_id: ""
+  });
+  const [hubCreateForm, setHubCreateForm] = useState({
+    name: "",
+    external_knowledge_api_id: "",
+    external_knowledge_id: "",
+    knowledge_base_id: ""
+  });
+  const [hubSyncResult, setHubSyncResult] = useState<DifyHubMetadataSyncResult | null>(null);
+  const [deleteDatasetDialog, setDeleteDatasetDialog] = useState<DifyHubDataset | null>(null);
+  const [hubExternalKnowledgeIdTouched, setHubExternalKnowledgeIdTouched] = useState(false);
   const [form, setForm] = useState({
     name: "",
     knowledge_id: "",
@@ -67,6 +97,7 @@ export function DifyAdminClient() {
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [hubBusy, setHubBusy] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,15 +113,25 @@ export function DifyAdminClient() {
         listDifyMappings({ limit: 100 }),
         listKnowledgeBases()
       ]);
-      const [nextSetup, nextFilterable] = await Promise.all([
+      const [nextSetup, nextFilterable, nextHubConnection] = await Promise.all([
         getDifySetupSummary(),
-        getDifyFilterableMetadata()
+        getDifyFilterableMetadata(),
+        getDifyHubConnection()
       ]);
       setKeys(nextKeys.items);
       setMappings(nextMappings.items);
       setSetup(nextSetup);
       setFilterableFields(nextFilterable.fields);
       setKnowledgeBases(nextKnowledgeBases);
+      setHubConnection(nextHubConnection.item);
+      if (nextHubConnection.item) {
+        setHubForm((current) => ({
+          ...current,
+          dify_base_url: nextHubConnection.item?.dify_base_url ?? current.dify_base_url,
+          service_api_token: ""
+        }));
+        await refreshHubDatasets();
+      }
     } catch (error) {
       handleError(error);
     } finally {
@@ -214,6 +255,146 @@ export function DifyAdminClient() {
     ]);
     setMappings(nextMappings.items);
     setSetup(nextSetup);
+    if (hubConnection) {
+      await refreshHubDatasets();
+    }
+  }
+
+  async function refreshHubDatasets() {
+    try {
+      const nextDatasets = await listDifyHubDatasets();
+      setHubDatasets(nextDatasets.items);
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.body.error === "DIFY_HUB_NOT_CONFIGURED") {
+        setHubDatasets([]);
+        return;
+      }
+      handleError(error);
+    }
+  }
+
+  async function saveHubConnection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setHubBusy("connection");
+    setMessage("");
+    try {
+      const connection = await saveDifyHubConnection({
+        dify_base_url: hubForm.dify_base_url.trim(),
+        service_api_token: hubForm.service_api_token.trim() || undefined,
+        status: "active"
+      });
+      setHubConnection(connection);
+      setHubForm({ dify_base_url: connection.dify_base_url, service_api_token: "" });
+      setMessage(t("Dify Hub connection saved."));
+      await refreshHubDatasets();
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setHubBusy(null);
+    }
+  }
+
+  async function probeHubConnection() {
+    setHubBusy("probe");
+    setMessage("");
+    try {
+      const result = await probeDifyHubConnection();
+      setHubConnection(result.connection);
+      setMessage(
+        result.ok
+          ? t("Dify Hub probe succeeded.")
+          : `${t("Dify Hub probe failed.")} ${result.error ?? ""}`.trim()
+      );
+      if (result.ok) {
+        await refreshHubDatasets();
+      }
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setHubBusy(null);
+    }
+  }
+
+  async function importHubDataset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setHubBusy("import");
+    setMessage("");
+    try {
+      const result = await importDifyHubDataset(hubImportForm);
+      setHubImportForm({ dify_dataset_id: "", knowledge_base_id: "" });
+      setMessage(t("Dify external dataset imported."));
+      await refreshDifyRelations();
+      setHubSyncResult(
+        await syncDifyHubMetadata({ dify_dataset_id: result.dataset.id, dry_run: true })
+      );
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setHubBusy(null);
+    }
+  }
+
+  async function createHubDataset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setHubBusy("create-dataset");
+    setMessage("");
+    try {
+      const result = await createDifyHubDataset(hubCreateForm);
+      setHubCreateForm({
+        name: "",
+        external_knowledge_api_id: "",
+        external_knowledge_id: "",
+        knowledge_base_id: ""
+      });
+      setHubExternalKnowledgeIdTouched(false);
+      setMessage(t("Dify external dataset created."));
+      await refreshDifyRelations();
+      setHubSyncResult(
+        await syncDifyHubMetadata({ dify_dataset_id: result.dataset.id, dry_run: true })
+      );
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setHubBusy(null);
+    }
+  }
+
+  async function runMetadataSync(dataset: DifyHubDataset, dryRun: boolean) {
+    setHubBusy(`${dryRun ? "dry-run" : "sync"}:${dataset.id}`);
+    setMessage("");
+    try {
+      const result = await syncDifyHubMetadata({
+        dify_dataset_id: dataset.id,
+        dry_run: dryRun,
+        include_built_ins: true,
+        delete_extra: false
+      });
+      setHubSyncResult(result);
+      setMessage(dryRun ? t("Metadata sync plan generated.") : t("Metadata synced to Dify."));
+      if (!dryRun) {
+        await refreshDifyRelations();
+      }
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setHubBusy(null);
+    }
+  }
+
+  async function deleteHubDataset() {
+    if (!deleteDatasetDialog) return;
+    setHubBusy(`delete:${deleteDatasetDialog.id}`);
+    setMessage("");
+    try {
+      await deleteDifyHubDataset(deleteDatasetDialog.id);
+      setDeleteDatasetDialog(null);
+      setMessage(t("Dify external dataset deleted. OpenKB content was not deleted."));
+      await refreshDifyRelations();
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setHubBusy(null);
+    }
   }
 
   function upsertKeyInList(key: DifyApiKey) {
@@ -270,6 +451,30 @@ export function DifyAdminClient() {
     });
   }
 
+  function selectHubCreateKnowledgeBase(knowledgeBaseId: string) {
+    const knowledgeBase = knowledgeBases.find((item) => item.id === knowledgeBaseId);
+    const existingMapping = mappings.find((item) => item.knowledge_base_id === knowledgeBaseId);
+    const nextExternalKnowledgeId = hubExternalKnowledgeIdTouched
+      ? hubCreateForm.external_knowledge_id
+      : existingMapping?.dify_knowledge_id ||
+        (knowledgeBase ? suggestDifyKnowledgeId(knowledgeBase) : "");
+    setHubCreateForm({
+      ...hubCreateForm,
+      knowledge_base_id: knowledgeBaseId,
+      name: hubCreateForm.name || knowledgeBase?.title || "",
+      external_knowledge_id: nextExternalKnowledgeId
+    });
+  }
+
+  function selectHubImportDataset(datasetId: string) {
+    const dataset = hubDatasets.find((item) => item.id === datasetId);
+    setHubImportForm({
+      ...hubImportForm,
+      dify_dataset_id: datasetId,
+      knowledge_base_id: dataset?.mapping?.knowledge_base_id ?? hubImportForm.knowledge_base_id
+    });
+  }
+
   function handleError(error: unknown) {
     if (isUnauthorized(error)) {
       router.replace("/login");
@@ -311,6 +516,302 @@ export function DifyAdminClient() {
           title={secretDialog.title}
         />
       ) : null}
+      {deleteDatasetDialog ? (
+        <ConfirmDialog
+          body={t(
+            "This deletes the Dify external dataset only. OpenKB knowledge base content, mappings, and API keys are not deleted."
+          )}
+          confirmLabel={t("Delete Dify dataset")}
+          isBusy={hubBusy === `delete:${deleteDatasetDialog.id}`}
+          onCancel={() => setDeleteDatasetDialog(null)}
+          onConfirm={() => void deleteHubDataset()}
+          title={`${t("Delete Dify dataset")}: ${deleteDatasetDialog.name}`}
+        />
+      ) : null}
+
+      <Panel
+        help={t(
+          "Dify Hub uses Dify's Dataset Service API token to manage external datasets and metadata. It never uses Dify console cookies or writes the Dify database."
+        )}
+        title={t("Dify Hub")}
+      >
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-4">
+            <form className="rounded-md border border-zinc-200 p-3" onSubmit={saveHubConnection}>
+              <HelpLabel
+                help={t(
+                  "Create a Dify Dataset Service API token in Dify, then save it here. The token is encrypted with OPENKB_CONFIG_ENCRYPTION_KEY and only last4 is shown."
+                )}
+                label={t("Dify Service API connection")}
+                size="section"
+              />
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <TextInput
+                  help={t(
+                    "The Dify base URL reachable from the OpenKB API container. In local compose this is usually a host or WSL gateway address, not the browser localhost."
+                  )}
+                  label={t("Dify base URL")}
+                  onChange={(value) => setHubForm({ ...hubForm, dify_base_url: value })}
+                  value={hubForm.dify_base_url}
+                />
+                <TextInput
+                  help={t(
+                    "Write-only. Leave blank when updating the URL without rotating the Dify Service API token."
+                  )}
+                  label={t("Dify Service API token")}
+                  onChange={(value) => setHubForm({ ...hubForm, service_api_token: value })}
+                  type="password"
+                  value={hubForm.service_api_token}
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:bg-zinc-400"
+                  disabled={hubBusy === "connection"}
+                  type="submit"
+                >
+                  {hubBusy === "connection" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  {t("Save connection")}
+                </button>
+                <SmallButton
+                  disabled={!hubConnection || hubBusy === "probe"}
+                  onClick={probeHubConnection}
+                >
+                  {hubBusy === "probe" ? (
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  {t("Probe")}
+                </SmallButton>
+                <span className="text-xs text-zinc-500">
+                  {hubConnection
+                    ? `${t("Connected")} · ${hubConnection.dify_base_url} · last4 ${
+                        hubConnection.service_api_token_last4 ?? "----"
+                      }`.replaceAll("\u8def", "/")
+                    : t("Not configured")}
+                </span>
+              </div>
+            </form>
+
+            <form className="rounded-md border border-zinc-200 p-3" onSubmit={createHubDataset}>
+              <HelpLabel
+                help={t(
+                  "Dify still needs one External Knowledge API template created in Dify UI first. Paste that template id here, then OpenKB can create external datasets through Dify Service API."
+                )}
+                label={t("Create Dify external dataset")}
+                size="section"
+              />
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <KnowledgeBaseSelect
+                  help={t("OpenKB knowledge base that this Dify dataset should query.")}
+                  knowledgeBases={knowledgeBases}
+                  label={t("OpenKB knowledge base")}
+                  onChange={selectHubCreateKnowledgeBase}
+                  value={hubCreateForm.knowledge_base_id}
+                />
+                <TextInput
+                  help={t("Dify dataset display name.")}
+                  label={t("Dataset name")}
+                  onChange={(value) => setHubCreateForm({ ...hubCreateForm, name: value })}
+                  value={hubCreateForm.name}
+                />
+                <TextInput
+                  help={t("External Knowledge ID sent by Dify to OpenKB retrieval.")}
+                  label={t("External Knowledge ID")}
+                  onChange={(value) => {
+                    setHubExternalKnowledgeIdTouched(true);
+                    setHubCreateForm({ ...hubCreateForm, external_knowledge_id: value });
+                  }}
+                  value={hubCreateForm.external_knowledge_id}
+                />
+                <TextInput
+                  help={t(
+                    "The Dify External Knowledge API template id. Import an existing external dataset to discover it, or copy it from Dify."
+                  )}
+                  label={t("External Knowledge API id")}
+                  onChange={(value) =>
+                    setHubCreateForm({ ...hubCreateForm, external_knowledge_api_id: value })
+                  }
+                  value={hubCreateForm.external_knowledge_api_id}
+                />
+              </div>
+              <button
+                className="mt-3 inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:bg-zinc-400"
+                disabled={hubBusy === "create-dataset"}
+                type="submit"
+              >
+                {hubBusy === "create-dataset" ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : null}
+                {t("Create Dify dataset")}
+              </button>
+            </form>
+          </div>
+
+          <div className="space-y-4">
+            <form className="rounded-md border border-zinc-200 p-3" onSubmit={importHubDataset}>
+              <HelpLabel
+                help={t(
+                  "Use this when the external dataset already exists in Dify. OpenKB reads its External Knowledge ID and API template linkage, then stores the mapping."
+                )}
+                label={t("Import existing Dify dataset")}
+                size="section"
+              />
+              <div className="mt-3 space-y-3">
+                <label className="block text-sm">
+                  <HelpLabel
+                    help={t("Only external Dify datasets should be imported.")}
+                    label={t("Dify dataset")}
+                  />
+                  <select
+                    className={inputClass}
+                    onChange={(event) => selectHubImportDataset(event.target.value)}
+                    value={hubImportForm.dify_dataset_id}
+                  >
+                    <option value="">{t("Select Dify dataset")}</option>
+                    {hubDatasets
+                      .filter((dataset) => dataset.provider === "external")
+                      .map((dataset) => (
+                        <option key={dataset.id} value={dataset.id}>
+                          {dataset.name} ({dataset.id.slice(0, 8)})
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <KnowledgeBaseSelect
+                  help={t("OpenKB knowledge base that should answer this Dify dataset.")}
+                  knowledgeBases={knowledgeBases}
+                  label={t("OpenKB knowledge base")}
+                  onChange={(value) =>
+                    setHubImportForm({ ...hubImportForm, knowledge_base_id: value })
+                  }
+                  value={hubImportForm.knowledge_base_id}
+                />
+                <button
+                  className="inline-flex h-9 items-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:bg-zinc-400"
+                  disabled={hubBusy === "import"}
+                  type="submit"
+                >
+                  {t("Import dataset")}
+                </button>
+              </div>
+            </form>
+
+            <div className="rounded-md border border-zinc-200 p-3">
+              <HelpLabel
+                help={t(
+                  "Sync OpenKB document metadata fields into Dify so Workflow Knowledge Retrieval can show metadata filter options."
+                )}
+                label={t("Metadata sync plan")}
+                size="section"
+              />
+              {hubSyncResult ? (
+                <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1 text-xs">
+                  {hubSyncResult.actions.map((action, index) => (
+                    <div
+                      className="flex items-start justify-between gap-2 rounded border border-zinc-200 p-2"
+                      key={`${action.name}:${index}`}
+                    >
+                      <div>
+                        <strong>{action.name}</strong>
+                        <div className="text-zinc-500">
+                          {action.type} · {action.source}
+                        </div>
+                        {action.detail ? (
+                          <div className="text-amber-700">{action.detail}</div>
+                        ) : null}
+                      </div>
+                      <span className="rounded-full bg-zinc-100 px-2 py-0.5">{action.action}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-zinc-500">
+                  {t("Run dry-run on a dataset to preview metadata changes.")}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <HelpLabel
+              help={t("External datasets discovered through Dify Service API.")}
+              label={t("Dify external datasets")}
+              size="section"
+            />
+            <SmallButton disabled={!hubConnection} onClick={() => void refreshHubDatasets()}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t("Refresh")}
+            </SmallButton>
+          </div>
+          <div className="grid gap-2 xl:grid-cols-2">
+            {hubDatasets
+              .filter((dataset) => dataset.provider === "external")
+              .map((dataset) => (
+                <article className="rounded-md border border-zinc-200 p-3 text-sm" key={dataset.id}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <strong className="block truncate">{dataset.name}</strong>
+                      <p className="mt-1 truncate font-mono text-xs text-zinc-500">{dataset.id}</p>
+                    </div>
+                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs">
+                      {dataset.provider}
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1 text-xs text-zinc-500">
+                    <div>
+                      {t("External Knowledge ID")}:{" "}
+                      {dataset.external_knowledge_info?.external_knowledge_id ?? "-"}
+                    </div>
+                    <div>
+                      {t("External Knowledge API id")}:{" "}
+                      {dataset.external_knowledge_info?.external_knowledge_api_id ?? "-"}
+                    </div>
+                    <div>
+                      {t("Mapping")}:{" "}
+                      {dataset.mapping
+                        ? formatKnowledgeBaseLabel(
+                            dataset.mapping.knowledge_base_id,
+                            knowledgeBases
+                          )
+                        : t("Not imported")}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <SmallButton
+                      disabled={hubBusy === `dry-run:${dataset.id}`}
+                      onClick={() => void runMetadataSync(dataset, true)}
+                    >
+                      {t("Dry-run metadata")}
+                    </SmallButton>
+                    <SmallButton
+                      disabled={!dataset.mapping || hubBusy === `sync:${dataset.id}`}
+                      onClick={() => void runMetadataSync(dataset, false)}
+                    >
+                      {t("Sync metadata")}
+                    </SmallButton>
+                    <SmallButton
+                      disabled={
+                        !dataset.mapping?.dify_dataset_id || hubBusy === `delete:${dataset.id}`
+                      }
+                      onClick={() => setDeleteDatasetDialog(dataset)}
+                    >
+                      {t("Delete")}
+                    </SmallButton>
+                  </div>
+                </article>
+              ))}
+            {!hubDatasets.some((dataset) => dataset.provider === "external") ? (
+              <Empty>{t("No Dify external datasets discovered.")}</Empty>
+            ) : null}
+          </div>
+        </div>
+      </Panel>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Panel
@@ -661,6 +1162,56 @@ function SecretDialog({
           >
             <Copy className="h-4 w-4" />
             {t("Copy")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  body,
+  confirmLabel,
+  isBusy,
+  onCancel,
+  onConfirm,
+  title
+}: {
+  body: string;
+  confirmLabel: string;
+  isBusy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  title: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/30 px-4 py-6">
+      <section
+        aria-modal="true"
+        className="w-full max-w-md rounded-md border border-zinc-200 bg-white shadow-xl"
+        role="dialog"
+      >
+        <div className="border-b border-zinc-200 px-5 py-4">
+          <h2 className="text-base font-semibold text-zinc-950">{title}</h2>
+          <p className="mt-2 text-sm leading-6 text-zinc-600">{body}</p>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2 px-5 py-4">
+          <button
+            className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
+            onClick={onCancel}
+            type="button"
+          >
+            {t("Cancel")}
+          </button>
+          <button
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-red-600 px-3 text-sm font-medium text-white hover:bg-red-700 disabled:bg-red-300"
+            disabled={isBusy}
+            onClick={onConfirm}
+            type="button"
+          >
+            {isBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+            {confirmLabel}
           </button>
         </div>
       </section>

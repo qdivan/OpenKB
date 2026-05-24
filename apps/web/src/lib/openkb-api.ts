@@ -206,6 +206,60 @@ export type DifyKnowledgeMapping = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  dify_dataset_id: string | null;
+  dify_dataset_name: string | null;
+  dify_external_api_id: string | null;
+  dify_external_api_name: string | null;
+  dify_endpoint: string | null;
+  last_metadata_synced_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+};
+
+export type DifyHubConnection = {
+  id: string;
+  tenant_id: string;
+  dify_base_url: string;
+  service_api_token_last4: string | null;
+  status: string;
+  last_probe_status: string | null;
+  last_probe_error: string | null;
+  last_probe_at: string | null;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DifyHubDataset = {
+  id: string;
+  name: string;
+  provider: string | null;
+  indexing_technique: string | null;
+  permission: string | null;
+  description: string | null;
+  external_knowledge_info: {
+    external_knowledge_id: string | null;
+    external_knowledge_api_id: string | null;
+    external_knowledge_api_name: string | null;
+    external_knowledge_api_endpoint: string | null;
+  } | null;
+  created_at: string | number | null;
+  updated_at: string | number | null;
+  mapping?: DifyKnowledgeMapping | null;
+};
+
+export type DifyHubMetadataSyncResult = {
+  dry_run: boolean;
+  dataset: DifyHubDataset;
+  mapping: DifyKnowledgeMapping;
+  actions: Array<{
+    action: string;
+    name: string;
+    type: string;
+    source: string;
+    detail?: string;
+  }>;
+  summary: Record<string, number>;
 };
 
 export type DifyApiKeyListResponse = {
@@ -1839,6 +1893,85 @@ export function getDifyFilterableMetadata(input: { knowledge_base_id?: string } 
   return apiFetch<DifyFilterableMetadataResponse>(
     `/api/admin/dify/filterable-metadata${query ? `?${query}` : ""}`
   );
+}
+
+export function getDifyHubConnection() {
+  return apiFetch<{ item: DifyHubConnection | null }>("/api/admin/dify/hub/connection");
+}
+
+export function saveDifyHubConnection(input: {
+  dify_base_url: string;
+  service_api_token?: string;
+  status?: string;
+}) {
+  return apiFetch<DifyHubConnection>("/api/admin/dify/hub/connection", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function probeDifyHubConnection() {
+  return apiFetch<{
+    ok: boolean;
+    dataset_count?: number;
+    external_dataset_count?: number;
+    error?: string;
+    connection: DifyHubConnection;
+  }>("/api/admin/dify/hub/probe", { method: "POST" });
+}
+
+export function listDifyHubDatasets() {
+  return apiFetch<{ items: DifyHubDataset[] }>("/api/admin/dify/hub/datasets");
+}
+
+export function importDifyHubDataset(input: {
+  dify_dataset_id: string;
+  knowledge_base_id: string;
+  status?: string;
+}) {
+  return apiFetch<{ dataset: DifyHubDataset; mapping: DifyKnowledgeMapping }>(
+    "/api/admin/dify/hub/datasets/import",
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function createDifyHubDataset(input: {
+  name: string;
+  description?: string | null;
+  external_knowledge_api_id: string;
+  external_knowledge_id: string;
+  knowledge_base_id: string;
+}) {
+  return apiFetch<{ dataset: DifyHubDataset; mapping: DifyKnowledgeMapping }>(
+    "/api/admin/dify/hub/datasets",
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function deleteDifyHubDataset(difyDatasetId: string) {
+  return apiFetch<{ deleted: boolean; mapping: DifyKnowledgeMapping | null }>(
+    `/api/admin/dify/hub/datasets/${encodeURIComponent(difyDatasetId)}`,
+    { method: "DELETE" }
+  );
+}
+
+export function syncDifyHubMetadata(input: {
+  dify_dataset_id?: string;
+  knowledge_base_id?: string;
+  dry_run?: boolean;
+  include_built_ins?: boolean;
+  delete_extra?: boolean;
+}) {
+  return apiFetch<DifyHubMetadataSyncResult>("/api/admin/dify/hub/metadata-sync", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
 }
 
 export function createDifyApiKey(input: {

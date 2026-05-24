@@ -102,3 +102,16 @@ tenant_memberships.role = system_admin
 ```
 
 如果系统采用多租户初始化流程，该用户也应成为默认 tenant 的 tenant_admin。
+
+## 8. 个人空间路线图
+
+Phase 27 起，新用户完成注册、验证和激活后，应自动拥有一个个人空间：
+
+```text
+用户完成注册/激活
+  -> 创建或确认 personal workspace
+  -> 写入 workspace_members(owner)
+  -> 首次登录进入个人空间 dashboard
+```
+
+个人空间 owner 不等于 `system_admin`。租户继续是后台和部署边界，不显示为普通用户的空间入口。团队协作通过用户显式创建团队空间实现。

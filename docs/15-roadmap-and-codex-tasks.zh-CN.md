@@ -323,3 +323,26 @@ Phase 20 实现落点：
 - `docs/31-dify-parity-next-phases.zh-CN.md` 现在作为 Phase 23-25 收口记录和后续验证入口。
 - 后续重点转为发布后观察、Top-k 排序差异归因和旧派生数据手动 reprocess + Milvus rebuild runbook。
 - 多模态后续增强可以继续扩展更多图片格式、附件预览和 OCR/caption 质量，但 Phase 25 的内部图片 asset binding、image vector 与回源 metadata 已通过 smoke。
+
+## Phase 26 - Dify Hub 与语雀式空间路线图
+
+输出：
+- Dify Hub：使用 Dify Dataset Service API token 管理 external dataset 和 metadata schema；不使用 Console cookie，不写 Dify 数据库。
+- Hub dataset list 支持分页读取；删除只允许已导入且已映射到当前租户 OpenKB KB 的 `provider=external` dataset。
+- OpenKB Admin -> Dify 增加 Hub 连接、probe、导入已有 external dataset、创建 external dataset、metadata dry-run/sync。
+- 语雀式空间路线图：明确个人空间和团队空间都由 `workspace` 承载，不新增独立 Team 表；租户保持后台、部署和多租户边界。
+- 新增 `docs/32-yuque-space-kb-model.zh-CN.md` 作为 Phase 27-31 的空间、注册、知识库和权限收口入口。
+
+边界：
+- Phase 26 不实现个人空间自动创建和团队空间切换器，只发布 Dify Hub 与路线图。
+- Dify Service API token 必须加密保存，不返回 raw token。
+- Hub 删除 Dify dataset 不删除 OpenKB KB 内容、OpenKB Dify key 或 Dify External Knowledge API 模板。
+
+## Phase 27-31 - 语雀式空间与知识库体验
+
+后续阶段见 `docs/32-yuque-space-kb-model.zh-CN.md`：
+- Phase 27：注册与个人空间。
+- Phase 28：团队空间创建与空间切换器。
+- Phase 29：空间主页与知识库归属。
+- Phase 30：语雀式权限细化。
+- Phase 31：旧 workspace 迁移与兼容 runbook。

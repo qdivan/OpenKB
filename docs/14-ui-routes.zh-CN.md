@@ -39,12 +39,18 @@
 主工作台：
 
 ```text
-Left sidebar: workspace / knowledge base
+Left sidebar: space / knowledge base
 Document tree: folder + page
 Center: KB dashboard or document editor
 Right panel: outline / metadata / versions
 Top actions: search, settings, collaborators, share, logout
 ```
+
+Phase 27-29 的语雀式空间入口会把左侧工作区列表逐步改为左上角空间切换器：
+
+- “个人”分组显示当前用户个人空间。
+- “空间”分组显示已加入的团队空间，并提供创建空间入口。
+- `workspace` 仍是内部对象名；用户可见文案优先使用“空间”。
 
 文档编辑页支持：
 
@@ -97,7 +103,7 @@ Settings 子 tabs：
 
 顶部协作按钮打开 AccessPanel：
 
-- Workspace 使用 `workspace_members`，角色为 `owner/admin/member/guest`。
+- Space / Workspace 使用 `workspace_members`，角色为 `owner/admin/member/guest`。
 - KB/document 使用 `collaborators`，角色为 `owner/manager/editor/viewer`。
 - 邮箱邀请支持过期时间、最大使用次数和审批。
 - `/invite/:token` 用于登录用户接受邀请。

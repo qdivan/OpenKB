@@ -52,6 +52,35 @@ DELETE /api/admin/models/:kind/secret
 
 Milvus 与 Retrieval 设置接口不保存模型 API key，只管理 OpenKB 侧可见的 index profile、job、alias 和检索模式。`/api/admin/models` 仅允许 `system_admin` 使用，可保存实例级 endpoint/model 和加密 secret；响应和审计日志不得返回 raw key。
 
+Dify Admin 接口包含 OpenKB Dify Adapter key/mapping，以及 Dify Hub。Dify Hub 只使用 Dify Dataset Service API `/v1`，不使用 Console cookie，也不写 Dify 数据库：
+
+```http
+GET    /api/admin/dify/setup
+GET    /api/admin/dify/filterable-metadata
+GET    /api/admin/dify/api-keys
+POST   /api/admin/dify/api-keys
+PATCH  /api/admin/dify/api-keys/:id
+POST   /api/admin/dify/api-keys/:id/reveal
+POST   /api/admin/dify/api-keys/:id/rotate
+POST   /api/admin/dify/api-keys/:id/revoke
+GET    /api/admin/dify/mappings
+POST   /api/admin/dify/mappings
+PATCH  /api/admin/dify/mappings/:id
+
+GET    /api/admin/dify/hub/connection
+PUT    /api/admin/dify/hub/connection
+POST   /api/admin/dify/hub/probe
+GET    /api/admin/dify/hub/datasets
+POST   /api/admin/dify/hub/datasets/import
+POST   /api/admin/dify/hub/datasets
+DELETE /api/admin/dify/hub/datasets/:difyDatasetId
+POST   /api/admin/dify/hub/metadata-sync
+```
+
+Dify Service API token 必须加密保存，依赖 `OPENKB_CONFIG_ENCRYPTION_KEY`。接口响应、审计日志和前端列表只返回 token last4，不返回 raw token。
+
+Hub 删除接口只允许删除已导入并映射到当前租户 OpenKB KB 的 Dify `provider=external` dataset；不会删除 OpenKB KB 内容、OpenKB Dify key 或 Dify External Knowledge API 模板。未导入的 Dify dataset 需要先导入后再由 Hub 管理，或在 Dify 侧删除。
+
 ## 3. Workspace / KB / Document
 
 ```http

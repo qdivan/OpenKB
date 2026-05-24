@@ -83,6 +83,8 @@ group_members (
 
 Workspace 成员角色只存在 `workspace_members` 表。不要把 workspace 成员关系写入 `collaborators`。
 
+产品语义上，Phase 27 起 `workspaces` 会承载个人空间和团队空间。Phase 26 当前 schema 仍只有基础 workspace 字段；后续 migration 可以补充空间类型、头像、主页配置等字段，但不新增独立 Team 表。
+
 ```sql
 workspaces (
   id uuid primary key,
@@ -119,6 +121,14 @@ knowledge_bases (
   unique (workspace_id, slug)
 )
 ```
+
+计划中的空间类型建议：
+
+```text
+workspace.kind = personal | team
+```
+
+已有 workspace 升级时不自动改内容权限；Phase 31 提供迁移报告和 runbook，由管理员确认哪些 workspace 归入个人空间或团队空间。
 
 ## 3. 文档和版本
 

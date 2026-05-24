@@ -820,14 +820,17 @@ export class ContentService {
       (document) => document.processing_status !== "current"
     ).length;
 
+    const pageDocumentGroups = documents.filter((item) => item.type === "page");
+    const folderDocumentGroups = documents.filter((item) => item.type === "folder");
+
     return {
       knowledge_base: toKnowledgeBaseDto(knowledgeBase),
       documents: {
-        total: sumGroupCounts(documents),
-        pages: sumGroupCounts(documents.filter((item) => item.type === "page")),
-        folders: sumGroupCounts(documents.filter((item) => item.type === "folder")),
-        published: sumGroupCounts(documents.filter((item) => item.status === "published")),
-        draft: sumGroupCounts(documents.filter((item) => item.status === "draft"))
+        total: sumGroupCounts(pageDocumentGroups),
+        pages: sumGroupCounts(pageDocumentGroups),
+        folders: sumGroupCounts(folderDocumentGroups),
+        published: sumGroupCounts(pageDocumentGroups.filter((item) => item.status === "published")),
+        draft: sumGroupCounts(pageDocumentGroups.filter((item) => item.status === "draft"))
       },
       chunks: {
         total: sumGroupCounts(chunksByType),
@@ -880,8 +883,10 @@ export class ContentService {
     rejectForbiddenChunkSettingKeys(input);
     const knowledgeBase = await this.requireKnowledgeBase(knowledgeBaseId);
     const current = await this.getOrCreateChunkSettings(this.prisma, me, knowledgeBase);
-    const patch = normalizeChunkSettingsInput(input);
-    const candidate = syncChunkSettingsProcessRule({ ...current, ...patch }, input);
+    assertImmutableChunkSettingScope(input, current);
+    const mutableInput = stripImmutableChunkSettingKeys(input);
+    const patch = normalizeChunkSettingsInput(mutableInput);
+    const candidate = syncChunkSettingsProcessRule({ ...current, ...patch }, mutableInput);
     patch.process_rule = candidate.process_rule as Prisma.InputJsonValue;
     validateChunkSettingsCandidate(candidate);
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -4563,7 +4568,7 @@ function normalizeChunkSettingsInput(input: UpdateChunkSettingsInput) {
       input.mode === "general" || input.mode === "parent_child" ? input.mode : failInput();
   }
   if (input.doc_form !== undefined) {
-    const nextDocForm = normalizeDocForm(input.doc_form);
+    const nextDocForm = normalizeCreateDocForm(input.doc_form);
     next.doc_form = nextDocForm;
     next.mode = nextDocForm === "text_model" ? "general" : "parent_child";
     next.process_rule_mode = nextDocForm === "hierarchical_model" ? "hierarchical" : "custom";
@@ -4617,6 +4622,69 @@ function normalizeChunkSettingsInput(input: UpdateChunkSettingsInput) {
   return next;
 }
 
+function stripImmutableChunkSettingKeys(input: UpdateChunkSettingsInput): UpdateChunkSettingsInput {
+  const { doc_form: _docForm, mode: _mode, parent_mode: _parentMode, ...rest } = input;
+  return rest;
+}
+
+function assertImmutableChunkSettingScope(
+  input: UpdateChunkSettingsInput,
+  current: {
+    mode?: string | null;
+    doc_form?: string | null;
+    parent_mode?: string | null;
+    process_rule?: unknown;
+  }
+): void {
+  if (input.doc_form !== undefined) {
+    const requestedDocForm = normalizeCreateDocForm(input.doc_form);
+    const currentDocForm = normalizeDocForm(current.doc_form);
+    if (requestedDocForm !== currentDocForm) {
+      throw new ContentError(
+        "INVALID_INPUT",
+        "Knowledge base type cannot be changed after creation.",
+        400
+      );
+    }
+  }
+
+  if (input.mode !== undefined) {
+    const requestedMode =
+      input.mode === "general" || input.mode === "parent_child" ? input.mode : failInput();
+    const currentMode = current.mode === "general" ? "general" : "parent_child";
+    if (requestedMode !== currentMode) {
+      throw new ContentError(
+        "INVALID_INPUT",
+        "Knowledge base segment layout cannot be changed after creation.",
+        400
+      );
+    }
+  }
+
+  const currentParentMode = normalizeParentMode(current.parent_mode ?? "paragraph");
+  if (input.parent_mode !== undefined) {
+    const requestedParentMode = normalizeParentMode(input.parent_mode);
+    if (requestedParentMode !== currentParentMode) {
+      throw new ContentError(
+        "INVALID_INPUT",
+        "Default parent-child mode is configured per document, not in knowledge base settings.",
+        400
+      );
+    }
+  }
+
+  if (input.process_rule !== undefined) {
+    const requestedParentMode = readSnapshotParentMode(input.process_rule);
+    if (requestedParentMode && requestedParentMode !== currentParentMode) {
+      throw new ContentError(
+        "INVALID_INPUT",
+        "Default parent-child mode is configured per document, not in knowledge base settings.",
+        400
+      );
+    }
+  }
+}
+
 function syncChunkSettingsProcessRule<
   T extends {
     process_rule?: unknown;
@@ -4642,12 +4710,11 @@ function syncChunkSettingsProcessRule<
     (typeof subchunkSegmentation.chunk_overlap === "number"
       ? subchunkSegmentation.chunk_overlap
       : settings.child_overlap_characters);
+  const explicitParentMode = input.parent_mode ?? readSnapshotParentMode(input.process_rule);
   const nextProcessRule = normalizeProcessRule({
     ...processRule,
     parent_mode:
-      input.parent_mode ??
-      processRule.parent_mode ??
-      (settings.parent_mode === "full_doc" ? "full-doc" : "paragraph"),
+      explicitParentMode ?? (settings.parent_mode === "full_doc" ? "full-doc" : "paragraph"),
     segmentation: {
       ...segmentation,
       ...(input.parent_delimiter !== undefined || settings.parent_delimiter !== undefined

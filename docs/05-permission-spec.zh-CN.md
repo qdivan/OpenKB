@@ -23,13 +23,17 @@ OpenFGA / Casbin / OPA
 
 ```text
 Tenant / 实例或租户
-  └── Workspace / 空间
+  └── Workspace / Space / 空间
+        ├── Personal Space / 个人空间
+        └── Team Space / 团队空间
         └── Knowledge Base / 知识库
               └── Folder / 目录
                     └── Document / 文档
 ```
 
 权限主要发生在 workspace、knowledge_base、document。folder 默认参与继承、目录结构和排序，不做单独权限体系。实现时 folder 不单独建表，而是 `documents.type = folder` 的目录节点；page 是 `documents.type = page` 的正文文档。
+
+Phase 27 起，OpenKB 的普通用户入口会逐步采用语雀式“个人空间 / 团队空间”表达。两者都由 `workspace` 承载，不新增独立 Team 表；租户继续作为实例、部署和后台管理边界，不作为普通用户的一层空间入口。
 
 ## 3. 角色命名和映射
 
@@ -104,6 +108,13 @@ system_admin 默认可以发现和管理实例范围内的 workspace / knowledge
 ## 5. Workspace / 空间权限
 
 空间是成员协作和安全策略边界。
+
+空间分为两类产品语义：
+
+- 个人空间：注册或首次激活后自动创建，默认只有本人是 owner，用于个人知识库和文档。
+- 团队空间：由用户显式创建，用于多人协作、成员邀请和团队知识库。
+
+两类空间都使用 `workspace_members`；团队不是独立对象，团队协作由团队空间表达。
 
 默认规则：
 

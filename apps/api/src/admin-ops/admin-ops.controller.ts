@@ -1,4 +1,17 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, Res } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  Req,
+  Res
+} from "@nestjs/common";
 import { AuthService } from "@openkb/auth";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
@@ -6,11 +19,15 @@ import { sendJsonError } from "../auth/http";
 import { getSessionToken } from "../content/session";
 import {
   AdminOpsService,
+  type CreateDifyHubDatasetInput,
   type CreateDifyApiKeyInput,
   type CreateMcpOauthClientInput,
   type CreateMcpPatInput,
+  type ImportDifyHubDatasetInput,
+  type SyncDifyHubMetadataInput,
   type UpdateDifyApiKeyInput,
   type UpdateMcpOauthClientInput,
+  type UpsertDifyHubConnectionInput,
   type UpsertDifyMappingInput
 } from "./admin-ops.service";
 
@@ -48,6 +65,110 @@ export class AdminOpsController {
       return await this.adminOps.getDifyFilterableMetadata(getSessionToken(request, this.auth), {
         knowledge_base_id: knowledgeBaseId
       });
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("dify/hub/connection")
+  async getDifyHubConnection(
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.getDifyHubConnection(getSessionToken(request, this.auth));
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Put("dify/hub/connection")
+  async upsertDifyHubConnection(
+    @Body() body: UpsertDifyHubConnectionInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.upsertDifyHubConnection(getSessionToken(request, this.auth), body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/hub/probe")
+  async probeDifyHubConnection(
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.probeDifyHubConnection(getSessionToken(request, this.auth));
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Get("dify/hub/datasets")
+  async listDifyHubDatasets(
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.listDifyHubDatasets(getSessionToken(request, this.auth));
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/hub/datasets/import")
+  async importDifyHubDataset(
+    @Body() body: ImportDifyHubDatasetInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.importDifyHubDataset(getSessionToken(request, this.auth), body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/hub/datasets")
+  async createDifyHubDataset(
+    @Body() body: CreateDifyHubDatasetInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.createDifyHubDataset(getSessionToken(request, this.auth), body);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Delete("dify/hub/datasets/:difyDatasetId")
+  async deleteDifyHubDataset(
+    @Param("difyDatasetId") difyDatasetId: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.deleteDifyHubDataset(
+        getSessionToken(request, this.auth),
+        difyDatasetId
+      );
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
+  @Post("dify/hub/metadata-sync")
+  async syncDifyHubMetadata(
+    @Body() body: SyncDifyHubMetadataInput,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.adminOps.syncDifyHubMetadata(getSessionToken(request, this.auth), body);
     } catch (error) {
       return sendJsonError(error, reply);
     }

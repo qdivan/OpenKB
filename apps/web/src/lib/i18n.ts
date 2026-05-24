@@ -160,7 +160,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "No summaries": "暂无摘要",
   "Summary updated. Rebuild Milvus index before retrieval updates.":
     "摘要已更新。请重建 Milvus 索引后让检索生效。",
-  "Dify doc form": "Dify 文档形态",
+  "Dify doc form": "知识库类型",
   "General document": "普通文档",
   "Parent-child document": "父子文档",
   "QA document": "QA 文档",
@@ -234,7 +234,9 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Create folder": "创建目录",
   "Create knowledge base": "创建知识库",
   "Choose a knowledge base type first. You can change it later in settings.":
-    "先选择知识库类型，之后仍可在设置中调整。",
+    "先选择知识库类型。类型创建后不可直接切换。",
+  "Choose a knowledge base type first. It cannot be changed directly later; create another knowledge base or migrate content if the type is wrong.":
+    "先选择知识库类型。创建后不可直接切换；如果选错，请新建知识库或迁移内容。",
   "Segment knowledge base": "分段知识库",
   "Parent-child knowledge base": "父子知识库",
   "QA knowledge base": "QA 知识库",
@@ -277,7 +279,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Font size": "字号",
   "Font size is not part of the V1 Markdown dialect.": "字号不属于 V1 Markdown 方言。",
   "Format painter": "格式刷",
-  "Full doc": "整篇文档",
+  "Full doc": "全文文档",
   "Full text": "全文",
   General: "通用",
   "Heading 1": "标题 1",
@@ -456,7 +458,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   Overview: "概览",
   Outline: "大纲",
   "Outline numbering needs a dedicated list style plugin.": "大纲编号需要专门的列表样式插件。",
-  Paragraph: "正文",
+  Paragraph: "段落",
   "Paragraph and heading": "正文与标题",
   "Paragraph parent": "段落父块",
   "Parent child": "父子块",
@@ -1170,11 +1172,26 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Metadata saved.": "元数据已保存。",
   "Add fields in the knowledge base Metadata tab.": "请在知识库“元数据”标签中添加字段。",
 
-  "Dify doc form": "Dify 文档模式",
+  "Dify doc form": "知识库类型",
+  "Knowledge base type": "知识库类型",
   "Document form": "文档模式",
   "General document": "通用",
   "Parent-child document": "父子",
   "QA document": "问答",
+  "Parent and child segments": "父分段 + 子分段",
+  "QA pairs as retrieval segments": "QA 对作为检索分段",
+  "Standalone segments": "普通分段",
+  "Derived segment layout": "派生分段结构",
+  "Document-level parent-child mode": "文档级父子模式",
+  "Not used by this knowledge base type.": "此知识库类型不使用该设置。",
+  "Set paragraph parent-child or full-doc parent-child on each document's Segments page.":
+    "请在每篇文档的“分段”页设置段落父子或全文父子。",
+  "Knowledge base type decides the broad processing shape. It is selected at creation and does not configure model secrets.":
+    "知识库类型决定内容处理大类。它在创建时选择，不配置模型密钥。",
+  "Knowledge base type is selected at creation. Create another knowledge base or migrate content if the type is wrong.":
+    "知识库类型在创建时选择。选错时请新建知识库或迁移内容。",
+  "This is derived from the knowledge base type. It explains how PostgreSQL segments are shaped after explicit reprocess.":
+    "这是由知识库类型派生的结构，用于说明显式重处理后 PostgreSQL 分段如何生成。",
   "Processing mode": "处理模式",
   "Chunk rules": "分段规则",
   "Retrieval policy": "检索设置",
@@ -1189,10 +1206,36 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Automatic segmentation": "自动分段",
   "Custom segmentation": "自定义分段",
   "Hierarchical segmentation": "父子分段",
+  "QA pair indexing": "QA 对索引",
+  "Segmentation mode": "分段方式",
+  "Segment chars": "分段长度",
+  Delimiter: "分段标识符",
+  "Parent overlap": "父分段重叠",
+  "Segment overlap": "分段重叠",
+  "Segmentation rules are scoped to the knowledge base type. Parent-child mode itself is set per document.":
+    "分段规则受知识库类型约束；段落父子或全文父子本身在文档级设置。",
+  "Automatic and custom segmentation are the two processing rule choices for segment knowledge bases.":
+    "分段知识库可在自动分段和自定义分段之间选择。",
+  "Parent-child knowledge bases always use hierarchical segmentation. Choose paragraph parent-child or full-doc parent-child per document.":
+    "父子知识库固定使用父子分段；段落父子或全文父子请在每篇文档中选择。",
+  "QA knowledge bases index active QA pairs instead of body segments.":
+    "QA 知识库索引活跃 QA 对，而不是普通正文分段。",
+  "QA knowledge bases use manual, CSV, mock, or LLM generated QA pairs. Reprocess indexes active QA questions and returns answers.":
+    "QA 知识库使用手动、CSV、mock 或 LLM 生成的 QA 对。重处理会索引活跃问题，并在命中时返回答案。",
   "Parent segmentation creates retrieval context. Subchunk segmentation creates matchable child segments.":
     "父级分段生成检索上下文；子分段生成可命中的子分段。",
   "These Dify-like settings decide how documents are processed into derived segments. They do not configure model secrets.":
     "这些 Dify 风格设置决定文档如何被处理成派生分段；它们不配置模型密钥。",
+  "Internal segment layout. General creates standalone segments; parent child creates parent segments with child matches. It usually follows the document form.":
+    "内部的分段结构。通用会生成独立分段；父子会生成父分段和可命中的子分段。通常会跟随文档模式自动变化。",
+  "Knowledge base document type. General, parent-child, and QA decide whether documents become normal segments, parent-child segments, or question-answer pairs.":
+    "知识库的文档类型。通用、父子、问答分别决定文档会处理成普通分段、父子分段，还是问答对。",
+  "Indexing quality tier. Economy uses keyword or BM25 retrieval; high quality uses embedding, hybrid search, and rerank when configured.":
+    "索引质量层级。经济模式使用关键词或 BM25；高质量模式在配置后使用 Embedding、混合检索和 Rerank。",
+  "Processing rule shape. Automatic and custom create normal segments; hierarchical creates parent and child segments; QA indexes existing active QA pairs.":
+    "处理规则形态。自动和自定义生成普通分段；父子分段生成父块和子块；问答模式索引已有的活跃 QA 对。",
+  "Parent-child scope. Paragraph parent-child creates multiple parent segments; full-doc parent-child uses the whole document as one parent segment.":
+    "父子分段范围。段落父子会生成多个父分段；全文父子会把整篇文档作为一个父分段。",
   "Dify-like document processing is snapshotted per document version and reprocessed explicitly.":
     "Dify 风格文档处理会按文档版本保存快照，并由用户显式重处理。",
   "Reprocess rebuilds PostgreSQL segments from Markdown. Search, MCP, and Dify still need a Milvus index rebuild before they use the new segments.":
@@ -1268,6 +1311,70 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "API keys": "API 密钥",
   "Secret reveal": "显示密钥",
   "Secret copied.": "密钥已复制。",
+  "Dify Hub": "Dify Hub",
+  "Dify Hub uses Dify's Dataset Service API token to manage external datasets and metadata. It never uses Dify console cookies or writes the Dify database.":
+    "Dify Hub 使用 Dify Dataset Service API token 管理外部知识库数据集和元数据；不会使用 Dify Console cookie，也不会写 Dify 数据库。",
+  "Dify Service API connection": "Dify Service API 连接",
+  "Create a Dify Dataset Service API token in Dify, then save it here. The token is encrypted with OPENKB_CONFIG_ENCRYPTION_KEY and only last4 is shown.":
+    "在 Dify 中创建 Dataset Service API token 后保存到这里。token 会用 OPENKB_CONFIG_ENCRYPTION_KEY 加密，只显示末四位。",
+  "Dify base URL": "Dify Base URL",
+  "The base URL of your Dify service, for example http://localhost:18080.":
+    "Dify 服务的 base URL。容器部署时请填写 OpenKB API 容器可访问的地址。",
+  "The Dify base URL reachable from the OpenKB API container. In local compose this is usually a host or WSL gateway address, not the browser localhost.":
+    "OpenKB API 容器能够访问到的 Dify base URL。本地 compose 通常需要填写宿主机或 WSL 网关地址，而不是浏览器里的 localhost。",
+  "Dify Service API token": "Dify Service API token",
+  "Write-only. Leave blank when updating the URL without rotating the Dify Service API token.":
+    "只写字段。如果只是更新 URL、不轮换 token，可以留空。",
+  "Save connection": "保存连接",
+  Probe: "检测",
+  Connected: "已连接",
+  "Not configured": "未配置",
+  "Dify Hub connection saved.": "Dify Hub 连接已保存。",
+  "Dify Hub probe succeeded.": "Dify Hub 探测成功。",
+  "Dify Hub probe failed.": "Dify Hub 探测失败。",
+  "Create Dify external dataset": "创建 Dify 外部知识库",
+  "Dify still needs one External Knowledge API template created in Dify UI first. Paste that template id here, then OpenKB can create external datasets through Dify Service API.":
+    "Dify 侧仍需要先在 UI 中创建一个 External Knowledge API 模板。把模板 ID 填在这里后，OpenKB 就可以通过 Dify Service API 创建外部知识库。",
+  "OpenKB knowledge base": "OpenKB 知识库",
+  "OpenKB knowledge base that this Dify dataset should query.":
+    "这个 Dify 数据集要查询的 OpenKB 知识库。",
+  "Dataset name": "数据集名称",
+  "Dify dataset display name.": "Dify 数据集显示名称。",
+  "External Knowledge API id": "External Knowledge API ID",
+  "The Dify External Knowledge API template id. Import an existing external dataset to discover it, or copy it from Dify.":
+    "Dify External Knowledge API 模板 ID。可以通过导入已有外部知识库发现，也可以从 Dify 复制。",
+  "Create Dify dataset": "创建 Dify 数据集",
+  "Import existing Dify dataset": "导入已有 Dify 数据集",
+  "Use this when the external dataset already exists in Dify. OpenKB reads its External Knowledge ID and API template linkage, then stores the mapping.":
+    "当 Dify 中已经存在外部知识库时使用。OpenKB 会读取它的 External Knowledge ID 和 API 模板关联，并保存映射。",
+  "Dify dataset": "Dify 数据集",
+  "Only external Dify datasets should be imported.": "只应导入 Dify external 数据集。",
+  "Select Dify dataset": "选择 Dify 数据集",
+  "OpenKB knowledge base that should answer this Dify dataset.":
+    "应该响应这个 Dify 数据集的 OpenKB 知识库。",
+  "Import dataset": "导入数据集",
+  "Dify external dataset imported.": "Dify 外部知识库已导入。",
+  "Dify external dataset created.": "Dify 外部知识库已创建。",
+  "Metadata sync plan": "元数据同步计划",
+  "Sync OpenKB document metadata fields into Dify so Workflow Knowledge Retrieval can show metadata filter options.":
+    "把 OpenKB 文档元数据字段同步到 Dify，让 Workflow 的知识检索节点可以显示元数据过滤选项。",
+  "Run dry-run on a dataset to preview metadata changes.":
+    "先对某个数据集执行 dry-run，预览元数据变更。",
+  "Dify external datasets": "Dify 外部知识库",
+  "External datasets discovered through Dify Service API.":
+    "通过 Dify Service API 发现的 external 数据集。",
+  Mapping: "映射",
+  "Not imported": "未导入",
+  "Dry-run metadata": "预览元数据",
+  "Sync metadata": "同步元数据",
+  "Metadata sync plan generated.": "已生成元数据同步计划。",
+  "Metadata synced to Dify.": "元数据已同步到 Dify。",
+  "No Dify external datasets discovered.": "尚未发现 Dify 外部知识库。",
+  "Delete Dify dataset": "删除 Dify 数据集",
+  "This deletes the Dify external dataset only. OpenKB knowledge base content, mappings, and API keys are not deleted.":
+    "这只会删除 Dify 侧外部知识库数据集。OpenKB 知识库内容、映射和 API 密钥不会被删除。",
+  "Dify external dataset deleted. OpenKB content was not deleted.":
+    "Dify 外部知识库已删除，OpenKB 内容未删除。",
   "PAT token shown once": "PAT token 只显示一次",
   Scopes: "权限范围",
 

@@ -820,18 +820,45 @@ model DifyApiKey {
 }
 
 model DifyKnowledgeMapping {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id         String   @db.Uuid
-  dify_knowledge_id String
-  knowledge_base_id String   @db.Uuid
-  status            String
-  created_by        String   @db.Uuid
-  created_at        DateTime @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id               String    @db.Uuid
+  dify_knowledge_id       String
+  knowledge_base_id       String    @db.Uuid
+  status                  String
+  created_by              String    @db.Uuid
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  dify_dataset_id         String?
+  dify_dataset_name       String?
+  dify_external_api_id    String?
+  dify_external_api_name  String?
+  dify_endpoint           String?
+  last_metadata_synced_at DateTime? @db.Timestamptz(6)
+  last_sync_status        String?
+  last_sync_error         String?
 
   @@unique([tenant_id, dify_knowledge_id])
   @@index([knowledge_base_id])
+  @@index([tenant_id, dify_dataset_id])
   @@map("dify_knowledge_mappings")
+}
+
+model DifyHubConnection {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id                   String    @unique @db.Uuid
+  dify_base_url               String
+  encrypted_service_api_token String
+  service_api_token_last4     String?
+  status                      String    @default("active")
+  last_probe_status           String?
+  last_probe_error            String?
+  last_probe_at               DateTime? @db.Timestamptz(6)
+  updated_by                  String    @db.Uuid
+  created_at                  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([tenant_id])
+  @@map("dify_hub_connections")
 }
 
 model AuditLog {

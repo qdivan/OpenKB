@@ -6,6 +6,7 @@ import {
   Database,
   FileText,
   Image as ImageIcon,
+  Info,
   Layers3,
   LoaderCircle,
   Play,
@@ -110,6 +111,9 @@ export function KnowledgeBaseDashboard({
     () => formatJsonPreview(settings ? buildSettingsProcessRule(settings) : undefined),
     [settings]
   );
+  const isTextKnowledgeBase = settings?.doc_form === "text_model";
+  const isHierarchicalKnowledgeBase = settings?.doc_form === "hierarchical_model";
+  const isQaKnowledgeBase = settings?.doc_form === "qa_model";
 
   useEffect(() => {
     void load();
@@ -211,14 +215,11 @@ export function KnowledgeBaseDashboard({
     setIsSaving(true);
     try {
       const updated = await updateChunkSettings(knowledgeBaseId, {
-        mode: settings.mode,
-        doc_form: settings.doc_form,
         indexing_technique: settings.indexing_technique,
         process_rule_mode: settings.process_rule_mode,
         retrieval_model: settings.retrieval_model,
         summary_index_setting: settings.summary_index_setting,
         process_rule: buildSettingsProcessRule(settings),
-        parent_mode: settings.parent_mode,
         parent_delimiter: settings.parent_delimiter,
         child_delimiter: settings.child_delimiter,
         parent_max_characters: settings.parent_max_characters,
@@ -610,44 +611,36 @@ export function KnowledgeBaseDashboard({
             <Panel title={t("Processing mode")}>
               <p className="mb-4 text-sm text-zinc-600">
                 {t(
-                  "These Dify-like settings decide how documents are processed into derived segments. They do not configure model secrets."
+                  "Knowledge base type decides the broad processing shape. It is selected at creation and does not configure model secrets."
                 )}
               </p>
               <div className="grid gap-3 md:grid-cols-2">
-                <Field label={t("Mode")}>
-                  <select
-                    className={formControlClass}
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        mode: event.target.value as ChunkSettings["mode"]
-                      })
-                    }
-                    value={settings.mode}
-                  >
-                    <option value="parent_child">{t("Parent child")}</option>
-                    <option value="general">{t("General")}</option>
-                  </select>
+                <Field
+                  help={t(
+                    "Knowledge base type is selected at creation. Create another knowledge base or migrate content if the type is wrong."
+                  )}
+                  label={t("Knowledge base type")}
+                >
+                  <div className="flex h-10 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-700">
+                    {t(docFormLabel(settings.doc_form))}
+                  </div>
                 </Field>
-                <Field label={t("Dify doc form")}>
-                  <select
-                    className={formControlClass}
-                    onChange={(event) =>
-                      setSettings(
-                        applyDocFormDefaults(
-                          settings,
-                          event.target.value as ChunkSettings["doc_form"]
-                        )
-                      )
-                    }
-                    value={settings.doc_form}
-                  >
-                    <option value="text_model">{t("General document")}</option>
-                    <option value="hierarchical_model">{t("Parent-child document")}</option>
-                    <option value="qa_model">{t("QA document")}</option>
-                  </select>
+                <Field
+                  help={t(
+                    "This is derived from the knowledge base type. It explains how PostgreSQL segments are shaped after explicit reprocess."
+                  )}
+                  label={t("Derived segment layout")}
+                >
+                  <div className="flex h-10 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-700">
+                    {t(derivedSegmentLayoutLabel(settings))}
+                  </div>
                 </Field>
-                <Field label={t("Indexing technique")}>
+                <Field
+                  help={t(
+                    "Indexing quality tier. Economy uses keyword or BM25 retrieval; high quality uses embedding, hybrid search, and rerank when configured."
+                  )}
+                  label={t("Indexing technique")}
+                >
                   <select
                     className={formControlClass}
                     onChange={(event) =>
@@ -663,42 +656,17 @@ export function KnowledgeBaseDashboard({
                     <option value="high_quality">{t("High quality Embedding/Hybrid")}</option>
                   </select>
                 </Field>
-                <Field label={t("Process rule mode")}>
-                  <select
-                    className={formControlClass}
-                    onChange={(event) =>
-                      setSettings(
-                        updateProcessRuleMode(
-                          settings,
-                          event.target.value as ChunkSettings["process_rule_mode"]
+                <Field
+                  help={t("Parent-child mode is configured per document in the Segments page.")}
+                  label={t("Document-level parent-child mode")}
+                >
+                  <div className="flex min-h-10 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+                    {isHierarchicalKnowledgeBase
+                      ? t(
+                          "Set paragraph parent-child or full-doc parent-child on each document's Segments page."
                         )
-                      )
-                    }
-                    value={settings.process_rule_mode}
-                  >
-                    {processRuleModeOptions(settings.doc_form).map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {t(option.label)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label={t("Parent mode")}>
-                  <select
-                    className={formControlClass}
-                    onChange={(event) =>
-                      setSettings(
-                        updateParentMode(
-                          settings,
-                          event.target.value as ChunkSettings["parent_mode"]
-                        )
-                      )
-                    }
-                    value={settings.parent_mode}
-                  >
-                    <option value="paragraph">{t("Paragraph")}</option>
-                    <option value="full_doc">{t("Full doc")}</option>
-                  </select>
+                      : t("Not used by this knowledge base type.")}
+                  </div>
                 </Field>
                 <ReadOnlyField label={t("Settings revision")} value={String(settings.revision)} />
               </div>
@@ -709,62 +677,128 @@ export function KnowledgeBaseDashboard({
             <Panel title={t("Chunk rules")}>
               <p className="mb-4 text-sm text-zinc-600">
                 {t(
-                  "Parent segmentation creates retrieval context. Subchunk segmentation creates matchable child segments."
+                  "Segmentation rules are scoped to the knowledge base type. Parent-child mode itself is set per document."
                 )}
               </p>
               <div className="grid gap-3 md:grid-cols-2">
-                <NumberField
-                  label={t("Parent chars")}
-                  onChange={(value) =>
-                    setSettings(updateSegmentationRule(settings, "parent", { max_tokens: value }))
-                  }
-                  value={settings.parent_max_characters}
-                />
-                <TextField
-                  label={t("Parent delimiter")}
-                  onChange={(value) =>
-                    setSettings(
-                      updateSegmentationRule(settings, "parent", {
-                        separator: decodeDelimiter(value)
-                      })
-                    )
-                  }
-                  value={encodeDelimiter(settings.parent_delimiter)}
-                />
-                <NumberField
-                  label={t("Parent/standard overlap")}
-                  onChange={(value) =>
-                    setSettings(
-                      updateSegmentationRule(settings, "parent", { chunk_overlap: value })
-                    )
-                  }
-                  value={getParentOverlapCharacters(settings)}
-                />
-                <NumberField
-                  label={t("Child chars")}
-                  onChange={(value) =>
-                    setSettings(updateSegmentationRule(settings, "child", { max_tokens: value }))
-                  }
-                  value={settings.child_max_characters}
-                />
-                <NumberField
-                  label={t("Child overlap")}
-                  onChange={(value) =>
-                    setSettings(updateSegmentationRule(settings, "child", { chunk_overlap: value }))
-                  }
-                  value={settings.child_overlap_characters}
-                />
-                <TextField
-                  label={t("Child delimiter")}
-                  onChange={(value) =>
-                    setSettings(
-                      updateSegmentationRule(settings, "child", {
-                        separator: decodeDelimiter(value)
-                      })
-                    )
-                  }
-                  value={encodeDelimiter(settings.child_delimiter)}
-                />
+                {isTextKnowledgeBase ? (
+                  <Field
+                    help={t(
+                      "Automatic and custom segmentation are the two processing rule choices for segment knowledge bases."
+                    )}
+                    label={t("Segmentation mode")}
+                  >
+                    <select
+                      className={formControlClass}
+                      onChange={(event) =>
+                        setSettings(
+                          updateProcessRuleMode(
+                            settings,
+                            event.target.value as ChunkSettings["process_rule_mode"]
+                          )
+                        )
+                      }
+                      value={settings.process_rule_mode}
+                    >
+                      {processRuleModeOptions(settings.doc_form).map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {t(option.label)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : (
+                  <Field
+                    help={
+                      isHierarchicalKnowledgeBase
+                        ? t(
+                            "Parent-child knowledge bases always use hierarchical segmentation. Choose paragraph parent-child or full-doc parent-child per document."
+                          )
+                        : t("QA knowledge bases index active QA pairs instead of body segments.")
+                    }
+                    label={t("Segmentation mode")}
+                  >
+                    <div className="flex h-10 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-700">
+                      {t(segmentationModeLabel(settings.doc_form, settings.process_rule_mode))}
+                    </div>
+                  </Field>
+                )}
+
+                {!isQaKnowledgeBase ? (
+                  <>
+                    <NumberField
+                      label={isHierarchicalKnowledgeBase ? t("Parent chars") : t("Segment chars")}
+                      onChange={(value) =>
+                        setSettings(
+                          updateSegmentationRule(settings, "parent", { max_tokens: value })
+                        )
+                      }
+                      value={settings.parent_max_characters}
+                    />
+                    <TextField
+                      label={isHierarchicalKnowledgeBase ? t("Parent delimiter") : t("Delimiter")}
+                      onChange={(value) =>
+                        setSettings(
+                          updateSegmentationRule(settings, "parent", {
+                            separator: decodeDelimiter(value)
+                          })
+                        )
+                      }
+                      value={encodeDelimiter(settings.parent_delimiter)}
+                    />
+                    <NumberField
+                      label={
+                        isHierarchicalKnowledgeBase ? t("Parent overlap") : t("Segment overlap")
+                      }
+                      onChange={(value) =>
+                        setSettings(
+                          updateSegmentationRule(settings, "parent", { chunk_overlap: value })
+                        )
+                      }
+                      value={getParentOverlapCharacters(settings)}
+                    />
+                  </>
+                ) : (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800 md:col-span-2">
+                    {t(
+                      "QA knowledge bases use manual, CSV, mock, or LLM generated QA pairs. Reprocess indexes active QA questions and returns answers."
+                    )}
+                  </div>
+                )}
+
+                {isHierarchicalKnowledgeBase ? (
+                  <>
+                    <NumberField
+                      label={t("Child chars")}
+                      onChange={(value) =>
+                        setSettings(
+                          updateSegmentationRule(settings, "child", { max_tokens: value })
+                        )
+                      }
+                      value={settings.child_max_characters}
+                    />
+                    <NumberField
+                      label={t("Child overlap")}
+                      onChange={(value) =>
+                        setSettings(
+                          updateSegmentationRule(settings, "child", { chunk_overlap: value })
+                        )
+                      }
+                      value={settings.child_overlap_characters}
+                    />
+                    <TextField
+                      label={t("Child delimiter")}
+                      onChange={(value) =>
+                        setSettings(
+                          updateSegmentationRule(settings, "child", {
+                            separator: decodeDelimiter(value)
+                          })
+                        )
+                      }
+                      value={encodeDelimiter(settings.child_delimiter)}
+                    />
+                  </>
+                ) : null}
               </div>
               <div className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
                 <h3 className="text-xs font-semibold text-zinc-700">{t("Process rule preview")}</h3>
@@ -1211,12 +1245,15 @@ function MetadataFieldCard({
   );
 }
 
-function Field({ children, label }: { children: ReactNode; label: string }) {
+function Field({ children, help, label }: { children: ReactNode; help?: string; label: string }) {
   return (
-    <label className="grid gap-1 text-sm">
-      <span className="text-xs font-medium text-zinc-500">{label}</span>
+    <div className="grid gap-1 text-sm">
+      <span className="flex items-center gap-1 text-xs font-medium text-zinc-500">
+        {label}
+        {help ? <HelpTip text={help} /> : null}
+      </span>
       {children}
-    </label>
+    </div>
   );
 }
 
@@ -1227,6 +1264,23 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
         {value}
       </div>
     </Field>
+  );
+}
+
+function HelpTip({ text }: { text: string }) {
+  return (
+    <span className="group/help relative inline-flex">
+      <button
+        aria-label={text}
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-500 hover:text-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        type="button"
+      >
+        <Info className="h-3 w-3" />
+      </button>
+      <span className="pointer-events-none absolute left-0 top-5 z-30 w-72 rounded-md border border-zinc-200 bg-white p-2 text-xs font-normal leading-5 text-zinc-600 opacity-0 shadow-lg transition group-hover/help:opacity-100 group-focus-within/help:opacity-100">
+        {text}
+      </span>
+    </span>
   );
 }
 
@@ -1377,38 +1431,37 @@ function formatJsonPreview(value: unknown): string {
   }
 }
 
-function applyDocFormDefaults(
-  settings: ChunkSettings,
-  docForm: ChunkSettings["doc_form"]
-): ChunkSettings {
-  const nextProcessRule = defaultProcessRuleForDocForm(docForm);
-  const nextMode = docForm === "text_model" ? "general" : "parent_child";
-  const nextRuleMode = docForm === "hierarchical_model" ? "hierarchical" : "custom";
-  const segmentation = toRecord(nextProcessRule.segmentation);
-  const subchunkSegmentation = toRecord(nextProcessRule.subchunk_segmentation);
-  return {
-    ...settings,
-    doc_form: docForm,
-    mode: nextMode,
-    process_rule_mode: nextRuleMode,
-    process_rule: nextProcessRule,
-    parent_mode: docForm === "hierarchical_model" ? "paragraph" : settings.parent_mode,
-    parent_delimiter: stringFrom(segmentation.separator, settings.parent_delimiter),
-    parent_max_characters: numberFrom(segmentation.max_tokens, settings.parent_max_characters),
-    chunk_overlap_characters: numberFrom(
-      segmentation.chunk_overlap,
-      docForm === "hierarchical_model" ? 0 : 50
-    ),
-    child_delimiter: stringFrom(subchunkSegmentation.separator, settings.child_delimiter),
-    child_max_characters: numberFrom(
-      subchunkSegmentation.max_tokens,
-      settings.child_max_characters
-    ),
-    child_overlap_characters: numberFrom(
-      subchunkSegmentation.chunk_overlap,
-      settings.child_overlap_characters
-    )
-  };
+function docFormLabel(docForm: ChunkSettings["doc_form"]) {
+  if (docForm === "hierarchical_model") {
+    return "Parent-child knowledge base";
+  }
+  if (docForm === "qa_model") {
+    return "QA knowledge base";
+  }
+  return "Segment knowledge base";
+}
+
+function derivedSegmentLayoutLabel(settings: ChunkSettings) {
+  if (settings.doc_form === "hierarchical_model") {
+    return "Parent and child segments";
+  }
+  if (settings.doc_form === "qa_model") {
+    return "QA pairs as retrieval segments";
+  }
+  return "Standalone segments";
+}
+
+function segmentationModeLabel(
+  docForm: ChunkSettings["doc_form"],
+  processRuleMode: ChunkSettings["process_rule_mode"]
+) {
+  if (docForm === "hierarchical_model") {
+    return "Hierarchical segmentation";
+  }
+  if (docForm === "qa_model") {
+    return "QA pair indexing";
+  }
+  return processRuleMode === "automatic" ? "Automatic segmentation" : "Custom segmentation";
 }
 
 function updateProcessRuleMode(
@@ -1420,20 +1473,6 @@ function updateProcessRuleMode(
   );
   const nextMode = allowed ? processRuleMode : processRuleModeOptions(settings.doc_form)[0]!.value;
   return { ...settings, process_rule_mode: nextMode };
-}
-
-function updateParentMode(
-  settings: ChunkSettings,
-  parentMode: ChunkSettings["parent_mode"]
-): ChunkSettings {
-  return {
-    ...settings,
-    parent_mode: parentMode,
-    process_rule: {
-      ...buildSettingsProcessRule(settings),
-      parent_mode: toDifyParentMode(parentMode)
-    }
-  };
 }
 
 function updateSegmentationRule(
@@ -1493,19 +1532,6 @@ function buildSettingsProcessRule(settings: ChunkSettings): Record<string, unkno
       max_tokens: settings.child_max_characters,
       chunk_overlap: settings.child_overlap_characters
     }
-  };
-}
-
-function defaultProcessRuleForDocForm(docForm: ChunkSettings["doc_form"]) {
-  if (docForm === "hierarchical_model") {
-    return {
-      parent_mode: "paragraph",
-      segmentation: { separator: "\n\n", max_tokens: 1024, chunk_overlap: 0 },
-      subchunk_segmentation: { separator: "\n", max_tokens: 512, chunk_overlap: 50 }
-    };
-  }
-  return {
-    segmentation: { separator: "\n\n", max_tokens: 1024, chunk_overlap: 50 }
   };
 }
 
