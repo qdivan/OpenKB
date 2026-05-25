@@ -22,6 +22,7 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
     "请在开发 outbox 中查看邮箱验证链接。",
   "Confirm password": "确认密码",
   "Create account": "创建账号",
+  "Back to login": "返回登录",
   "Create accounts, change tenant roles, revoke sessions, and review account audit logs.":
     "创建账号、调整租户角色、吊销会话并查看账号审计日志。",
   "Create user": "创建用户",
@@ -60,8 +61,13 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Phase 11 Deployment": "Phase 11 部署",
   Ready: "就绪",
   Register: "注册",
+  "Registration is limited to: {domains}": "仅允许以下邮箱域名注册：{domains}",
   "Registration complete. You can log in now.": "注册完成。现在可以登录。",
+  "Registration is disabled by the administrator.": "管理员已关闭自助注册。",
   "Registration failed.": "注册失败。",
+  "Public registration is closed. Please use an invitation link.":
+    "公开注册已关闭。请使用邀请链接加入。",
+  "Public registration is not available from the login page.": "登录首页未开放注册入口。",
   "Request failed.": "请求失败。",
   "Reset link copied.": "重置链接已复制。",
   Retrieval: "检索",
@@ -294,8 +300,15 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Import file": "导入文件",
   "Import job queued. The import worker will convert it to Markdown.":
     "导入任务已排队。导入 worker 会将它转换为 Markdown。",
+  "Import job queued. Track conversion progress in the Imports panel.":
+    "导入任务已入队，请在导入任务面板查看转换进度。",
+  "Import tasks stay visible here until conversion finishes.":
+    "导入任务会保留在这里，直到转换完成。",
+  "Import looks stalled. Check the import worker and MinerU adapter.":
+    "导入看起来已卡住。请检查导入工作器和 MinerU 适配器。",
   "Import warning": "导入警告",
   "Imported document title": "导入文档标题",
+  "Updated {time}": "更新于 {time}",
   Import: "导入",
   "Import Tools": "导入工具",
   "Conversion routes and adapters": "转换路由与适配器",
@@ -816,10 +829,21 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
     "管理注册、激活和邮箱验证策略。",
   "Tenant override": "租户覆盖配置",
   "Instance default": "实例默认配置",
+  "Tenant override help: these settings apply only to the current tenant and take precedence over the instance default.":
+    "当前租户专属配置，只影响本租户，并且优先于实例默认配置。",
+  "Instance default help: these settings are the global fallback for tenants without their own override.":
+    "系统级默认策略。没有租户覆盖配置时，会使用这里的实例默认配置。",
   "Auth settings saved.": "认证设置已保存。",
   "Registration enabled": "允许注册",
+  "Show registration on login page": "登录首页显示注册入口",
+  "Registration enabled help: controls whether the backend accepts self-registration requests.":
+    "控制后端是否接受自助注册请求，是注册能力的安全开关。",
+  "Login registration help: controls whether the login and register pages show public sign-up entry points.":
+    "控制登录页和注册页是否展示公开注册入口，不替代后端注册校验。",
   "Email verification required": "要求邮箱验证",
   "Invite required": "必须通过邀请注册",
+  "Invite required help: when enabled, public self-registration is hidden and users must join through an invitation.":
+    "开启后，公开自助注册入口会隐藏，用户需要通过邀请链接加入。",
   "Invited users auto active": "受邀用户自动激活",
   "First user becomes admin": "首位用户成为管理员",
   "Default signup status": "默认注册状态",
@@ -827,6 +851,8 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Restrict registration to allowed email domains": "只允许白名单邮箱域名注册",
   "Only users whose email domain is in the whitelist can self-register. Admin-created users are not affected.":
     "只有邮箱域名在白名单内的用户可以自行注册。管理员创建用户不受影响。",
+  "Allowed email domains help: when enabled, only these domains can use public self-registration; admin-created accounts are not affected.":
+    "开启后，只有这些域名可以公开自助注册；管理员创建账号不受影响。",
   "Edit whitelist": "编辑白名单",
   "No allowed email domains configured yet.": "还没有配置允许的邮箱域名。",
   "Domain restriction is off. Any valid email can register if registration is enabled.":

@@ -209,8 +209,8 @@ OpenKB 的优势仍是权限与派生命中解释更稳：summary、QA、source 
 4. **metadata/tags 要以文档 metadata 为真相**
    Dify metadata 是知识库里配置的文档 metadata。OpenKB 不能长期依赖 `document_chunks.metadata.tags` 这类隐藏 chunk-only 能力；tags 已收口到文档 metadata post-filter。
 
-5. **同模型检索环境仍需单独复跑**
-   报告指出 Dify 环境没有完整启用 Milvus hybrid。必须在 Dify/OpenKB 使用同一 embedding/rerank/hybrid 开关后，才讨论 top-k、score、rerank 是否真正可比。
+5. **同模型检索需要独立记录环境**
+   原始报告阶段，Dify 环境没有完整启用同一套 hybrid/rerank 配置。Phase 25 已用同一 corpus、同一 embedding/rerank、同一 top_k/threshold/rerank/hybrid 开关完成 live retrieval 复跑；后续比较 top-k、score 和 rerank 时，仍必须先记录两边模型、索引和过滤配置，避免把环境差异误判为算法差异。
 
 ## Phase 22.9 收敛状态
 
@@ -221,10 +221,10 @@ OpenKB 的优势仍是权限与派生命中解释更稳：summary、QA、source 
 | P1 | 输入规范化对照 | 已实现 | `splitter-golden-fixtures.json` 输出 raw Markdown、Milkdown-normalized Markdown、indexed text、Dify splitter output、OpenKB splitter output |
 | P1 | QA 兼容语义 | 已实现 | Dify Adapter QA 命中返回 `question:... answer:...` 内容，并带 `hit_type=qa`、`qa_question`、`qa_answer`、`qa_pair_id`、`source_chunk_id` |
 | P2 | metadata/tags 产品模型收口 | 已实现 | `metadata_condition` 和 `tags` 使用文档 metadata post-filter；Admin Dify 可过滤字段显示 tags 来源为 `document_metadata` |
-| P2 | 同模型 embedding/rerank/hybrid baseline | 脚本已实现，环境仍阻塞 | `--live-retrieval` 已能生成 import corpus、调用 Dify/OpenKB 检索入口并计算 overlap/MRR/nDCG；当前仍缺 Dify dataset/API token、OpenKB search session、同 corpus 导入/index 证据和已启动服务 |
+| P2 | 同模型 embedding/rerank/hybrid baseline | 已验证 | Phase 25 已完成 100 篇 corpus、240 条查询、qwen3-vl embedding/rerank、hybrid + rerank 同开关复跑；证据路径 `.codex-runtime/parity-runs/20260517T135537Z/retrieval/` |
 | P3 | Segment lifecycle 兼容性 | 已验证基础矩阵 | active/disabled/deleted、override/reset、reprocess 后不迁移旧 override/segment summary；结果仍只返回 PostgreSQL 终检通过的 active chunks |
 
-同模型 live retrieval 兼容性测试已有可复跑脚本入口；它作为 Phase 25 稳定收口的硬验收项保留，要求 Dify/OpenKB 使用同一 corpus、同一 embedding/rerank、同一 hybrid/rerank 开关后复跑。缺输入时必须保持 blocked，不得把环境不齐的结果记为通过。
+同模型 live retrieval 兼容性测试已有可复跑脚本入口，并已在 Phase 25 稳定收口时完成一次真实复跑。后续如果缺 dataset、cookie、CSRF、同 corpus/index 或模型配置，脚本仍必须保持 blocked，不得把环境不齐的结果记为通过。
 
 ## 复跑基线
 

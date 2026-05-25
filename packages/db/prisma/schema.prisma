@@ -118,6 +118,7 @@ model AuthSetting {
   id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id                   String?  @db.Uuid
   registration_enabled        Boolean  @default(true)
+  login_registration_enabled  Boolean  @default(true)
   email_verification_required Boolean  @default(true)
   default_signup_status       String   @default("active")
   invited_user_auto_active    Boolean  @default(true)

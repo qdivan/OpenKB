@@ -1,6 +1,6 @@
 # 13 - 部署说明
 
-本文是当前 OpenKB `v0.3.x / Phase 29` 的部署说明，覆盖 Docker Compose、Helm、环境变量、健康检查和升级验收。
+本文是当前 OpenKB `v0.3.x / Phase 31` 的部署说明，覆盖 Docker Compose、Helm、环境变量、健康检查和升级验收。本文同时包含最新登录注册入口配置和导入任务可追踪性的部署验收要求。
 
 ## 1. 组件
 
@@ -74,9 +74,10 @@ curl http://localhost:4200/health
 
 部署验收应同时确认镜像 tag/commit、数据库迁移、表结构和关键接口：
 
-- `_prisma_migrations` 已完成 `0014_account_setup_admin_visibility` 到 `0023_workspace_compatibility`。
+- `_prisma_migrations` 已完成 `0014_account_setup_admin_visibility` 到 `0024_login_registration_entry`。
 - 表结构包含 `workspaces.kind`、`workspaces.personal_owner_user_id`、`workspaces.avatar_color`、`workspaces.avatar_initials`、`document_user_activities`、`dify_hub_connections`、`document_asset_bindings`、`document_chunks.index_role` 和 `document_chunks.source_chunk_id`。
-- 关键接口和脚本可用：workspace dashboard、workspace create/update、KB visibility/collaborators、document permission/share links、`workspace:migration-report`、KB chunk settings、document processing、document reprocess、segment management、QA、summaries、search、Dify `/retrieval`、Dify Hub metadata sync。
+- `auth_settings.login_registration_enabled` 存在；登录页注册入口、邀请注册、邮箱域名白名单和后端注册开关的组合行为可用。
+- 关键接口和脚本可用：workspace dashboard、workspace create/update、KB visibility/collaborators、document permission/share links、`workspace:migration-report`、import jobs、KB chunk settings、document processing、document reprocess、segment management、QA、summaries、search、Dify `/retrieval`、Dify Hub metadata sync。
 - Docker Compose/Helm 透传 SMTP、CSRF、MCP OAuth、模型、导入工具、metrics、backup、embedding/rerank request format 和 image-vector 环境变量。
 - 升级旧数据后，管理员需要查看空间迁移报告；`Default Workspace / OpenKB Demo` 默认作为团队空间。文档派生数据仍需显式 reprocess，再执行 Milvus blue-green index rebuild；迁移不会自动重写私有权限、派生 chunks、QA、summary 或 asset binding。
 
@@ -121,7 +122,7 @@ deploy/helm/openkb/values.yaml
 ```bash
 helm upgrade --install openkb deploy/helm/openkb \
   --set image.repository=openkb \
-  --set image.tag=phase-29
+  --set image.tag=phase-31
 ```
 
 生产环境应覆盖数据库、Redis、S3、Milvus、OAuth、SMTP 和模型 secret，不使用本地开发默认值。

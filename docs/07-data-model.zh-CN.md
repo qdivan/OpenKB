@@ -27,6 +27,8 @@ system_admin | tenant_admin | member
 
 管理员角色只管理后台配置和对象元数据；私有正文读取仍必须通过内容权限或显式审计接管。
 
+`auth_settings` 保存实例默认或租户覆盖的注册策略。`tenant_id = null` 表示实例默认配置；租户级记录优先于实例默认配置。`registration_enabled` 控制后端是否允许自助注册，`login_registration_enabled` 只控制登录页和 `/register` 页面是否展示公开注册入口，邮箱白名单仍由 `allowed_email_domains` 在服务端强制校验。
+
 ## 2. 空间、知识库和文档
 
 Phase 31 起，`workspaces` 同时承载个人空间和团队空间，不新增独立 Team 表；旧 workspace 通过兼容迁移和只读报告纳入空间模型。

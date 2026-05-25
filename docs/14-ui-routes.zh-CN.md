@@ -12,6 +12,15 @@
 /password-reset
 ```
 
+语言切换只更新 locale、localStorage 和 document language，不改变当前 URL，不重新选择默认空间、知识库或文档。
+
+登录页注册入口由公开注册配置控制：
+
+- `registration_enabled`：后端是否接受自助注册请求。
+- `login_registration_enabled`：登录页和 `/register` 是否展示公开注册入口。
+- `invite_required`：启用后不展示公开注册表单，用户应通过邀请链接加入。
+- `allowed_email_domains`：启用白名单后，登录页和注册页会展示允许的邮箱域名范围，后端仍做最终校验。
+
 ## 2. 工作台路由
 
 ```text
@@ -50,6 +59,8 @@
 - 团队空间会显示“成员”入口，复用现有空间成员管理面板。
 
 收藏和评论只保留入口，不实现完整数据模型。
+
+导入文件后，左侧文档树区域会保留导入任务面板。用户可以看到任务状态、源文件名、转换器、错误、警告和卡住诊断；成功后刷新文档树。
 
 ## 4. Workbench 布局
 

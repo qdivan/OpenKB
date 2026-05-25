@@ -237,6 +237,11 @@ fs.writeFileSync(output, "# Mock PDF\\n\\nConverted from PDF.");
           source_asset_id: asset.id,
           status: "pending",
           converter: "auto",
+          metadata: {
+            source_filename: asset.filename,
+            source_mime_type: asset.mime_type,
+            source_size_bytes: asset.size_bytes.toString()
+          },
           created_by: seed.userId
         }
       });
@@ -253,6 +258,12 @@ fs.writeFileSync(output, "# Mock PDF\\n\\nConverted from PDF.");
       expect(succeeded).toMatchObject({
         status: "succeeded",
         converter: "markitdown"
+      });
+      expect(succeeded?.metadata).toMatchObject({
+        source_filename: "paper.pdf",
+        source_mime_type: "application/octet-stream",
+        source_size_bytes: asset.size_bytes.toString(),
+        source_asset_id: asset.id
       });
       expect(version?.markdown).toContain("Converted from PDF.");
     } finally {

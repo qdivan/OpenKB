@@ -60,6 +60,26 @@ describe("AuthController", () => {
     expect(res.headers.get("set-cookie")).toContain("HttpOnly");
   });
 
+  it("returns public registration settings without a session", async () => {
+    const auth = {
+      getPublicRegistrationSettings: vi.fn(async () => ({
+        registration_enabled: true,
+        login_registration_enabled: true,
+        invite_required: false,
+        allowed_email_domains_enabled: true,
+        allowed_email_domains: ["sailuntire.com"],
+        registration_available: true
+      }))
+    } as unknown as AuthService;
+    const controller = new AuthController(auth);
+    const res = reply();
+
+    await expect(controller.getPublicRegistrationSettings(res as never)).resolves.toMatchObject({
+      registration_available: true,
+      allowed_email_domains: ["sailuntire.com"]
+    });
+  });
+
   it("maps auth errors to JSON", async () => {
     const auth = {
       register: vi.fn(async () => {

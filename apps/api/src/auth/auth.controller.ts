@@ -27,6 +27,15 @@ type EmailBody = {
 export class AuthController {
   constructor(@Inject(AuthService) private readonly auth: AuthService) {}
 
+  @Get("registration-settings")
+  async getPublicRegistrationSettings(@Res({ passthrough: true }) reply: FastifyReply) {
+    try {
+      return await this.auth.getPublicRegistrationSettings();
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Post("register")
   async register(@Body() body: RegisterBody, @Res({ passthrough: true }) reply: FastifyReply) {
     try {

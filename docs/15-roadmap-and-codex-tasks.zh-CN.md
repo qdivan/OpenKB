@@ -14,6 +14,7 @@
 - Phase 29：空间主页与知识库归属已落地。空间主页展示知识库卡片、快捷入口和最近内容；创建知识库时必须确认归属空间；KB Dashboard 右侧显示空间上下文。
 - Phase 30：语雀式权限细化已落地。知识库权限页按“公开性 + 协作者”组织；文档权限和分享入口靠近文档标题；空间成员、知识库协作者、文档协作者三层角色说明统一。
 - Phase 31：迁移与兼容已落地。旧 `Default Workspace / OpenKB Demo` 默认作为团队空间处理，提供只读迁移报告和手动 runbook，不自动搬迁私有内容或重写权限。
+- 最新体验修复：语言切换保持当前 URL 和工作台选择；导入任务面板展示 pending/running/succeeded/failed、错误、警告和 MinerU/worker 卡住诊断；认证设置新增“登录首页显示注册入口”，与后端注册开关、邀请制和邮箱白名单分开管理。
 
 ## 当前边界
 
@@ -24,6 +25,8 @@
 - Dify Hub 只能安全管理 Dify external dataset，不删除 OpenKB 内容，不写 Dify 数据库。
 - 旧 workspace 迁移报告只读；空间类型建议需要管理员人工复核。
 - 旧派生数据不自动迁移；升级后由管理员显式 reprocess，再执行 Milvus blue-green index rebuild。
+- 登录首页是否展示注册入口只是 UI 入口开关；`registration_enabled` 仍是后端是否接受自助注册的安全真相。
+- MinerU、MarkItDown、Pandoc 和 OCR 工具仍是实例级导入基础设施，只能由 `system_admin` 配置。
 
 ## 后续路线
 

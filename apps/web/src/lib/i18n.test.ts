@@ -33,6 +33,15 @@ describe("i18n helpers", () => {
     expect(translate("zh-CN", "A missing button")).toBe("A missing button");
   });
 
+  it("translates registration shutdown separately from login-page registration visibility", () => {
+    expect(translate("zh-CN", "Registration is disabled by the administrator.")).toBe(
+      "管理员已关闭自助注册。"
+    );
+    expect(translate("zh-CN", "Public registration is not available from the login page.")).toBe(
+      "登录首页未开放注册入口。"
+    );
+  });
+
   it("translates known keys and interpolates dynamic values", () => {
     expect(translate("zh-CN", "Language")).toBe("语言");
     expect(

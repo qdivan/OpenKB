@@ -94,6 +94,7 @@ async function createDefaultSettings(
     data: {
       tenant_id: null,
       registration_enabled: true,
+      login_registration_enabled: true,
       email_verification_required: true,
       default_signup_status: "active",
       invited_user_auto_active: true,
@@ -645,7 +646,16 @@ describe("AuthService integration", () => {
 
     await auth.updateAuthSettings(adminLogin.sessionToken, {
       allowed_email_domains: ["example.org"],
+      login_registration_enabled: false,
       invite_required: true
+    });
+    await expect(auth.getPublicRegistrationSettings()).resolves.toMatchObject({
+      registration_enabled: true,
+      login_registration_enabled: false,
+      invite_required: true,
+      allowed_email_domains_enabled: true,
+      allowed_email_domains: ["example.org"],
+      registration_available: false
     });
 
     await expect(
@@ -655,7 +665,11 @@ describe("AuthService integration", () => {
     });
 
     await auth.updateAuthSettings(adminLogin.sessionToken, {
+      login_registration_enabled: true,
       invite_required: false
+    });
+    await expect(auth.getPublicRegistrationSettings()).resolves.toMatchObject({
+      registration_available: true
     });
     await expect(
       auth.register({ email: "user@example.com", password: "password-123" })

@@ -20,6 +20,7 @@
 
 ```text
 registration_enabled
+login_registration_enabled
 email_verification_required
 default_signup_status = active | pending_activation
 invited_user_auto_active
@@ -28,7 +29,11 @@ invite_required
 first_user_becomes_admin
 ```
 
+`registration_enabled` 是后端是否接受自助注册请求的安全开关；关闭后，直接调用注册 API 也会被拒绝。`login_registration_enabled` 只控制登录页和 `/register` 页面是否展示公开注册入口；它不会替代后端校验。
+
 `allowed_email_domains` 为空时表示不限制邮箱域名；有值时，只有邮箱域名命中的用户可以自行注册。Admin -> 认证设置中通过“只允许白名单邮箱域名注册”开关启用限制，再用“编辑白名单”弹窗维护域名。管理员可以输入 `sailuntire.com`、`@qq.com` 或 `user@sailuntire.com` 这类形式，系统会统一保存为域名（例如 `sailuntire.com`、`qq.com`）。管理员手动创建账号不受该自助注册白名单影响。
+
+登录页和注册页使用公开只读配置接口读取注册展示策略。该接口只返回是否允许注册、登录页是否展示注册、是否邀请制、是否启用邮箱域名白名单和允许的域名列表；不返回任何管理侧敏感配置。
 
 优先读取租户级设置；如果租户级设置不存在，则读取 `tenant_id = null` 的实例默认设置。
 

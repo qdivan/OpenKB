@@ -153,7 +153,11 @@ export class ImportService {
         converter,
         title: normalizeOptionalText(input.title),
         warnings: [],
-        metadata: {},
+        metadata: {
+          source_filename: asset.filename,
+          source_mime_type: asset.mime_type,
+          source_size_bytes: asset.size_bytes.toString()
+        },
         created_by: me.user.id,
         created_at: now,
         updated_at: now
@@ -398,6 +402,7 @@ export function toImportJobDto(job: {
   updated_at: Date;
   finished_at: Date | null;
 }) {
+  const metadata = isRecord(job.metadata) ? job.metadata : {};
   return {
     id: job.id,
     tenant_id: job.tenant_id,
@@ -413,9 +418,14 @@ export function toImportJobDto(job: {
     error: job.error,
     warnings: job.warnings,
     metadata: job.metadata,
+    source_filename: typeof metadata.source_filename === "string" ? metadata.source_filename : null,
     created_by: job.created_by,
     created_at: job.created_at.toISOString(),
     updated_at: job.updated_at.toISOString(),
     finished_at: job.finished_at ? job.finished_at.toISOString() : null
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

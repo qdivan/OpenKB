@@ -110,6 +110,7 @@ export async function seedFirstAdmin(
           data: {
             tenant_id: null,
             registration_enabled: true,
+            login_registration_enabled: true,
             email_verification_required: true,
             default_signup_status: "active",
             invited_user_auto_active: true,

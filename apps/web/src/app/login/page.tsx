@@ -6,6 +6,7 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { authApiUrl } from "@/lib/auth-api";
 import { useI18n } from "@/lib/i18n-provider";
+import { getPublicRegistrationSettings, type PublicRegistrationSettings } from "@/lib/openkb-api";
 
 export default function LoginPage() {
   return (
@@ -24,10 +25,30 @@ function LoginForm() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"info" | "error">("error");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [registrationSettings, setRegistrationSettings] =
+    useState<PublicRegistrationSettings | null>(null);
 
   useEffect(() => {
     router.prefetch("/app");
   }, [router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPublicRegistrationSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setRegistrationSettings(settings);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRegistrationSettings(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (searchParams.get("reset") === "success") {
@@ -110,6 +131,22 @@ function LoginForm() {
           >
             {message}
           </p>
+        ) : null}
+        {registrationSettings?.registration_available ? (
+          <div className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+            <a className="font-medium text-emerald-700 hover:text-emerald-800" href="/register">
+              {t("Create account")}
+            </a>
+            {registrationSettings.allowed_email_domains_enabled ? (
+              <p className="mt-1 text-xs leading-5 text-zinc-500">
+                {t("Registration is limited to: {domains}", {
+                  domains: registrationSettings.allowed_email_domains
+                    .map((domain) => `@${domain}`)
+                    .join(", ")
+                })}
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </form>
     </LoginShell>

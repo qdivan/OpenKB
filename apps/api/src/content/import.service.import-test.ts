@@ -93,6 +93,7 @@ describe("ImportService", () => {
       expect(job).toMatchObject({
         status: "pending",
         title: "Imported Roadmap",
+        source_filename: "Roadmap.md",
         source_asset_id: asset.id
       });
       expect(listed.map((item) => item.id)).toContain(job.id);

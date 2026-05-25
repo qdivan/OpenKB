@@ -12,6 +12,7 @@ deliverables/
 
 # Local runtime artifacts
 .codex-runtime/
+.codex_tmp/
 .playwright-cli/
 output/playwright/
 playwright-report/

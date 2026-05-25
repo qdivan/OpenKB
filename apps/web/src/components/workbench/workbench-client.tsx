@@ -198,6 +198,7 @@ export function WorkbenchClient({
   const { t } = useI18n();
   const dialog = useDialog();
   const router = useRouter();
+  const latestTRef = useRef(t);
   const saveRunRef = useRef(0);
   const latestDraftRef = useRef({ title: "", markdown: "" });
   const editorPaneRef = useRef<HTMLDivElement | null>(null);
@@ -294,6 +295,10 @@ export function WorkbenchClient({
   const hasActiveImportJobs = importJobs.some(
     (job) => job.status === "pending" || job.status === "running"
   );
+
+  useEffect(() => {
+    latestTRef.current = t;
+  }, [t]);
   const outline = useMemo(() => extractMarkdownOutline(draftMarkdown), [draftMarkdown]);
   const markdownReferences = useMemo(
     () => extractMarkdownReferences(draftMarkdown),
@@ -623,13 +628,14 @@ export function WorkbenchClient({
         router.replace("/login");
         return;
       }
+      const translate = latestTRef.current;
       if (error instanceof ApiRequestError) {
-        setMessage(error.body.message || error.body.error || t("Request failed."));
+        setMessage(error.body.message || error.body.error || translate("Request failed."));
         return;
       }
-      setMessage(error instanceof Error ? error.message : t("Unexpected error."));
+      setMessage(error instanceof Error ? error.message : translate("Unexpected error."));
     },
-    [router, t]
+    [router]
   );
 
   const clearDocumentState = useCallback(() => {
@@ -683,7 +689,11 @@ export function WorkbenchClient({
         setDocuments([]);
         setImportJobs([]);
         clearDocumentState();
-        setMessage(t("Admin visible knowledge base requires audited takeover before reading."));
+        setMessage(
+          latestTRef.current(
+            "Admin visible knowledge base requires audited takeover before reading."
+          )
+        );
         return;
       }
       const [treeDocuments, jobs] = await Promise.all([
@@ -703,7 +713,7 @@ export function WorkbenchClient({
         clearDocumentState();
       }
     },
-    [clearDocumentState, openDocument, t]
+    [clearDocumentState, openDocument]
   );
 
   const boot = useCallback(async () => {
@@ -964,6 +974,21 @@ export function WorkbenchClient({
       window.clearInterval(timer);
     };
   }, [handleApiError, hasActiveImportJobs, selectedKnowledgeBaseId]);
+
+  async function refreshImportJobs(knowledgeBaseId = selectedKnowledgeBaseId) {
+    if (!knowledgeBaseId) {
+      return;
+    }
+    try {
+      const jobs = await listImportJobs(knowledgeBaseId);
+      setImportJobs(jobs);
+      if (jobs.some((job) => job.status === "succeeded" && job.document_id)) {
+        setDocuments(await getKnowledgeBaseTree(knowledgeBaseId));
+      }
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
 
   async function selectWorkspace(workspaceId: string) {
     if (workspaceId === selectedWorkspaceId && !selectedKnowledgeBaseId && !currentDocument) {
@@ -1336,7 +1361,7 @@ export function WorkbenchClient({
         converter: "auto"
       });
       setImportJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]);
-      setMessage(t("Import job queued. The import worker will convert it to Markdown."));
+      setMessage(t("Import job queued. Track conversion progress in the Imports panel."));
       void pollImportJob(job.id, selectedKnowledgeBaseId);
     } catch (error) {
       handleApiError(error);
@@ -2233,6 +2258,10 @@ export function WorkbenchClient({
               />
 
               <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+                <ImportJobsPanel
+                  jobs={importJobs}
+                  onRefresh={() => void refreshImportJobs(selectedKnowledgeBaseId)}
+                />
                 {tree.length > 0 ? (
                   tree.map((node) => (
                     <TreeItem
@@ -2260,7 +2289,6 @@ export function WorkbenchClient({
                     action={t("Create a page or folder to start.")}
                   />
                 )}
-                <ImportJobsPanel jobs={importJobs} />
               </div>
             </aside>
 
@@ -5660,7 +5688,7 @@ function ReferencesPanel({
   );
 }
 
-function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
+function ImportJobsPanel({ jobs, onRefresh }: { jobs: ImportJob[]; onRefresh?: () => void }) {
   const { t } = useI18n();
   const visibleJobs = jobs.slice(0, 4);
   if (visibleJobs.length === 0) {
@@ -5668,10 +5696,22 @@ function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
   }
 
   return (
-    <div className="mt-4 border-t border-zinc-200 pt-3">
+    <div className="mb-3 rounded-md border border-zinc-200 bg-zinc-50 p-2">
       <div className="mb-2 flex items-center justify-between px-2">
-        <p className="text-xs font-semibold uppercase text-zinc-500">{t("Imports")}</p>
-        <span className="text-xs text-zinc-400">{jobs.length}</span>
+        <div>
+          <p className="text-xs font-semibold uppercase text-zinc-500">{t("Imports")}</p>
+          <p className="text-[11px] leading-4 text-zinc-500">
+            {t("Import tasks stay visible here until conversion finishes.")}
+          </p>
+        </div>
+        <button
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+          onClick={onRefresh}
+          type="button"
+        >
+          <RefreshCw className="h-3 w-3" />
+          {t("Refresh")}
+        </button>
       </div>
       <div className="space-y-1">
         {visibleJobs.map((job) => (
@@ -5682,11 +5722,22 @@ function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
             <div className="flex items-center gap-2">
               <ImportStatusIcon status={job.status} />
               <span className="min-w-0 flex-1 truncate font-medium text-zinc-700">
-                {job.title || job.converter}
+                {job.title || job.source_filename || job.converter}
               </span>
               <span className={importStatusClass(job.status)}>{t(job.status)}</span>
             </div>
+            <p className="mt-1 truncate text-[11px] text-zinc-500">
+              {job.source_filename ? `${job.source_filename} · ` : ""}
+              {job.converter} ·{" "}
+              {t("Updated {time}", { time: new Date(job.updated_at).toLocaleString() })}
+            </p>
             {job.error ? <p className="mt-1 truncate text-red-600">{job.error}</p> : null}
+            {isImportJobStale(job) ? (
+              <p className="mt-1 flex min-w-0 items-center gap-1 text-amber-700">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                {t("Import looks stalled. Check the import worker and MinerU adapter.")}
+              </p>
+            ) : null}
             {extractImportWarnings(job).length > 0 ? (
               <p className="mt-1 flex min-w-0 items-center gap-1 truncate text-amber-700">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
@@ -5698,6 +5749,17 @@ function ImportJobsPanel({ jobs }: { jobs: ImportJob[] }) {
       </div>
     </div>
   );
+}
+
+function isImportJobStale(job: ImportJob): boolean {
+  if (job.status !== "pending" && job.status !== "running") {
+    return false;
+  }
+  const timestamp = Date.parse(job.updated_at || job.created_at);
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+  return Date.now() - timestamp > 10 * 60 * 1000;
 }
 
 function ImportStatusIcon({ status }: { status: ImportJob["status"] }) {

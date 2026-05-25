@@ -90,6 +90,7 @@ export type UpdateAuthSettingsInput = {
   scope?: "instance" | "tenant";
   tenant_id?: string | null;
   registration_enabled?: boolean;
+  login_registration_enabled?: boolean;
   email_verification_required?: boolean;
   default_signup_status?: "active" | "pending_activation";
   invited_user_auto_active?: boolean;
@@ -140,6 +141,7 @@ type AuthSettingsRecord = {
   id: string;
   tenant_id: string | null;
   registration_enabled: boolean;
+  login_registration_enabled: boolean;
   email_verification_required: boolean;
   default_signup_status: string;
   invited_user_auto_active: boolean;
@@ -268,6 +270,22 @@ export class AuthService {
       status: result.user.status,
       requiresEmailVerification: settings.email_verification_required,
       verificationOutboxLink: result.verificationLink
+    };
+  }
+
+  async getPublicRegistrationSettings() {
+    const tenant = await this.ensureDefaultTenant();
+    const settings = await this.getEffectiveAuthSettings(tenant.id);
+    return {
+      registration_enabled: settings.registration_enabled,
+      login_registration_enabled: settings.login_registration_enabled,
+      invite_required: settings.invite_required,
+      allowed_email_domains_enabled: settings.allowed_email_domains.length > 0,
+      allowed_email_domains: settings.allowed_email_domains,
+      registration_available:
+        settings.registration_enabled &&
+        settings.login_registration_enabled &&
+        !settings.invite_required
     };
   }
 
@@ -1134,6 +1152,7 @@ export class AuthService {
       data: {
         tenant_id: null,
         registration_enabled: true,
+        login_registration_enabled: true,
         email_verification_required: true,
         default_signup_status: "active",
         invited_user_auto_active: true,
@@ -1165,6 +1184,7 @@ export class AuthService {
       data: {
         tenant_id: tenantId,
         registration_enabled: defaults.registration_enabled,
+        login_registration_enabled: defaults.login_registration_enabled,
         email_verification_required: defaults.email_verification_required,
         default_signup_status: defaults.default_signup_status,
         invited_user_auto_active: defaults.invited_user_auto_active,
@@ -1553,6 +1573,7 @@ function toAuthSettingsDto(settings: AuthSettingsRecord) {
     tenant_id: settings.tenant_id,
     scope: settings.tenant_id ? "tenant" : "instance",
     registration_enabled: settings.registration_enabled,
+    login_registration_enabled: settings.login_registration_enabled,
     email_verification_required: settings.email_verification_required,
     default_signup_status: settings.default_signup_status,
     invited_user_auto_active: settings.invited_user_auto_active,
@@ -1606,6 +1627,9 @@ function normalizeAuthSettingsInput(input: UpdateAuthSettingsInput) {
 
   if (input.registration_enabled !== undefined) {
     data.registration_enabled = Boolean(input.registration_enabled);
+  }
+  if (input.login_registration_enabled !== undefined) {
+    data.login_registration_enabled = Boolean(input.login_registration_enabled);
   }
   if (input.email_verification_required !== undefined) {
     data.email_verification_required = Boolean(input.email_verification_required);

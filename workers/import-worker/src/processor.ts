@@ -157,6 +157,26 @@ async function claimNextChunkRebuildJob(
   return rows[0] ?? null;
 }
 
+function toMetadataRecord(value: Prisma.JsonValue | null): Record<string, Prisma.JsonValue> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, Prisma.JsonValue>;
+}
+
+function pickSourceMetadata(
+  metadata: Record<string, Prisma.JsonValue>
+): Record<string, Prisma.JsonValue> {
+  const preserved: Record<string, Prisma.JsonValue> = {};
+  for (const key of ["source_filename", "source_mime_type", "source_size_bytes"]) {
+    const value = metadata[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      preserved[key] = value;
+    }
+  }
+  return preserved;
+}
+
 async function processClaimedImportJob(
   prisma: PrismaClient,
   storage: ObjectStorage,
@@ -427,6 +447,7 @@ async function processClaimedImportJob(
           now
         });
       }
+      const previousMetadata = toMetadataRecord(job.metadata);
       await tx.importJob.update({
         where: { id: job.id },
         data: {
@@ -439,6 +460,7 @@ async function processClaimedImportJob(
           warnings: conversion.warnings,
           metadata: {
             ...conversion.metadata,
+            ...pickSourceMetadata(previousMetadata),
             chunk_count: chunks.length,
             source_asset_id: asset.id,
             asset_count: preparedAssets.length

@@ -156,6 +156,7 @@ export type AdminAuthSettings = {
   tenant_id: string | null;
   scope: AuthSettingsScope;
   registration_enabled: boolean;
+  login_registration_enabled: boolean;
   email_verification_required: boolean;
   default_signup_status: "active" | "pending_activation";
   invited_user_auto_active: boolean;
@@ -168,6 +169,7 @@ export type UpdateAdminAuthSettingsInput = Partial<
   Pick<
     AdminAuthSettings,
     | "registration_enabled"
+    | "login_registration_enabled"
     | "email_verification_required"
     | "default_signup_status"
     | "invited_user_auto_active"
@@ -178,6 +180,15 @@ export type UpdateAdminAuthSettingsInput = Partial<
 > & {
   scope?: AuthSettingsScope;
   tenant_id?: string | null;
+};
+
+export type PublicRegistrationSettings = {
+  registration_enabled: boolean;
+  login_registration_enabled: boolean;
+  invite_required: boolean;
+  allowed_email_domains_enabled: boolean;
+  allowed_email_domains: string[];
+  registration_available: boolean;
 };
 
 export type DifyApiKey = {
@@ -650,6 +661,7 @@ export type ImportJob = {
   status: "pending" | "running" | "succeeded" | "failed";
   converter: string;
   title: string | null;
+  source_filename: string | null;
   document_id: string | null;
   output_version_id: string | null;
   error: string | null;
@@ -1948,6 +1960,10 @@ export function updateAdminAuthSettings(input: UpdateAdminAuthSettingsInput) {
     method: "PUT",
     body: JSON.stringify(input)
   });
+}
+
+export function getPublicRegistrationSettings() {
+  return apiFetch<PublicRegistrationSettings>("/api/auth/registration-settings");
 }
 
 export function listDifyApiKeys(input: { limit?: number; offset?: number } = {}) {

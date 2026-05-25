@@ -21,7 +21,7 @@ HTML
 CSV
 ```
 
-以下类型属于后续 adapter 范围，当前代码会识别为需要 MinerU/MarkItDown/Pandoc/OCR adapter，但不会承诺可转换：
+以下类型依赖系统级 adapter。OpenKB 会识别它们并按配置路由到 MinerU、MarkItDown、Pandoc 或 OCR；如果对应工具未配置、不可用、超时或鉴权失败，导入任务会以稳定错误结束并展示失败原因：
 
 ```text
 PDF
@@ -31,7 +31,7 @@ XLSX
 图片
 ```
 
-测试和部署验收时，不要把 Office/PDF/OCR 当成 v0.3.x 已完成能力。
+测试和部署验收时，需要区分“OpenKB 导入任务链路可追踪”和“外部转换工具真实可用”。PDF/MinerU 能否成功取决于实例级导入工具配置和 worker 运行状态。
 
 ## 3. 转换器接口
 
@@ -65,6 +65,7 @@ type ConvertResult = {
 upload file
   -> save original to object storage
   -> create import_job
+  -> show import job in Web task panel
   -> converter worker
   -> markdown + assets
   -> Milkdown parse/serialize validation
@@ -103,3 +104,18 @@ image -> MarkItDown -> Tesseract OCR -> MinerU
 - 所有 adapter 输出都必须通过 `validateMarkdownForImport()`，不符合 Milkdown/Feature Registry 的 Markdown 以 `MARKDOWN_DIALECT_ERROR` 失败。
 - 外部工具不可用、未配置、超时、鉴权失败时必须返回稳定 code：`IMPORT_TOOL_NOT_CONFIGURED`、`IMPORT_TOOL_UNAVAILABLE`、`IMPORT_TOOL_TIMEOUT`、`IMPORT_TOOL_AUTH_FAILED` 或 `CONVERTER_UNAVAILABLE`。
 - 工具提取出的 media 写入 S3-compatible storage，并作为 `document_assets` 绑定到导入后创建的文档。
+
+## 8. 导入进度与故障可见性
+
+Web 创建导入任务后，会立即把任务放入导入任务面板，并轮询状态：
+
+```text
+pending
+running
+succeeded
+failed
+```
+
+任务 DTO 会返回安全状态字段：job id、标题、源文件名、转换器、创建/更新时间、完成时间、错误和 warnings。成功后刷新文档树；失败时显示 worker 或转换工具返回的错误。
+
+如果任务长时间停留在 `pending` 或 `running` 且没有更新时间变化，Web 会提示检查导入工作器、MinerU adapter 或外部转换超时。导入成功与否不能只藏在 toast 中；任务面板是用户追踪导入状态的固定入口。

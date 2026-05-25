@@ -74,6 +74,7 @@ export function AuthSettingsAdminClient() {
         invited_user_auto_active: settings.invited_user_auto_active,
         allowed_email_domains: allowedDomains,
         invite_required: settings.invite_required,
+        login_registration_enabled: settings.login_registration_enabled,
         first_user_becomes_admin: settings.first_user_becomes_admin
       });
       setSettings(saved);
@@ -162,8 +163,22 @@ export function AuthSettingsAdminClient() {
       <section className="rounded-md border border-zinc-200 bg-white p-4">
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-emerald-700" />
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-zinc-700">
+            {scope === "tenant" ? t("Tenant override") : t("Instance default")}
+            <HelpTip
+              text={
+                scope === "tenant"
+                  ? t(
+                      "Tenant override help: these settings apply only to the current tenant and take precedence over the instance default."
+                    )
+                  : t(
+                      "Instance default help: these settings are the global fallback for tenants without their own override."
+                    )
+              }
+            />
+          </span>
           <select
-            className={inputClass}
+            className={`${inputClass} max-w-xs`}
             onChange={(event) => setScope(event.target.value as "instance" | "tenant")}
             value={scope}
           >
@@ -185,7 +200,18 @@ export function AuthSettingsAdminClient() {
               <Toggle
                 checked={settings.registration_enabled}
                 label={t("Registration enabled")}
+                help={t(
+                  "Registration enabled help: controls whether the backend accepts self-registration requests."
+                )}
                 onChange={(value) => patch({ registration_enabled: value })}
+              />
+              <Toggle
+                checked={settings.login_registration_enabled}
+                label={t("Show registration on login page")}
+                help={t(
+                  "Login registration help: controls whether the login and register pages show public sign-up entry points."
+                )}
+                onChange={(value) => patch({ login_registration_enabled: value })}
               />
               <Toggle
                 checked={settings.email_verification_required}
@@ -195,6 +221,9 @@ export function AuthSettingsAdminClient() {
               <Toggle
                 checked={settings.invite_required}
                 label={t("Invite required")}
+                help={t(
+                  "Invite required help: when enabled, public self-registration is hidden and users must join through an invitation."
+                )}
                 onChange={(value) => patch({ invite_required: value })}
               />
               <Toggle
@@ -238,6 +267,11 @@ export function AuthSettingsAdminClient() {
                   <span className="min-w-0">
                     <span className="block font-medium text-zinc-800">
                       {t("Restrict registration to allowed email domains")}
+                      <HelpTip
+                        text={t(
+                          "Allowed email domains help: when enabled, only these domains can use public self-registration; admin-created accounts are not affected."
+                        )}
+                      />
                     </span>
                     <span className="mt-1 block text-xs leading-5 text-zinc-500">
                       {t(
@@ -364,16 +398,21 @@ export function AuthSettingsAdminClient() {
 
 function Toggle({
   checked,
+  help,
   label,
   onChange
 }: {
   checked: boolean;
+  help?: string;
   label: string;
   onChange: (checked: boolean) => void;
 }) {
   return (
     <label className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 px-3 py-2 text-sm">
-      <span className="font-medium text-zinc-700">{label}</span>
+      <span className="flex items-center gap-1 font-medium text-zinc-700">
+        {label}
+        {help ? <HelpTip text={help} /> : null}
+      </span>
       <input
         checked={checked}
         className="h-4 w-4 accent-emerald-600"
@@ -381,6 +420,27 @@ function Toggle({
         type="checkbox"
       />
     </label>
+  );
+}
+
+function HelpTip({ text }: { text: string }) {
+  return (
+    <span className="group/help relative inline-flex align-middle">
+      <button
+        aria-label={text}
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-[10px] font-semibold leading-none text-zinc-500 hover:border-zinc-400 hover:text-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        type="button"
+      >
+        ?
+      </button>
+      <span className="pointer-events-none absolute left-1/2 top-5 z-20 w-72 -translate-x-1/2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-normal leading-5 text-zinc-700 opacity-0 shadow-lg transition group-hover/help:opacity-100 group-focus-within/help:opacity-100">
+        {text}
+      </span>
+    </span>
   );
 }
 

@@ -13,6 +13,8 @@ import {
   createAdminUser,
   createDifyHubDataset,
   deleteDifyHubDataset,
+  getAdminAuthSettings,
+  getPublicRegistrationSettings,
   getWorkspaceDashboard,
   getShare,
   getDifyHubConnection,
@@ -44,6 +46,7 @@ import {
   updateDocumentSegment,
   updateAdminImportFormatRoute,
   updateAdminImportTool,
+  updateAdminAuthSettings,
   updateAdminModelSetting,
   verifySharePassword
 } from "./openkb-api";
@@ -122,6 +125,72 @@ describe("OpenKB API client", () => {
       avatar_color: "#7C3AED",
       avatar_initials: "AP"
     });
+  });
+
+  it("reads public registration settings without a mutation request", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            registration_enabled: true,
+            login_registration_enabled: true,
+            invite_required: false,
+            allowed_email_domains_enabled: true,
+            allowed_email_domains: ["sailuntire.com"],
+            registration_available: true
+          })
+        )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getPublicRegistrationSettings()).resolves.toMatchObject({
+      registration_available: true,
+      allowed_email_domains: ["sailuntire.com"]
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/auth/registration-settings",
+      expect.objectContaining({ credentials: "include" })
+    );
+  });
+
+  it("round-trips login registration visibility in admin auth settings", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            tenant_id: null,
+            scope: "instance",
+            registration_enabled: true,
+            login_registration_enabled: false,
+            email_verification_required: true,
+            default_signup_status: "active",
+            invited_user_auto_active: true,
+            allowed_email_domains: [],
+            invite_required: false,
+            first_user_becomes_admin: true
+          })
+        )
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getAdminAuthSettings({ scope: "instance" })).resolves.toMatchObject({
+      login_registration_enabled: false
+    });
+    await updateAdminAuthSettings({
+      scope: "instance",
+      login_registration_enabled: true
+    });
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:4000/api/admin/auth-settings",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ scope: "instance", login_registration_enabled: true })
+      })
+    );
   });
 
   it("keeps API error bodies available to callers", async () => {
