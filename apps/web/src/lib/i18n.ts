@@ -28,6 +28,15 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "Create user": "创建用户",
   "User created. A welcome setup email was queued or sent.":
     "用户已创建，欢迎设置密码邮件已入队或发送。",
+  "User created. Welcome setup email was sent to {email}.":
+    "用户已创建，欢迎设置密码邮件已发送到 {email}。",
+  "User created, but welcome setup email failed: {error}":
+    "用户已创建，但欢迎设置密码邮件发送失败：{error}",
+  "User created. SMTP is not configured, so the welcome setup email is pending in the outbox.":
+    "用户已创建。SMTP 尚未配置，欢迎设置密码邮件会保留在发信队列中等待重试。",
+  "User created. Welcome setup email is pending in the outbox.":
+    "用户已创建。欢迎设置密码邮件正在发信队列中等待发送。",
+  "Email delivery failed.": "邮件发送失败。",
   "Creating...": "创建中...",
   Deleted: "已删除",
   Suspended: "已禁用",
@@ -947,7 +956,8 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Reset password": "重置密码",
   "Revoke sessions": "吊销会话",
   "Revoke sessions short": "吊销会话",
-  "Create user dialog help": "创建后会生成密码重置链接；不会显示临时明文密码。",
+  "Create user dialog help":
+    "创建后会生成一次性设置密码邮件；不会显示临时明文密码。自助注册邮箱白名单不会阻止管理员创建账号。",
   "Suspend {email}? Login will be blocked and active sessions will be revoked, while existing permissions stay unchanged.":
     "禁用 {email}？该用户将不能登录，现有会话会被吊销，但已有权限关系会保持不变。",
   "Soft-delete {email}? Historical creator names stay unchanged, but this account's memberships, collaborators, tenant role, and sessions are removed.":

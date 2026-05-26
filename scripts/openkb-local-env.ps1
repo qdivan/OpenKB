@@ -38,15 +38,25 @@ if (Test-Path -LiteralPath $localModelEnv) {
 
 Set-OpenKBDefaultEnv "APP_BASE_URL" "http://localhost:3100"
 Set-OpenKBDefaultEnv "WEB_BASE_URL" "http://localhost:3100"
-Set-OpenKBDefaultEnv "CORS_ORIGINS" "http://localhost:3100,http://127.0.0.1:3100,http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
-Set-OpenKBDefaultEnv "REDIS_URL" "redis://localhost:56379"
-Set-OpenKBDefaultEnv "S3_ENDPOINT" "http://localhost:59000"
+Set-OpenKBDefaultEnv "CORS_ORIGINS" "http://localhost:3100,http://127.0.0.1:3100,http://localhost:3202,http://127.0.0.1:3202,http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+
+$localStack = if ($env:OPENKB_LOCAL_STACK) { $env:OPENKB_LOCAL_STACK.Trim().ToLowerInvariant() } else { "compose" }
+if ($localStack -ne "compose" -and $localStack -ne "test") {
+  throw "OPENKB_LOCAL_STACK must be 'compose' or 'test'."
+}
+
+$defaultRedisPort = if ($localStack -eq "test") { "56379" } else { "6379" }
+$defaultS3Port = if ($localStack -eq "test") { "59000" } else { "9000" }
+$defaultMilvusPort = if ($localStack -eq "test") { "19531" } else { "19530" }
+
+Set-OpenKBDefaultEnv "REDIS_URL" "redis://localhost:$defaultRedisPort"
+Set-OpenKBDefaultEnv "S3_ENDPOINT" "http://localhost:$defaultS3Port"
 Set-OpenKBDefaultEnv "S3_REGION" "us-east-1"
 Set-OpenKBDefaultEnv "S3_BUCKET" "openkb-assets"
 Set-OpenKBDefaultEnv "S3_ACCESS_KEY_ID" "openkb"
 Set-OpenKBDefaultEnv "S3_SECRET_ACCESS_KEY" "openkb-secret"
 Set-OpenKBDefaultEnv "S3_FORCE_PATH_STYLE" "true"
-Set-OpenKBDefaultEnv "MILVUS_URI" "localhost:19531"
+Set-OpenKBDefaultEnv "MILVUS_URI" "localhost:$defaultMilvusPort"
 Set-OpenKBDefaultEnv "OPENKB_RETRIEVAL_DEFAULT_MODE" "hybrid"
 Set-OpenKBDefaultEnv "OPENKB_EMBEDDING_REQUEST_FORMAT" "openai_compatible"
 Set-OpenKBDefaultEnv "OPENKB_EMBEDDING_ENDPOINT" "http://localhost:18761/v1/embeddings"
@@ -98,8 +108,65 @@ function Resolve-OpenKBPostgresHost {
   return "localhost"
 }
 
+function Assert-OpenKBLocalPort {
+  param(
+    [string]$Label,
+    [string]$HostName,
+    [int]$Port
+  )
+
+  if ($env:OPENKB_SKIP_LOCAL_DEPENDENCY_CHECK -and @("1", "true", "yes", "on") -contains $env:OPENKB_SKIP_LOCAL_DEPENDENCY_CHECK.Trim().ToLowerInvariant()) {
+    return
+  }
+  if ($HostName -ne "localhost" -and $HostName -ne "127.0.0.1" -and $HostName -ne "::1") {
+    return
+  }
+  if (-not (Test-OpenKBTcpPort $HostName $Port)) {
+    throw "$Label is not reachable at ${HostName}:$Port. Start the $localStack local stack first, set OPENKB_LOCAL_STACK=test for test-stack ports, override the relevant env var, or set OPENKB_SKIP_LOCAL_DEPENDENCY_CHECK=1."
+  }
+}
+
 if (-not $env:DATABASE_URL) {
-  $postgresPort = if ($env:OPENKB_TEST_POSTGRES_PORT) { $env:OPENKB_TEST_POSTGRES_PORT } else { "55432" }
+  $postgresPort = if ($env:OPENKB_TEST_POSTGRES_PORT) {
+    $env:OPENKB_TEST_POSTGRES_PORT
+  } elseif ($localStack -eq "test") {
+    "55432"
+  } else {
+    "5432"
+  }
   $postgresHost = Resolve-OpenKBPostgresHost ([int]$postgresPort)
   $env:DATABASE_URL = "postgresql://openkb:openkb@${postgresHost}:$postgresPort/openkb?schema=public"
 }
+
+try {
+  $databaseUri = [System.Uri]$env:DATABASE_URL
+  Assert-OpenKBLocalPort "PostgreSQL" $databaseUri.Host $databaseUri.Port
+} catch {
+  if ($_.Exception.Message -like "PostgreSQL is not reachable*") {
+    throw
+  }
+}
+
+try {
+  $redisUri = [System.Uri]$env:REDIS_URL
+  Assert-OpenKBLocalPort "Redis" $redisUri.Host $redisUri.Port
+} catch {
+  if ($_.Exception.Message -like "Redis is not reachable*") {
+    throw
+  }
+}
+
+try {
+  $s3Uri = [System.Uri]$env:S3_ENDPOINT
+  Assert-OpenKBLocalPort "Object storage" $s3Uri.Host $s3Uri.Port
+} catch {
+  if ($_.Exception.Message -like "Object storage is not reachable*") {
+    throw
+  }
+}
+
+if ($env:MILVUS_URI -match "^(?<host>[^:]+):(?<port>\d+)$") {
+  Assert-OpenKBLocalPort "Milvus" $Matches.host ([int]$Matches.port)
+}
+
+Write-Host "Using local dependency stack: $localStack"

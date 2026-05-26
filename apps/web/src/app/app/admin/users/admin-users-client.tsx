@@ -136,7 +136,7 @@ export function AdminUsersClient() {
       setNewDisplayName("");
       setNewRole("member");
       setIsCreateOpen(false);
-      setMessage(t("User created. A welcome setup email was queued or sent."));
+      setMessage(formatSetupEmailMessage(result.setup_email, t));
       await load("");
     } catch (error) {
       handleError(error);
@@ -625,7 +625,13 @@ function CreateUserDialog({
               <UserPlus className="h-4 w-4 text-emerald-700" />
               <h2 className="text-base font-semibold text-zinc-950">{t("Create user")}</h2>
             </div>
-            <p className="mt-1 text-sm leading-6 text-zinc-500">{t("Create user dialog help")}</p>
+            <p className="mt-1 text-sm leading-6 text-zinc-500">
+              {t(
+                "Create user dialog help",
+                undefined,
+                "Create an active account and send a one-time setup-password email. Public registration email-domain allowlists do not block admin-created accounts."
+              )}
+            </p>
           </div>
           <button aria-label={t("Close")} className="icon-button" onClick={onClose} type="button">
             <X className="h-4 w-4" />
@@ -690,6 +696,43 @@ function CreateUserDialog({
       </form>
     </div>
   );
+}
+
+function formatSetupEmailMessage(
+  setupEmail:
+    | {
+        toEmail: string;
+        status: string;
+        error: string | null;
+        smtpConfigured: boolean;
+      }
+    | null
+    | undefined,
+  t: (
+    key: string,
+    values?: Record<string, string | number | boolean | null | undefined>,
+    fallback?: string
+  ) => string
+) {
+  if (!setupEmail) {
+    return t("User created. A welcome setup email was queued or sent.");
+  }
+  if (setupEmail.status === "sent") {
+    return t("User created. Welcome setup email was sent to {email}.", {
+      email: setupEmail.toEmail
+    });
+  }
+  if (setupEmail.status === "failed") {
+    return t("User created, but welcome setup email failed: {error}", {
+      error: setupEmail.error || t("Email delivery failed.")
+    });
+  }
+  if (!setupEmail.smtpConfigured) {
+    return t(
+      "User created. SMTP is not configured, so the welcome setup email is pending in the outbox."
+    );
+  }
+  return t("User created. Welcome setup email is pending in the outbox.");
 }
 
 function HelpTip({ text }: { text: string }) {

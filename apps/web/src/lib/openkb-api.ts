@@ -2303,13 +2303,25 @@ export function createAdminUser(input: {
   display_name?: string;
   tenant_role?: TenantRole;
 }) {
-  return apiFetch<{ user: AdminUser; reset_link: string; setup_link?: string }>(
-    "/api/admin/users",
-    {
-      method: "POST",
-      body: JSON.stringify(input)
-    }
-  );
+  return apiFetch<{
+    user: AdminUser;
+    reset_link: string;
+    setup_link?: string;
+    setup_email?: {
+      outboxId: string;
+      toEmail: string;
+      status: string;
+      attempts: number;
+      error: string | null;
+      sentAt: string | null;
+      lastAttemptAt: string | null;
+      smtpConfigured: boolean;
+      smtpSource: "db" | "env" | "dev";
+    } | null;
+  }>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
 }
 
 export function updateAdminUser(

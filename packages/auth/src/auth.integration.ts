@@ -468,11 +468,68 @@ describe("AuthService integration", () => {
         subject: "Welcome to OpenKB - set your password"
       }
     ]);
+    expect(created.setup_email).toMatchObject({
+      toEmail: "smtp-user@example.com",
+      status: "sent",
+      attempts: 1,
+      error: null,
+      smtpConfigured: true,
+      smtpSource: "env"
+    });
     const outbox = await prisma.authEmailOutbox.findFirstOrThrow({
       where: { user_id: created.user.id }
     });
     expect(outbox.status).toBe("sent");
     expect(outbox.attempts).toBe(1);
+  });
+
+  it("does not apply self-registration email domain allowlists to admin-created accounts and reports setup email failures", async () => {
+    await createDefaultSettings({
+      email_verification_required: false,
+      allowed_email_domains: ["sailuntire.com"]
+    });
+    const auth = service(
+      {
+        OPENKB_SMTP_HOST: "smtp.example.com",
+        OPENKB_SMTP_FROM: "OpenKB <noreply@example.com>",
+        OPENKB_SMTP_PORT: "587",
+        OPENKB_SMTP_SECURE: "false"
+      },
+      {
+        emailTransport: {
+          async send(_config, message) {
+            if (message.to.endsWith("@qq.com")) {
+              throw new Error("recipient domain rejected by SMTP provider");
+            }
+          }
+        }
+      }
+    );
+    await auth.register({ email: "admin@sailuntire.com", password: "password-123" });
+    const adminLogin = await auth.login({
+      email: "admin@sailuntire.com",
+      password: "password-123"
+    });
+
+    const created = await auth.createAdminUser(adminLogin.sessionToken, {
+      email: "new-user@qq.com",
+      tenant_role: "member"
+    });
+
+    expect(created.user.email).toBe("new-user@qq.com");
+    expect(created.setup_email).toMatchObject({
+      toEmail: "new-user@qq.com",
+      status: "failed",
+      attempts: 1,
+      error: "recipient domain rejected by SMTP provider",
+      smtpConfigured: true,
+      smtpSource: "env"
+    });
+    const outbox = await prisma.authEmailOutbox.findFirstOrThrow({
+      where: { user_id: created.user.id }
+    });
+    expect(outbox.status).toBe("failed");
+    expect(outbox.error).toBe("recipient domain rejected by SMTP provider");
   });
 
   it("soft-deletes users while preserving historical creator identity and removing access", async () => {

@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import bcrypt from "bcryptjs";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
-import { getSmtpConfig, sendEmail, type SmtpTransport } from "@openkb/email";
+import { getSmtpConfig, sendEmail, type SmtpConfig, type SmtpTransport } from "@openkb/email";
 
 export const AUTH_COOKIE_NAME = "openkb_session";
 
@@ -53,6 +53,18 @@ export type AdminUser = PublicUser & {
   activeSessionCount: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type AdminSetupEmailDelivery = {
+  outboxId: string;
+  toEmail: string;
+  status: string;
+  attempts: number;
+  error: string | null;
+  sentAt: string | null;
+  lastAttemptAt: string | null;
+  smtpConfigured: boolean;
+  smtpSource: "db" | "env" | "dev";
 };
 
 export type AuditLogEntry = {
@@ -605,12 +617,13 @@ export class AuthService {
       return { user, setupOutbox };
     });
 
-    await this.deliverOutboxIfSmtpConfigured(result.setupOutbox.outboxId);
+    const setupEmail = await this.deliverOutboxIfSmtpConfigured(result.setupOutbox.outboxId);
 
     return {
       user: await this.toAdminUser(admin.tenantId, result.user),
       setup_link: result.setupOutbox.linkUrl,
-      reset_link: result.setupOutbox.linkUrl
+      reset_link: result.setupOutbox.linkUrl,
+      setup_email: setupEmail
     };
   }
 
@@ -1421,15 +1434,17 @@ export class AuthService {
     return `${baseUrl}${path}?token=${encodeURIComponent(token)}`;
   }
 
-  private async deliverOutboxIfSmtpConfigured(outboxId: string): Promise<void> {
+  private async deliverOutboxIfSmtpConfigured(
+    outboxId: string
+  ): Promise<AdminSetupEmailDelivery | null> {
     const item = await this.prisma.authEmailOutbox.findUnique({ where: { id: outboxId } });
     if (!item || item.status !== "pending") {
-      return;
+      return item ? toSetupEmailDelivery(item, { enabled: false, source: "dev" }) : null;
     }
     const setting = await this.prisma.smtpSetting.findUnique({ where: { scope: "instance" } });
     const config = getSmtpConfig(this.env, setting);
     if (!config.enabled) {
-      return;
+      return toSetupEmailDelivery(item, config);
     }
 
     const result = await sendEmail(
@@ -1441,7 +1456,7 @@ export class AuthService {
       },
       this.emailTransport ? { transport: this.emailTransport } : {}
     );
-    await this.prisma.authEmailOutbox.update({
+    const updated = await this.prisma.authEmailOutbox.update({
       where: { id: item.id },
       data: {
         status: result.ok ? "sent" : "failed",
@@ -1451,6 +1466,7 @@ export class AuthService {
         last_attempt_at: this.now()
       }
     });
+    return toSetupEmailDelivery(updated, config);
   }
 
   private async getAuthenticatedUserByUserId(
@@ -1565,6 +1581,31 @@ export function toPublicUser(user: {
     displayName: user.display_name,
     status: user.status,
     emailVerifiedAt: user.email_verified_at ? user.email_verified_at.toISOString() : null
+  };
+}
+
+function toSetupEmailDelivery(
+  item: {
+    id: string;
+    to_email: string;
+    status: string;
+    attempts: number;
+    error: string | null;
+    sent_at: Date | null;
+    last_attempt_at: Date | null;
+  },
+  config: Pick<SmtpConfig, "enabled" | "source">
+): AdminSetupEmailDelivery {
+  return {
+    outboxId: item.id,
+    toEmail: item.to_email,
+    status: item.status,
+    attempts: item.attempts,
+    error: item.error,
+    sentAt: item.sent_at?.toISOString() ?? null,
+    lastAttemptAt: item.last_attempt_at?.toISOString() ?? null,
+    smtpConfigured: config.enabled,
+    smtpSource: config.source
   };
 }
 
