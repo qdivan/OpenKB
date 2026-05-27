@@ -9,7 +9,7 @@ import { getPublicRegistrationSettings, type PublicRegistrationSettings } from "
 import { getRegistrationUnavailableMessageKey } from "@/lib/registration-ui";
 
 export default function RegisterPage() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -56,7 +56,8 @@ export default function RegisterPage() {
         body: JSON.stringify({
           email,
           password,
-          display_name: displayName || undefined
+          display_name: displayName || undefined,
+          locale
         })
       });
       body = await response.json();

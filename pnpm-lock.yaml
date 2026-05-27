@@ -289,6 +289,16 @@ importers:
 
   packages/model-client: {}
 
+  packages/openkb-mcp:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.1)
+    devDependencies:
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/permissions:
     dependencies:
       '@openkb/db':

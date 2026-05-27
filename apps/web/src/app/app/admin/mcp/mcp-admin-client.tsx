@@ -276,6 +276,38 @@ export function McpAdminClient() {
         </form>
       </section>
 
+      <section className="rounded-md border border-zinc-200 bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">{t("Client access")}</h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              {t(
+                "Codex, OpenClaw, and Claude Code can use OpenKB through the stdio bridge. Store the PAT in an environment variable; do not paste raw tokens into config files."
+              )}
+            </p>
+          </div>
+          <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
+            {t("User-bound")}
+          </span>
+        </div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-3">
+          {(["codex", "openclaw", "claude-code"] as const).map((clientName) => (
+            <div className="rounded-md bg-zinc-50 p-3 text-sm" key={clientName}>
+              <div className="font-medium">{clientName}</div>
+              <code className="mt-2 block overflow-auto rounded bg-white px-2 py-1 text-xs text-zinc-700">
+                openkb-mcp install --client {clientName} --server-url https://kb.example.com/mcp
+                --pat-env OPENKB_MCP_PAT
+              </code>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-zinc-500">
+          {t(
+            "Use openkb-mcp probe before installation to confirm the server URL, PAT scopes, and available kb.* tools."
+          )}
+        </p>
+      </section>
+
       <section className="grid gap-4 xl:grid-cols-3">
         <Panel title={t("PATs")}>
           {pats.map((pat) => (

@@ -2,7 +2,7 @@
 
 本文是 OpenKB 当前文档入口。开始实现或 review 前，请优先阅读“最高优先级”和“当前规范”；历史审计材料只用于追溯，不覆盖当前规范。
 
-当前主线：`v0.3.x / Phase 31`，并包含最新的登录注册、导入进度和语言切换体验优化。OpenKB 当前采用“个人空间 / 团队空间 / 知识库 / 文档”的用户模型；Dify 相关能力以“External Knowledge 配合、Hub 管理和兼容性测试”为公开口径，避免过度承诺。
+当前主线：`v0.3.x / Phase 31`，并包含最新的登录注册、导入进度、语言切换和 MCP bridge / skill 体验优化。OpenKB 当前采用“个人空间 / 团队空间 / 知识库 / 文档”的用户模型；Dify 相关能力以“External Knowledge 配合、Hub 管理和兼容性测试”为公开口径，避免过度承诺。
 
 ## 最高优先级
 
@@ -30,7 +30,7 @@
 - `docs/07-data-model.zh-CN.md`：数据库模型。
 - `docs/08-api-contract.zh-CN.md`：API 合同。
 - `docs/09-search-rag-milvus-native.zh-CN.md`：Milvus 检索、alias 和重建索引。
-- `docs/10-mcp-server.zh-CN.md`：MCP Server。
+- `docs/10-mcp-server.zh-CN.md`：MCP Server、OAuth/PAT、`openkb-mcp` stdio bridge 和跨客户端 skill。
 - `docs/11-dify-adapter.zh-CN.md`：Dify External Knowledge Adapter。
 - `docs/12-import-conversion.zh-CN.md`：文件导入、转换链路和导入任务进度。
 - `docs/13-deployment.zh-CN.md`：Docker Compose、Helm 和升级验收。

@@ -30,14 +30,50 @@ export type OpenKBMcpHttpServerOptions = {
   oauth?: McpOAuthService;
 };
 
+const metadataConditionItemSchema = z
+  .object({
+    name: z.string().optional(),
+    field: z.string().optional(),
+    key: z.string().optional(),
+    comparison_operator: z.string().optional(),
+    operator: z.string().optional(),
+    value: z.unknown().optional()
+  })
+  .passthrough();
+
+const metadataConditionSchema = z
+  .object({
+    logical_operator: z.enum(["and", "or"]).optional(),
+    conditions: z.array(metadataConditionItemSchema).optional()
+  })
+  .passthrough();
+
+const retrievalModelInputSchema = z
+  .object({
+    search_method: z
+      .enum(["semantic_search", "full_text_search", "hybrid_search", "keyword_search"])
+      .optional(),
+    top_k: z.number().int().positive().optional(),
+    score_threshold_enabled: z.boolean().optional(),
+    score_threshold: z.number().min(0).max(1).optional(),
+    reranking_enable: z.boolean().optional(),
+    weights: z.record(z.string(), z.unknown()).optional()
+  })
+  .passthrough();
+
 const searchInputSchema = {
   query: z.string(),
   knowledge_base_ids: z.array(z.string()).optional(),
   top_k: z.number().int().positive().optional(),
+  score_threshold: z.number().min(0).max(1).optional(),
+  retrieval_model: retrievalModelInputSchema.optional(),
   filters: z
     .object({
-      tags: z.array(z.string()).optional()
+      tags: z.array(z.string()).optional(),
+      metadata_condition: metadataConditionSchema.optional(),
+      metadataCondition: metadataConditionSchema.optional()
     })
+    .passthrough()
     .optional(),
   context_mode: z.enum(["chunk", "parent_child", "paragraph_parent_child", "full_text"]).optional()
 };
@@ -153,6 +189,8 @@ export function createOpenKBMcpServer(
             query: input.query,
             knowledge_base_ids: input.knowledge_base_ids,
             top_k: input.top_k,
+            score_threshold: input.score_threshold,
+            retrieval_model: input.retrieval_model,
             filters: input.filters,
             context_mode: input.context_mode
           },

@@ -59,7 +59,7 @@ const ROLE_OPTIONS: TenantRole[] = ["member", "tenant_admin", "system_admin"];
 
 export function AdminUsersClient() {
   const router = useRouter();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const dialog = useDialog();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -129,7 +129,8 @@ export function AdminUsersClient() {
       const result = await createAdminUser({
         email: newEmail.trim(),
         display_name: newDisplayName.trim() || undefined,
-        tenant_role: newRole
+        tenant_role: newRole,
+        locale
       });
       setResetLink(result.setup_link ?? result.reset_link);
       setNewEmail("");

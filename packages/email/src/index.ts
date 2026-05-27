@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Socket } from "node:net";
 import { connect as tlsConnect, TLSSocket } from "node:tls";
 
@@ -290,16 +291,33 @@ export function formatSmtpMessage(config: SmtpConfig, message: EmailMessage): st
   const headers = [
     `From: ${from.header}`,
     `To: ${to.header}`,
-    `Subject: ${sanitizeHeader(message.subject)}`,
-    "MIME-Version: 1.0",
-    message.html
-      ? "Content-Type: text/html; charset=utf-8"
-      : "Content-Type: text/plain; charset=utf-8"
+    `Subject: ${formatHeaderValue(message.subject)}`,
+    "MIME-Version: 1.0"
   ];
   if (replyTo) {
     headers.push(`Reply-To: ${replyTo.header}`);
   }
-  return `${headers.join("\r\n")}\r\n\r\n${normalizeSmtpData(message.html ?? message.text)}`;
+  if (!message.html) {
+    headers.push("Content-Type: text/plain; charset=utf-8");
+    return `${headers.join("\r\n")}\r\n\r\n${normalizeSmtpData(message.text)}`;
+  }
+
+  const boundary = createMimeBoundary(message);
+  headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+  const body = [
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    message.text,
+    `--${boundary}`,
+    "Content-Type: text/html; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    message.html,
+    `--${boundary}--`
+  ].join("\r\n");
+  return `${headers.join("\r\n")}\r\n\r\n${normalizeSmtpData(body)}`;
 }
 
 function decryptOptionalSecret(
@@ -364,6 +382,23 @@ function parseMailboxAddress(
 function sanitizeHeader(value: string): string {
   assertNoHeaderBreaks(value, "header");
   return value.trim();
+}
+
+function formatHeaderValue(value: string): string {
+  const sanitized = sanitizeHeader(value);
+  return /[^\x20-\x7e]/.test(sanitized)
+    ? `=?UTF-8?B?${Buffer.from(sanitized, "utf8").toString("base64")}?=`
+    : sanitized;
+}
+
+function createMimeBoundary(message: EmailMessage): string {
+  const hash = createHash("sha256")
+    .update(message.to)
+    .update("\0")
+    .update(message.subject)
+    .digest("hex")
+    .slice(0, 16);
+  return `openkb-${hash}`;
 }
 
 function assertNoHeaderBreaks(value: string, fieldName: string): void {

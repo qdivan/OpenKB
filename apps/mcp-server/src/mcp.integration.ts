@@ -118,6 +118,37 @@ describe("OpenKB MCP Streamable HTTP", () => {
         ])
       );
 
+      const configuredSearch = parseToolJson(
+        await client.callTool({
+          name: "kb.search",
+          arguments: {
+            query: "Phase 7",
+            top_k: 1,
+            score_threshold: 0,
+            retrieval_model: {
+              search_method: "full_text_search",
+              top_k: 1,
+              score_threshold_enabled: true,
+              score_threshold: 0,
+              reranking_enable: false
+            },
+            filters: {
+              tags: [],
+              metadata_condition: {
+                logical_operator: "and",
+                conditions: []
+              }
+            },
+            context_mode: "chunk"
+          }
+        })
+      ) as { results: Array<Record<string, unknown>>; metadata?: Record<string, unknown> };
+      expect(configuredSearch.results.length).toBeLessThanOrEqual(1);
+      expect(configuredSearch.metadata).toMatchObject({
+        retrieval_mode: expect.any(String),
+        score_threshold_applied: 0
+      });
+
       const markdown = parseToolJson(
         await client.callTool({
           name: "kb.get_document_markdown",

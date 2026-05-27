@@ -1,0 +1,22 @@
+{
+  "name": "openkb-mcp",
+  "private": true,
+  "version": "0.3.3",
+  "bin": {
+    "openkb-mcp": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}

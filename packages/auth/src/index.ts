@@ -1,4 +1,5 @@
 export * from "./service";
+export * from "./email-templates";
 
 export const AUTH_PACKAGE_NAME = "@openkb/auth";
 

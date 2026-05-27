@@ -129,7 +129,8 @@ describe("AuthService integration", () => {
     const result = await auth.register({
       email: "User@Example.com",
       password: "password-123",
-      displayName: "User"
+      displayName: "User",
+      locale: "zh-CN"
     });
 
     const tokens = await prisma.authToken.findMany();
@@ -142,6 +143,8 @@ describe("AuthService integration", () => {
     expect(tokens[0]).toMatchObject({ purpose: "email_verification", consumed_at: null });
     expect(outbox).toHaveLength(1);
     expect(outbox[0]?.link_url).toContain("/verify-email?token=");
+    expect(outbox[0]?.subject).toBe("验证你的 OpenKB 邮箱");
+    expect(outbox[0]?.payload).toMatchObject({ locale: "zh-CN" });
     expect(await prisma.workspace.count({ where: { kind: "personal" } })).toBe(0);
   });
 
@@ -438,7 +441,7 @@ describe("AuthService integration", () => {
 
   it("auto-sends admin account setup email when SMTP is configured", async () => {
     await createDefaultSettings({ email_verification_required: false });
-    const sent: Array<{ to: string; subject: string }> = [];
+    const sent: Array<{ to: string; subject: string; hasText: boolean; hasHtml: boolean }> = [];
     const auth = service(
       {
         OPENKB_SMTP_HOST: "smtp.example.com",
@@ -449,7 +452,12 @@ describe("AuthService integration", () => {
       {
         emailTransport: {
           async send(_config, message) {
-            sent.push({ to: message.to, subject: message.subject });
+            sent.push({
+              to: message.to,
+              subject: message.subject,
+              hasText: message.text.includes("Please open the following link to continue:"),
+              hasHtml: Boolean(message.html?.includes("OpenKB"))
+            });
           }
         }
       }
@@ -465,7 +473,9 @@ describe("AuthService integration", () => {
     expect(sent).toEqual([
       {
         to: "smtp-user@example.com",
-        subject: "Welcome to OpenKB - set your password"
+        subject: "Set up your OpenKB account",
+        hasText: true,
+        hasHtml: true
       }
     ]);
     expect(created.setup_email).toMatchObject({

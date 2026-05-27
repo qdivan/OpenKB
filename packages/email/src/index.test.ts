@@ -105,6 +105,30 @@ describe("@openkb/email", () => {
     expect(message).toContain("\r\nfirst\r\n..secret\r\n...already");
   });
 
+  it("sends html mail with a plain text alternative", () => {
+    const message = formatSmtpMessage(
+      {
+        source: "env",
+        enabled: true,
+        secure: true,
+        host: "smtp.example.com",
+        fromEmail: "OpenKB <noreply@example.com>"
+      },
+      {
+        to: "user@example.com",
+        subject: "验证你的 OpenKB 邮箱",
+        text: "Open this link:\nhttps://example.com/verify-email?token=abc",
+        html: "<strong>Open this link</strong>"
+      }
+    );
+
+    expect(message).toContain("Content-Type: multipart/alternative;");
+    expect(message).toContain("Content-Type: text/plain; charset=utf-8");
+    expect(message).toContain("Content-Type: text/html; charset=utf-8");
+    expect(message).toContain("https://example.com/verify-email?token=abc");
+    expect(message).toContain("=?UTF-8?B?");
+  });
+
   it("consumes SMTP multiline responses already present in one socket buffer", () => {
     const response = shiftSmtpResponse(
       "250-smtp.aliyun.com\r\n250-PIPELINING\r\n250-AUTH PLAIN LOGIN\r\n250 AUTH=PLAIN LOGIN\r\n"

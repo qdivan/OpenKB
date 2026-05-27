@@ -2302,6 +2302,7 @@ export function createAdminUser(input: {
   email: string;
   display_name?: string;
   tenant_role?: TenantRole;
+  locale?: string;
 }) {
   return apiFetch<{
     user: AdminUser;

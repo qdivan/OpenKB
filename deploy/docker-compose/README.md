@@ -134,6 +134,20 @@ Native providers such as DashScope must set the matching `OPENKB_EMBEDDING_REQUE
 
 OpenKB does not store embedding/rerank provider API keys in its database.
 
+## MCP Clients
+
+The compose stack exposes the MCP server on `http://localhost:4100/mcp`.
+
+Remote clients can use OAuth or a PAT directly. Stdio-only clients such as Codex, OpenClaw, and Claude Code can use the local bridge:
+
+```bash
+set OPENKB_MCP_PAT=<pat shown once in Admin MCP>
+openkb-mcp probe --server-url http://localhost:4100/mcp --pat-env OPENKB_MCP_PAT
+openkb-mcp install --client codex --server-url http://localhost:4100/mcp --pat-env OPENKB_MCP_PAT --output ./openkb-mcp.json
+```
+
+The generated config references the environment variable. Do not write raw PATs into client config files.
+
 ## Redis Note
 
 Redis is included as a Phase 11 deployment baseline service. Current import/index workers still poll PostgreSQL-backed job tables and do not use BullMQ yet.

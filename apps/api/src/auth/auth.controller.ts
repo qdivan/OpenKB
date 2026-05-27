@@ -8,6 +8,7 @@ type RegisterBody = {
   email?: string;
   password?: string;
   display_name?: string;
+  locale?: string;
 };
 
 type TokenBody = {
@@ -37,12 +38,17 @@ export class AuthController {
   }
 
   @Post("register")
-  async register(@Body() body: RegisterBody, @Res({ passthrough: true }) reply: FastifyReply) {
+  async register(
+    @Body() body: RegisterBody,
+    @Res({ passthrough: true }) reply: FastifyReply,
+    @Req() request?: FastifyRequest
+  ) {
     try {
       const result = await this.auth.register({
         email: body.email ?? "",
         password: body.password ?? "",
-        displayName: body.display_name
+        displayName: body.display_name,
+        locale: body.locale ?? readPreferredLocale(request)
       });
 
       return {
@@ -128,4 +134,9 @@ export class AuthController {
   private getSessionToken(request: FastifyRequest): string | null {
     return getCookieValue(request.headers.cookie, this.auth.cookieName());
   }
+}
+
+function readPreferredLocale(request: FastifyRequest | undefined): string | undefined {
+  const header = request?.headers["accept-language"];
+  return Array.isArray(header) ? header[0] : header;
 }

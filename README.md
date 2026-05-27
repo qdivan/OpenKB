@@ -16,6 +16,7 @@ The current build includes:
 - Yuque-style permission entry points for workspace members, knowledge base visibility and collaborators, document permissions, and read-only share links.
 - Dify External Knowledge adapter plus Dify Hub for Service API dataset discovery, external dataset management, and metadata sync.
 - Dify-style knowledge processing settings: text, parent-child, QA, explicit reprocess, segment management, summary, QA, and asset-derived retrieval rows.
+- User-bound MCP over Streamable HTTP, OAuth/PAT, and a local `openkb-mcp` stdio bridge for Codex, OpenClaw, Claude Code, and other MCP clients.
 - Login registration controls: backend registration switch, login-page registration switch, invite-only mode, and email domain whitelist.
 - Import job tracking: queued/running/succeeded/failed status, source filename, warnings, errors, and stale MinerU/import-worker diagnostics.
 - Current-page language switching in the workbench.
@@ -171,6 +172,17 @@ pnpm mcp:test
 ```
 
 `auth:test`, `content:test`, and `import:test` manage local test services. Run them serially to avoid one suite tearing down another suite's test database.
+
+## MCP Clients
+
+OpenKB exposes a user-bound MCP server at `/mcp`. Remote clients can use OAuth or PAT directly. Local stdio-only clients can use the bridge:
+
+```bash
+openkb-mcp probe --server-url https://kb.example.com/mcp --pat-env OPENKB_MCP_PAT
+openkb-mcp install --client codex --server-url https://kb.example.com/mcp --pat-env OPENKB_MCP_PAT --output ./openkb-mcp.json
+```
+
+The generated config references an environment variable and does not write raw PATs. The portable agent skill lives in `integrations/skills/openkb-mcp/`.
 
 ## Boundaries
 

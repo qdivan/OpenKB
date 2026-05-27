@@ -4,6 +4,13 @@ import bcrypt from "bcryptjs";
 import { createDatabaseClient, type Prisma, type PrismaClient } from "@openkb/db";
 import { getSmtpConfig, sendEmail, type SmtpConfig, type SmtpTransport } from "@openkb/email";
 
+import {
+  normalizeAuthEmailLocale,
+  renderAuthActionEmail,
+  type AuthEmailLocale,
+  type AuthEmailPurpose
+} from "./email-templates";
+
 export const AUTH_COOKIE_NAME = "openkb_session";
 
 export type AuthErrorCode =
@@ -91,6 +98,7 @@ export type RegisterInput = {
   email: string;
   password: string;
   displayName?: string;
+  locale?: string;
 };
 
 export type LoginInput = {
@@ -115,6 +123,7 @@ export type CreateAdminUserInput = {
   email?: string;
   display_name?: string;
   tenant_role?: TenantRole;
+  locale?: string;
 };
 
 export type UpdateAdminUserInput = {
@@ -162,7 +171,7 @@ type AuthSettingsRecord = {
   first_user_becomes_admin: boolean;
 };
 
-type TokenPurpose = "email_verification" | "password_reset" | "account_setup";
+type TokenPurpose = AuthEmailPurpose;
 
 export class AuthService {
   private readonly prisma: PrismaClient;
@@ -185,6 +194,7 @@ export class AuthService {
     const email = normalizeEmail(input.email);
     const password = validatePassword(input.password);
     const displayName = normalizeDisplayName(input.displayName, email);
+    const locale = normalizeAuthEmailLocale(input.locale);
     const now = this.now();
     const tenant = await this.ensureDefaultTenant();
     const settings = await this.getEffectiveAuthSettings(tenant.id);
@@ -255,7 +265,8 @@ export class AuthService {
           userId: user.id,
           email: user.email,
           purpose: "email_verification",
-          ttlHours: this.emailVerificationTtlHours()
+          ttlHours: this.emailVerificationTtlHours(),
+          locale
         });
         verificationLink = outbox.linkUrl;
         verificationOutboxId = outbox.outboxId;
@@ -607,7 +618,8 @@ export class AuthService {
         userId: user.id,
         email: user.email,
         purpose: "account_setup",
-        ttlHours: this.passwordResetTtlHours()
+        ttlHours: this.passwordResetTtlHours(),
+        locale: input.locale
       });
       await this.writeAuditLog(tx, admin, "admin.user.create", "user", user.id, {
         tenant_role: role,
@@ -1379,13 +1391,19 @@ export class AuthService {
       email: string;
       purpose: TokenPurpose;
       ttlHours: number;
+      locale?: string | null;
     }
   ): Promise<{ linkUrl: string; outboxId: string }> {
     const rawToken = createRawToken();
     const now = this.now();
     const expiresAt = addHours(now, input.ttlHours);
     const linkUrl = this.createLink(input.purpose, rawToken);
-    const subject = authEmailSubject(input.purpose);
+    const locale = normalizeAuthEmailLocale(input.locale);
+    const message = renderAuthActionEmail({
+      purpose: input.purpose,
+      linkUrl,
+      locale
+    });
 
     if (isPasswordTokenPurpose(input.purpose)) {
       await tx.authToken.updateMany({
@@ -1415,10 +1433,11 @@ export class AuthService {
         user_id: input.userId,
         to_email: input.email,
         template: input.purpose,
-        subject,
+        subject: message.subject,
         link_url: linkUrl,
         payload: {
-          link_url: linkUrl
+          link_url: linkUrl,
+          locale
         },
         status: "pending",
         created_at: now
@@ -1447,12 +1466,19 @@ export class AuthService {
       return toSetupEmailDelivery(item, config);
     }
 
+    const message = renderAuthActionEmail({
+      purpose: item.template as TokenPurpose,
+      linkUrl: item.link_url,
+      locale: readAuthOutboxLocale(item.payload),
+      subject: item.subject
+    });
     const result = await sendEmail(
       config,
       {
         to: item.to_email,
-        subject: item.subject,
-        text: authEmailText(item.subject, item.link_url)
+        subject: message.subject,
+        text: message.text,
+        html: message.html
       },
       this.emailTransport ? { transport: this.emailTransport } : {}
     );
@@ -1728,18 +1754,14 @@ function isPasswordTokenPurpose(
   return value === "password_reset" || value === "account_setup";
 }
 
-function authEmailSubject(purpose: TokenPurpose): string {
-  if (purpose === "email_verification") {
-    return "Verify your OpenKB email";
+function readAuthOutboxLocale(payload: Prisma.JsonValue): AuthEmailLocale {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const locale = (payload as { locale?: unknown }).locale;
+    if (typeof locale === "string") {
+      return normalizeAuthEmailLocale(locale);
+    }
   }
-  if (purpose === "account_setup") {
-    return "Welcome to OpenKB - set your password";
-  }
-  return "Reset your OpenKB password";
-}
-
-function authEmailText(subject: string, linkUrl: string | null): string {
-  return linkUrl ? `${subject}\n\n${linkUrl}` : subject;
+  return "en";
 }
 
 function normalizeEmail(email: string): string {

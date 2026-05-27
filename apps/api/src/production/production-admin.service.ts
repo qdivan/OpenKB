@@ -1,5 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { AuthError, AuthService, type AuthenticatedUser } from "@openkb/auth";
+import {
+  AuthError,
+  AuthService,
+  renderAuthActionEmail,
+  type AuthEmailPurpose,
+  type AuthenticatedUser
+} from "@openkb/auth";
 import {
   encryptSmtpPassword,
   getSmtpConfig,
@@ -196,12 +202,12 @@ export class ProductionAdminService {
       throw new AuthError("OBJECT_NOT_FOUND", "Outbox item was not found.", 404);
     }
     const setting = await this.getSmtpSetting();
+    const message = renderOutboxRetryMessage(item);
     const result = await sendEmail(getSmtpConfig(process.env, setting), {
       to: item.to_email,
-      subject: item.subject,
-      text: String(
-        (item.payload as { link_url?: string })?.link_url ?? item.link_url ?? item.subject
-      )
+      subject: message.subject,
+      text: message.text,
+      html: message.html
     });
     await this.prisma.authEmailOutbox.update({
       where: { id },
@@ -359,6 +365,47 @@ export class ProductionAdminService {
       }
     });
   }
+}
+
+function renderOutboxRetryMessage(item: {
+  template: string;
+  subject: string;
+  link_url: string | null;
+  payload: Prisma.JsonValue;
+}): { subject: string; text: string; html?: string } {
+  const payload = readPayloadRecord(item.payload);
+  const payloadLink = typeof payload?.link_url === "string" ? payload.link_url : null;
+  if (
+    isAuthEmailPurpose(item.template) &&
+    (item.template !== "email_verification" || payloadLink)
+  ) {
+    const message = renderAuthActionEmail({
+      purpose: item.template,
+      subject: item.subject,
+      linkUrl: item.link_url ?? payloadLink,
+      locale: typeof payload?.locale === "string" ? payload.locale : null
+    });
+    return {
+      subject: message.subject,
+      text: message.text,
+      html: message.html
+    };
+  }
+
+  return {
+    subject: item.subject,
+    text: String(payloadLink ?? item.link_url ?? item.subject)
+  };
+}
+
+function readPayloadRecord(payload: Prisma.JsonValue): Record<string, unknown> | null {
+  return payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)
+    : null;
+}
+
+function isAuthEmailPurpose(value: string): value is AuthEmailPurpose {
+  return value === "email_verification" || value === "password_reset" || value === "account_setup";
 }
 
 function normalizeNullableText(value: string | null | undefined): string | null {

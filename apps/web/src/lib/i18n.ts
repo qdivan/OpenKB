@@ -943,6 +943,12 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   "No PATs": "没有 PAT",
   "No OAuth clients": "没有 OAuth 客户端",
   "No OAuth grants": "没有 OAuth 授权",
+  "Client access": "客户端接入",
+  "Codex, OpenClaw, and Claude Code can use OpenKB through the stdio bridge. Store the PAT in an environment variable; do not paste raw tokens into config files.":
+    "Codex、OpenClaw 和 Claude Code 可以通过 stdio bridge 使用 OpenKB。请把 PAT 放在环境变量里，不要把明文 token 写入配置文件。",
+  "User-bound": "用户绑定",
+  "Use openkb-mcp probe before installation to confirm the server URL, PAT scopes, and available kb.* tools.":
+    "安装前先使用 openkb-mcp probe 确认服务地址、PAT scope 和可用的 kb.* 工具。",
   owner: "所有者",
   tenant_admin: "租户管理员"
 };
