@@ -32,6 +32,7 @@ import {
   ModelClientError,
   type StoredModelSetting
 } from "@openkb/model-client";
+import { createCollectionName, getMilvusConfig } from "@openkb/milvus";
 import {
   PermissionService,
   type ContentObjectType,
@@ -74,6 +75,14 @@ type UpdateKnowledgeBaseInput = {
   visibility?: string;
   status?: string;
 };
+
+type DocumentRetrievalFreshnessState =
+  | "not_applicable"
+  | "pending_publish"
+  | "pending_update"
+  | "index_outdated"
+  | "indexing"
+  | "published";
 
 type AdminContentTakeoverInput = {
   reason?: string;
@@ -1206,6 +1215,10 @@ export class ContentService {
         }
       }
     });
+    await this.prisma.document.update({
+      where: { id: documentId },
+      data: { updated_at: now }
+    });
     await this.writeAuditLog(this.prisma, me, "document.segment.update", "document", documentId, {
       chunk_id: chunk.id,
       previous_status: chunk.status,
@@ -2060,6 +2073,7 @@ export class ContentService {
     return {
       ...toDocumentDto(document),
       currentVersion: version ? toDocumentVersionDto(version, true) : null,
+      retrieval_freshness: await this.computeDocumentRetrievalFreshness(document, version),
       role: await this.permissions.resolveObjectRole(me.user.id, "document", document.id)
     };
   }
@@ -2512,20 +2526,22 @@ export class ContentService {
     }
     await this.prisma.$transaction(async (tx) => {
       const now = new Date();
-      await tx.document.update({
-        where: { id: documentId },
-        data: {
-          status: "published",
-          updated_by: me.user.id,
-          updated_at: now
-        }
-      });
       const shouldReprocess = await this.shouldReprocessDocumentOnPublish(
         tx,
         me,
         document,
         version
       );
+      if (document.status !== "published" || shouldReprocess) {
+        await tx.document.update({
+          where: { id: documentId },
+          data: {
+            status: "published",
+            updated_by: me.user.id,
+            updated_at: now
+          }
+        });
+      }
       const result = shouldReprocess
         ? await this.replaceChunksForDocumentVersion(
             tx,
@@ -2547,6 +2563,45 @@ export class ContentService {
           : {})
       });
     });
+    const updatedDocument = await this.prisma.document.findUnique({ where: { id: documentId } });
+    const updatedVersion = updatedDocument?.current_version_id
+      ? await this.prisma.documentVersion.findUnique({
+          where: { id: updatedDocument.current_version_id }
+        })
+      : null;
+    const freshness = updatedDocument
+      ? await this.computeDocumentRetrievalFreshness(updatedDocument, updatedVersion)
+      : null;
+    if (freshness?.state === "index_outdated") {
+      await this.ensureMilvusRebuildJob(me);
+    }
+    return this.getDocument(sessionToken, documentId);
+  }
+
+  async refreshDocumentIndex(sessionToken: string | null, documentId: string) {
+    const me = await this.requireMe(sessionToken);
+    await this.permissions.requireCanEdit(me.user.id, "document", documentId);
+    const document = await this.prisma.document.findUnique({ where: { id: documentId } });
+    if (!document || document.status === "deleted") {
+      throw new ContentError("OBJECT_NOT_FOUND", "Document was not found.", 404);
+    }
+    const version = document.current_version_id
+      ? await this.prisma.documentVersion.findUnique({ where: { id: document.current_version_id } })
+      : null;
+    const freshness = await this.computeDocumentRetrievalFreshness(document, version);
+    if (freshness.state === "pending_publish" || freshness.state === "pending_update") {
+      throw new ContentError(
+        "REPROCESS_REQUIRED",
+        "Publish or update the document before refreshing the Milvus index.",
+        409
+      );
+    }
+    if (freshness.state === "index_outdated") {
+      await this.ensureMilvusRebuildJob(me);
+      await this.writeAuditLog(this.prisma, me, "document.index.refresh", "document", documentId, {
+        freshness_state: freshness.state
+      });
+    }
     return this.getDocument(sessionToken, documentId);
   }
 
@@ -3682,6 +3737,175 @@ export class ContentService {
     );
   }
 
+  private async computeDocumentRetrievalFreshness(
+    document: {
+      id: string;
+      tenant_id: string;
+      workspace_id: string;
+      knowledge_base_id: string;
+      type: string;
+      status: string;
+      current_version_id: string | null;
+      processing_status: string;
+      process_rule_snapshot: Prisma.JsonValue | null;
+      updated_at: Date;
+    },
+    version: { id: string; markdown_hash: string } | null
+  ) {
+    const milvusConfig = getMilvusConfig();
+    const latestJobWhere: Prisma.IndexRebuildJobWhereInput = {
+      target_alias: milvusConfig.activeAlias,
+      OR: [{ tenant_id: document.tenant_id }, { tenant_id: null }]
+    };
+    const [latestIndexRebuildJob, latestSucceededIndexJob] = await Promise.all([
+      this.prisma.indexRebuildJob.findFirst({
+        where: latestJobWhere,
+        orderBy: { started_at: "desc" }
+      }),
+      this.prisma.indexRebuildJob.findFirst({
+        where: { ...latestJobWhere, status: "succeeded" },
+        orderBy: [{ finished_at: "desc" }, { started_at: "desc" }]
+      })
+    ]);
+
+    const latestIndexedAt = latestSucceededIndexJob
+      ? (latestSucceededIndexJob.finished_at ?? latestSucceededIndexJob.started_at)
+      : null;
+
+    if (document.type !== "page" || !document.current_version_id || !version) {
+      return {
+        state: "not_applicable" satisfies DocumentRetrievalFreshnessState,
+        chunks_current: true,
+        index_current: true,
+        latest_index_input_at: null,
+        latest_indexed_at: latestIndexedAt ? latestIndexedAt.toISOString() : null,
+        latest_index_rebuild_job: latestIndexRebuildJob
+          ? toIndexRebuildJobSummaryDto(latestIndexRebuildJob)
+          : null
+      };
+    }
+
+    const settings = await this.prisma.knowledgeBaseChunkSetting.findUnique({
+      where: { knowledge_base_id: document.knowledge_base_id }
+    });
+    const snapshot = toRecord(document.process_rule_snapshot);
+    const [contentChunkCount, latestIndexableChunk] = await Promise.all([
+      this.prisma.documentChunk.count({
+        where: {
+          document_id: document.id,
+          version_id: version.id,
+          index_role: "content"
+        }
+      }),
+      this.prisma.documentChunk.findFirst({
+        where: {
+          document_id: document.id,
+          version_id: version.id,
+          status: "active",
+          chunk_type: { in: ["general", "child"] }
+        },
+        orderBy: { created_at: "desc" },
+        select: { created_at: true }
+      })
+    ]);
+    const chunksCurrent = Boolean(
+      settings &&
+      contentChunkCount > 0 &&
+      document.processing_status === "current" &&
+      snapshot.content_version_id === version.id &&
+      snapshot.content_markdown_hash === version.markdown_hash &&
+      snapshot.settings_revision === settings.revision
+    );
+    const latestIndexInputAt =
+      document.status === "published" && chunksCurrent
+        ? maxDate([latestIndexableChunk?.created_at ?? null, document.updated_at])
+        : null;
+    const activeIndexJob =
+      latestIndexRebuildJob &&
+      (latestIndexRebuildJob.status === "pending" || latestIndexRebuildJob.status === "running")
+        ? latestIndexRebuildJob
+        : null;
+    const activeJobCoversInput = Boolean(
+      activeIndexJob &&
+      (!latestIndexInputAt || activeIndexJob.started_at.getTime() >= latestIndexInputAt.getTime())
+    );
+    const indexCurrent = Boolean(
+      document.status === "published" &&
+      chunksCurrent &&
+      latestIndexInputAt &&
+      latestIndexedAt &&
+      latestIndexedAt.getTime() >= latestIndexInputAt.getTime()
+    );
+
+    let state: DocumentRetrievalFreshnessState;
+    if (document.status !== "published") {
+      state = "pending_publish";
+    } else if (!chunksCurrent) {
+      state = "pending_update";
+    } else if (activeJobCoversInput) {
+      state = "indexing";
+    } else if (!indexCurrent) {
+      state = "index_outdated";
+    } else {
+      state = "published";
+    }
+
+    return {
+      state,
+      chunks_current: chunksCurrent,
+      index_current: indexCurrent,
+      latest_index_input_at: latestIndexInputAt ? latestIndexInputAt.toISOString() : null,
+      latest_indexed_at: latestIndexedAt ? latestIndexedAt.toISOString() : null,
+      latest_index_rebuild_job: latestIndexRebuildJob
+        ? toIndexRebuildJobSummaryDto(latestIndexRebuildJob)
+        : null
+    };
+  }
+
+  private async ensureMilvusRebuildJob(me: AuthenticatedUser, coverageAt = new Date()) {
+    const config = getMilvusConfig();
+    const pending = await this.prisma.indexRebuildJob.findFirst({
+      where: {
+        target_alias: config.activeAlias,
+        status: "pending",
+        OR: [{ tenant_id: me.tenantId }, { tenant_id: null }]
+      },
+      orderBy: { started_at: "desc" }
+    });
+    if (pending) {
+      return this.prisma.indexRebuildJob.update({
+        where: { id: pending.id },
+        data: { started_at: coverageAt, error: null }
+      });
+    }
+
+    const running = await this.prisma.indexRebuildJob.findFirst({
+      where: {
+        target_alias: config.activeAlias,
+        status: "running",
+        OR: [{ tenant_id: me.tenantId }, { tenant_id: null }]
+      },
+      orderBy: { started_at: "desc" }
+    });
+    if (running && running.started_at.getTime() >= coverageAt.getTime()) {
+      return running;
+    }
+
+    return this.prisma.indexRebuildJob.create({
+      data: {
+        tenant_id: me.tenantId,
+        target_collection: createCollectionName({
+          prefix: config.collectionPrefix,
+          schemaVersion: config.schemaVersion
+        }),
+        target_alias: config.activeAlias,
+        status: "pending",
+        started_by: me.user.id,
+        started_at: coverageAt
+      }
+    });
+  }
+
   private async getOrCreateChunkSettings(
     tx: Prisma.TransactionClient | PrismaClient,
     me: AuthenticatedUser,
@@ -4563,6 +4787,38 @@ function toDocumentVersionSummaryDto(
     created_at: version.created_at.toISOString(),
     is_current: isCurrent
   };
+}
+
+function toIndexRebuildJobSummaryDto(job: {
+  id: string;
+  tenant_id: string | null;
+  target_collection: string;
+  target_alias: string;
+  status: string;
+  started_by: string;
+  started_at: Date;
+  finished_at: Date | null;
+  error: string | null;
+}) {
+  return {
+    id: job.id,
+    tenant_id: job.tenant_id,
+    target_collection: job.target_collection,
+    target_alias: job.target_alias,
+    status: job.status,
+    started_by: job.started_by,
+    started_at: job.started_at.toISOString(),
+    finished_at: job.finished_at ? job.finished_at.toISOString() : null,
+    error: job.error
+  };
+}
+
+function maxDate(values: Array<Date | null | undefined>): Date | null {
+  return (
+    values
+      .filter((value): value is Date => Boolean(value))
+      .sort((left, right) => right.getTime() - left.getTime())[0] ?? null
+  );
 }
 
 function toDocumentVersionDto(

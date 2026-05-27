@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { AuthService } from "@openkb/auth";
 import { createDatabaseClient, type PrismaClient } from "@openkb/db";
@@ -7,9 +7,11 @@ import { createOpenKBMilvus, type MilvusChunkRecord, type OpenKBMilvus } from "@
 import { PermissionService } from "@openkb/permissions";
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
+import bcrypt from "bcryptjs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
+import { ContentService } from "../content/content.service";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -123,7 +125,119 @@ describe("Search API integration", () => {
       ]
     });
   });
+
+  it("indexes content published by editors and returns it only to readable users", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+    const editorUser = await createActiveUser(seed.tenantId, "search-editor@openkb.local");
+    const viewerUser = await createActiveUser(seed.tenantId, "search-viewer@openkb.local");
+    await prisma.collaborator.createMany({
+      data: [
+        {
+          tenant_id: seed.tenantId,
+          object_type: "document",
+          object_id: seed.documentId,
+          subject_type: "user",
+          subject_id: editorUser.id,
+          role: "editor",
+          source: "direct",
+          created_by: seed.userId
+        },
+        {
+          tenant_id: seed.tenantId,
+          object_type: "document",
+          object_id: seed.documentId,
+          subject_type: "user",
+          subject_id: viewerUser.id,
+          role: "viewer",
+          source: "direct",
+          created_by: seed.userId
+        }
+      ]
+    });
+    const editor = await auth.login({
+      email: editorUser.email,
+      password: "OpenKB-test-123456"
+    });
+    const viewer = await auth.login({
+      email: viewerUser.email,
+      password: "OpenKB-test-123456"
+    });
+    const current = await content.getDocument(editor.sessionToken, seed.documentId);
+    const markdown =
+      "# Searchable editor publish\n\nHTTP search editor publish marker confirms permissions.";
+    await content.updateDocument(editor.sessionToken, seed.documentId, {
+      base_version_id: current.currentVersion?.id ?? null,
+      markdown,
+      markdown_hash: markdownHash(markdown)
+    });
+
+    const published = await content.publishDocument(editor.sessionToken, seed.documentId);
+    expect(published.processing_status).toBe("current");
+    await expect(
+      content.publishDocument(viewer.sessionToken, seed.documentId)
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const indexedRecords = await indexCurrentChunks(seed, milvus, permissions);
+    expect(indexedRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          access_principals: expect.arrayContaining([
+            `user:${editorUser.id}`,
+            `user:${viewerUser.id}`
+          ]),
+          content_text: expect.stringContaining("HTTP search editor publish marker")
+        })
+      ])
+    );
+    await expect(
+      milvus.searchScopedChunks({
+        query: "HTTP search",
+        tenantId: seed.tenantId,
+        knowledgeBaseIds: [seed.knowledgeBaseId],
+        limit: 5
+      })
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          document_id: seed.documentId,
+          content_text: expect.stringContaining("HTTP search editor publish marker")
+        })
+      ])
+    );
+
+    const editorResponse = await injectSearch(
+      { query: "HTTP search", top_k: 5 },
+      `openkb_session=${editor.sessionToken}`
+    );
+    expect(editorResponse.statusCode).toBe(200);
+    expect(editorResponse.json().results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          document_id: seed.documentId,
+          content: expect.stringContaining("HTTP search editor publish marker")
+        })
+      ])
+    );
+
+    const viewerResponse = await injectSearch(
+      { query: "HTTP search", top_k: 5 },
+      `openkb_session=${viewer.sessionToken}`
+    );
+    expect(viewerResponse.statusCode).toBe(200);
+    expect(viewerResponse.json().results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          document_id: seed.documentId,
+          content: expect.stringContaining("HTTP search editor publish marker")
+        })
+      ])
+    );
+  });
 });
+
+function markdownHash(markdown: string): string {
+  return createHash("sha256").update(markdown).digest("hex");
+}
 
 async function injectSearch(payload: unknown, cookie?: string) {
   return app
@@ -246,16 +360,22 @@ async function indexCurrentChunks(
   permissionService: PermissionService
 ) {
   const collectionName = `openkb_chunks_api_search_${randomUUID().replace(/-/g, "_")}`;
-  const chunk = await prisma.documentChunk.findFirstOrThrow({
-    where: { document_id: seed.documentId },
+  const document = await prisma.document.findUniqueOrThrow({ where: { id: seed.documentId } });
+  const chunks = await prisma.documentChunk.findMany({
+    where: {
+      document_id: seed.documentId,
+      version_id: document.current_version_id ?? undefined,
+      index_role: "content",
+      status: "active"
+    },
     orderBy: { ordinal: "asc" }
   });
-  const document = await prisma.document.findUniqueOrThrow({ where: { id: seed.documentId } });
+  expect(chunks.length).toBeGreaterThan(0);
   const accessPrincipals = await permissionService.getObjectAccessPrincipals(
     "document",
     seed.documentId
   );
-  const record: MilvusChunkRecord = {
+  const records: MilvusChunkRecord[] = chunks.map((chunk) => ({
     id: chunk.id,
     chunk_id: chunk.id,
     tenant_id: seed.tenantId,
@@ -273,11 +393,37 @@ async function indexCurrentChunks(
     access_principals: accessPrincipals,
     created_at: chunk.created_at.getTime(),
     updated_at: document.updated_at.getTime()
-  };
+  }));
 
   await milvusClient.createChunkCollection(collectionName);
-  await milvusClient.insertChunks(collectionName, [record]);
+  await milvusClient.insertChunks(collectionName, records);
   await milvusClient.flush(collectionName);
   await milvusClient.loadCollection(collectionName);
   await milvusClient.switchAlias("openkb_chunks_active", collectionName);
+  return records;
+}
+
+async function createActiveUser(tenantId: string, email: string) {
+  const now = new Date();
+  const passwordHash = await bcrypt.hash("OpenKB-test-123456", 12);
+  const user = await prisma.user.create({
+    data: {
+      email,
+      password_hash: passwordHash,
+      display_name: email,
+      status: "active",
+      email_verified_at: now,
+      created_at: now,
+      updated_at: now
+    }
+  });
+  await prisma.tenantMembership.create({
+    data: {
+      tenant_id: tenantId,
+      user_id: user.id,
+      role: "member",
+      created_at: now
+    }
+  });
+  return user;
 }

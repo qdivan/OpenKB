@@ -4,6 +4,7 @@ import { createDatabaseClient } from "@openkb/db";
 import { DEV_ADMIN_PASSWORD, seedDev } from "@openkb/db/seed-dev";
 import { AuthService } from "@openkb/auth";
 import { PermissionService } from "@openkb/permissions";
+import { getMilvusConfig } from "@openkb/milvus";
 import bcrypt from "bcryptjs";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -884,7 +885,7 @@ describe("ContentService integration", () => {
     }
   });
 
-  it("reprocesses current document chunks when publishing without creating an index job", async () => {
+  it("reprocesses current document chunks when publishing and queues an index rebuild", async () => {
     const seed = await seedDev({ prisma });
     const content = new ContentService(auth, permissions);
 
@@ -916,6 +917,11 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
       const published = await content.publishDocument(login.sessionToken, seed.documentId);
       expect(published.status).toBe("published");
       expect(published.processing_status).toBe("current");
+      expect(published.retrieval_freshness).toMatchObject({
+        state: "indexing",
+        chunks_current: true,
+        index_current: false
+      });
       const chunks = await content.listKnowledgeBaseChunks(
         login.sessionToken,
         seed.knowledgeBaseId,
@@ -925,7 +931,99 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
       );
       expect(chunks.length).toBeGreaterThan(0);
       expect(chunks.every((chunk) => chunk.version_id === published.currentVersion?.id)).toBe(true);
-      await expect(prisma.indexRebuildJob.count()).resolves.toBe(indexJobsBefore);
+      await expect(prisma.indexRebuildJob.count()).resolves.toBe(indexJobsBefore + 1);
+    } finally {
+      await content.disconnect();
+    }
+  });
+
+  it("reuses existing global index rebuild jobs and enforces publish permissions", async () => {
+    const seed = await seedDev({ prisma });
+    const content = new ContentService(auth, permissions);
+    const milvusConfig = getMilvusConfig();
+
+    try {
+      const admin = await auth.login({
+        email: "admin@openkb.local",
+        password: DEV_ADMIN_PASSWORD
+      });
+      const editorUser = await createActiveUser(seed.tenantId, "publisher@openkb.local");
+      const viewerUser = await createActiveUser(seed.tenantId, "read-only-publisher@openkb.local");
+      await prisma.collaborator.createMany({
+        data: [
+          {
+            tenant_id: seed.tenantId,
+            object_type: "document",
+            object_id: seed.documentId,
+            subject_type: "user",
+            subject_id: editorUser.id,
+            role: "editor",
+            source: "direct",
+            created_by: seed.userId
+          },
+          {
+            tenant_id: seed.tenantId,
+            object_type: "document",
+            object_id: seed.documentId,
+            subject_type: "user",
+            subject_id: viewerUser.id,
+            role: "viewer",
+            source: "direct",
+            created_by: seed.userId
+          }
+        ]
+      });
+
+      const editor = await auth.login({
+        email: editorUser.email,
+        password: "OpenKB-test-123456"
+      });
+      const viewer = await auth.login({
+        email: viewerUser.email,
+        password: "OpenKB-test-123456"
+      });
+
+      const current = await content.getDocument(editor.sessionToken, seed.documentId);
+      const markdown = "# Permissioned publish\n\nEditors publish searchable chunks.";
+      await content.updateDocument(editor.sessionToken, seed.documentId, {
+        base_version_id: current.currentVersion?.id ?? null,
+        markdown,
+        markdown_hash: markdownHash(markdown)
+      });
+      const globalJob = await prisma.indexRebuildJob.create({
+        data: {
+          tenant_id: null,
+          target_collection: `openkb_chunks_global_${randomUUID().replace(/-/g, "_")}`,
+          target_alias: milvusConfig.activeAlias,
+          status: "pending",
+          started_by: seed.userId,
+          started_at: new Date(Date.now() - 60_000)
+        }
+      });
+
+      const published = await content.publishDocument(editor.sessionToken, seed.documentId);
+      expect(published.processing_status).toBe("current");
+      expect(published.retrieval_freshness).toMatchObject({
+        state: "indexing",
+        chunks_current: true
+      });
+      await expect(prisma.indexRebuildJob.count()).resolves.toBe(1);
+      const refreshedGlobalJob = await prisma.indexRebuildJob.findUniqueOrThrow({
+        where: { id: globalJob.id }
+      });
+      expect(refreshedGlobalJob.tenant_id).toBeNull();
+      expect(refreshedGlobalJob.started_at.getTime()).toBeGreaterThan(
+        globalJob.started_at.getTime()
+      );
+
+      const readable = await content.getDocument(viewer.sessionToken, seed.documentId);
+      expect(readable.id).toBe(seed.documentId);
+      await expect(
+        content.publishDocument(viewer.sessionToken, seed.documentId)
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+      await content.publishDocument(admin.sessionToken, seed.documentId);
+      await expect(prisma.indexRebuildJob.count()).resolves.toBe(1);
     } finally {
       await content.disconnect();
     }
@@ -965,6 +1063,7 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
 
       const published = await content.publishDocument(login.sessionToken, seed.documentId);
       expect(published.processing_status).toBe("current");
+      const indexJobsAfterPublish = await prisma.indexRebuildJob.count();
       const chunkAfterPublish = await prisma.documentChunk.findUniqueOrThrow({
         where: { id: chunk.id }
       });
@@ -972,6 +1071,8 @@ Third paragraph about Red Cliff. ${"Milvus ".repeat(30)}`;
       await expect(
         prisma.documentSegmentSummary.findUniqueOrThrow({ where: { chunk_id: chunk.id } })
       ).resolves.toMatchObject({ status: "active" });
+      await content.publishDocument(login.sessionToken, seed.documentId);
+      await expect(prisma.indexRebuildJob.count()).resolves.toBe(indexJobsAfterPublish);
     } finally {
       await content.disconnect();
     }

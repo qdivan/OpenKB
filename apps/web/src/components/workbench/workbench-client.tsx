@@ -103,6 +103,7 @@ import {
   listWorkspaces,
   logout,
   publishDocument,
+  refreshDocumentIndex,
   reprocessDocument,
   restoreDocumentVersion,
   takeoverContentAccess,
@@ -1651,7 +1652,7 @@ export function WorkbenchClient({
     }
   }
 
-  async function handleTogglePublishDocument() {
+  async function handlePublishOrUpdateDocument() {
     if (!currentDocument || currentDocument.type !== "page") {
       return;
     }
@@ -1663,10 +1664,7 @@ export function WorkbenchClient({
     setIsBusy(true);
     setMessage("");
     try {
-      const updated =
-        currentDocument.status === "published"
-          ? await unpublishDocument(currentDocument.id)
-          : await publishDocument(currentDocument.id);
+      const updated = await publishDocument(currentDocument.id);
       setCurrentDocument(updated);
       setSavedTitle(updated.title);
       setSavedMarkdown(updated.currentVersion?.markdown ?? "");
@@ -1674,11 +1672,54 @@ export function WorkbenchClient({
       setDocuments((items) => updateDocumentInList(items, updated));
       setDocumentSideRefreshKey((value) => value + 1);
       setMessage(
-        updated.status === "published"
-          ? t(
+        updated.retrieval_freshness?.state === "indexing"
+          ? t("Document published and segments reprocessed. Milvus index update is queued.")
+          : t(
               "Document published and segments reprocessed. Rebuild the Milvus index when retrieval should update."
             )
-          : t("Document unpublished. Rebuild the search index to remove stale retrieval results.")
+      );
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleRefreshDocumentIndex() {
+    if (!currentDocument || currentDocument.type !== "page") {
+      return;
+    }
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const updated = await refreshDocumentIndex(currentDocument.id);
+      setCurrentDocument(updated);
+      setDocuments((items) => updateDocumentInList(items, updated));
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(t("Milvus index update is queued."));
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleUnpublishDocument() {
+    if (!currentDocument || currentDocument.type !== "page") {
+      return;
+    }
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const updated = await unpublishDocument(currentDocument.id);
+      setCurrentDocument(updated);
+      setSavedTitle(updated.title);
+      setSavedMarkdown(updated.currentVersion?.markdown ?? "");
+      setBaseVersionId(updated.currentVersion?.id ?? null);
+      setDocuments((items) => updateDocumentInList(items, updated));
+      setDocumentSideRefreshKey((value) => value + 1);
+      setMessage(
+        t("Document unpublished. Rebuild the search index to remove stale retrieval results.")
       );
     } catch (error) {
       handleApiError(error);
@@ -2055,6 +2096,10 @@ export function WorkbenchClient({
   }
 
   const statusText = t(saveStatusText(saveState));
+  const publishUiState =
+    currentDocument?.type === "page"
+      ? getDocumentPublishUiState(currentDocument, hasUnsavedChanges)
+      : null;
   const isAdmin = Boolean(
     me?.roles.some((role) => role === "system_admin" || role === "tenant_admin")
   );
@@ -2318,27 +2363,42 @@ export function WorkbenchClient({
                       )}
                       <div className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
                         <span className={saveStateClass(saveState)}>{statusText}</span>
-                        {currentDocument.type === "page" ? (
-                          <span className="inline-flex items-center gap-1">
-                            <button
-                              className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
-                                currentDocument.status === "published"
-                                  ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                  : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-                              }`}
-                              disabled={!canEditCurrentDocument || isBusy || saveState === "saving"}
-                              onClick={() => void handleTogglePublishDocument()}
-                              type="button"
-                            >
-                              {currentDocument.status === "published"
-                                ? t("Published")
-                                : t("Publish")}
-                            </button>
+                        {publishUiState ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className={publishStateClass(publishUiState.state)}>
+                              {t(publishUiState.label)}
+                            </span>
+                            {canEditCurrentDocument && publishUiState.primaryAction ? (
+                              <button
+                                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-zinc-950 px-2.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                disabled={isBusy || saveState === "saving" || hasUnsavedChanges}
+                                onClick={() =>
+                                  publishUiState.primaryAction === "refresh"
+                                    ? void handleRefreshDocumentIndex()
+                                    : void handlePublishOrUpdateDocument()
+                                }
+                                type="button"
+                              >
+                                {isBusy
+                                  ? t("Publishing or updating")
+                                  : t(publishUiState.actionLabel)}
+                              </button>
+                            ) : null}
+                            {canEditCurrentDocument && currentDocument.status === "published" ? (
+                              <button
+                                className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 hover:border-zinc-300 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+                                disabled={isBusy}
+                                onClick={() => void handleUnpublishDocument()}
+                                type="button"
+                              >
+                                {t("Unpublish")}
+                              </button>
+                            ) : null}
                             <HelpTip
                               text={t(
                                 "Publish indexing help",
                                 undefined,
-                                "Publishing automatically reprocesses this document's PostgreSQL segments. It does not write Milvus embeddings or switch the Milvus alias; rebuild the Milvus index when search, MCP, or Dify should use the new content."
+                                "Publishing updates this document's PostgreSQL segments and queues a Milvus index rebuild. Search, MCP, and Dify use the new content after the background index job succeeds."
                               )}
                             />
                           </span>
@@ -6506,6 +6566,89 @@ function saveStateClass(state: SaveState): string {
   }
   if (state === "error") {
     return `${base} bg-red-50 text-red-700`;
+  }
+  return `${base} bg-zinc-100 text-zinc-600`;
+}
+
+type DocumentPublishUiState = {
+  state:
+    | "unsaved"
+    | "pending_publish"
+    | "pending_update"
+    | "index_outdated"
+    | "indexing"
+    | "published";
+  label: string;
+  actionLabel: string;
+  primaryAction: "publish" | "refresh" | null;
+};
+
+function getDocumentPublishUiState(
+  document: DocumentDetail,
+  hasUnsavedChanges: boolean
+): DocumentPublishUiState {
+  if (hasUnsavedChanges) {
+    return {
+      state: "unsaved",
+      label: "Unsaved",
+      actionLabel: "Save first",
+      primaryAction: "publish"
+    };
+  }
+  if (document.status !== "published") {
+    return {
+      state: "pending_publish",
+      label: "Pending publish",
+      actionLabel: "Publish",
+      primaryAction: "publish"
+    };
+  }
+  const freshnessState = document.retrieval_freshness?.state ?? "published";
+  if (freshnessState === "pending_update") {
+    return {
+      state: "pending_update",
+      label: "Pending update",
+      actionLabel: "Update",
+      primaryAction: "publish"
+    };
+  }
+  if (freshnessState === "indexing") {
+    return {
+      state: "indexing",
+      label: "Index updating",
+      actionLabel: "Index updating",
+      primaryAction: null
+    };
+  }
+  if (freshnessState === "index_outdated") {
+    return {
+      state: "index_outdated",
+      label: "Published, index pending",
+      actionLabel: "Update index",
+      primaryAction: "refresh"
+    };
+  }
+  return {
+    state: "published",
+    label: "Published",
+    actionLabel: "Published",
+    primaryAction: null
+  };
+}
+
+function publishStateClass(state: DocumentPublishUiState["state"]): string {
+  const base = "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium";
+  if (state === "published") {
+    return `${base} bg-emerald-50 text-emerald-700`;
+  }
+  if (state === "indexing") {
+    return `${base} bg-sky-50 text-sky-700`;
+  }
+  if (state === "index_outdated" || state === "pending_update") {
+    return `${base} bg-amber-50 text-amber-800`;
+  }
+  if (state === "pending_publish") {
+    return `${base} bg-indigo-50 text-indigo-700`;
   }
   return `${base} bg-zinc-100 text-zinc-600`;
 }

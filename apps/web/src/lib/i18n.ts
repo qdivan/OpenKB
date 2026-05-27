@@ -494,6 +494,18 @@ const ZH_CN_TRANSLATIONS: Record<string, string> = {
   Check: "检测",
   Publish: "发布",
   Published: "已发布",
+  "Pending publish": "待发布",
+  "Pending update": "待更新",
+  Update: "更新",
+  Unpublish: "取消发布",
+  "Update index": "更新索引",
+  "Index updating": "索引更新中",
+  "Published, index pending": "已发布，索引待更新",
+  "Save first": "请先保存",
+  "Publishing or updating": "发布/更新中",
+  "Document published and segments reprocessed. Milvus index update is queued.":
+    "文档已发布，分段已重处理，Milvus 索引更新已排队。",
+  "Milvus index update is queued.": "Milvus 索引更新已排队。",
   Quote: "引用",
   "Rebuild chunks": "重建分块",
   "Rebuild index": "重建索引",
@@ -1104,7 +1116,7 @@ Object.assign(ZH_CN_TRANSLATIONS, {
   "Snapshot child overlap": "快照子块重叠",
   "Process rule snapshot": "处理规则快照",
   "Publish indexing help":
-    "发布只决定当前文档版本是否可进入检索候选；它不会同步重建 PostgreSQL 分块，也不会写入 Milvus embedding。内容或规则变化后请显式重处理分块，再按需执行 Milvus blue-green 索引重建。",
+    "发布会同步重处理当前文档的 PostgreSQL 分块，并提交后台 Milvus 索引更新任务。搜索、MCP 和 Dify 会在后台索引任务成功后使用新内容。",
   "Inspect Milvus health, active aliases, embedding profiles, and blue-green rebuild jobs.":
     "查看 Milvus 健康状态、当前别名、Embedding profile 和 blue-green 重建任务。",
   "When to rebuild the Milvus index": "什么时候需要重建 Milvus 索引",
@@ -1399,7 +1411,7 @@ Object.assign(ZH_CN_TRANSLATIONS, {
     "请先重处理分段，此文档才能按最新内容参与检索。",
   "Queue KB chunk rebuild": "排队 KB 分段重建",
   "Publish indexing help":
-    "发布会同步重处理当前文档的 PostgreSQL 分段，让当前版本具备检索候选资格；它不会写入 Milvus embedding，也不会切换 Milvus alias。需要检索、MCP 或 Dify 使用新内容时，请按需执行 Milvus blue-green 索引重建。",
+    "发布会同步重处理当前文档的 PostgreSQL 分段，并提交后台 Milvus 索引更新任务。搜索、MCP 和 Dify 会在后台索引任务成功后使用新内容。",
   "Index rebuild creates a new Milvus collection from PostgreSQL chunks, writes BM25 and embedding fields, runs health checks, then switches the active alias. It is needed when the embedding model, vector dimension, schema, function configuration, or input modality changes. Publishing a document only makes its current chunks eligible for retrieval; it does not mutate the active collection inline.":
     "索引重建会从 PostgreSQL 分段创建新的 Milvus collection，写入 BM25 和 Embedding 字段，完成健康检查后再切换当前别名。更换 Embedding 模型、向量维度、schema、Function 配置或输入模态时需要重建。发布文档只让当前分段具备检索资格，不会在请求内直接修改当前 collection。",
 

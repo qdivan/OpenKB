@@ -327,6 +327,19 @@ export class DocumentController {
     }
   }
 
+  @Post(":id/index-refresh")
+  async refreshIndex(
+    @Param("id") id: string,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<unknown> {
+    try {
+      return await this.content.refreshDocumentIndex(getSessionToken(request, this.auth), id);
+    } catch (error) {
+      return sendJsonError(error, reply);
+    }
+  }
+
   @Post(":id/restore/:versionId")
   async restore(
     @Param("id") id: string,

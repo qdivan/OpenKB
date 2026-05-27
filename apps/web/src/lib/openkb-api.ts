@@ -589,6 +589,21 @@ export type DocumentSummary = {
   updated_at: string;
 };
 
+export type DocumentRetrievalFreshness = {
+  state:
+    | "not_applicable"
+    | "pending_publish"
+    | "pending_update"
+    | "index_outdated"
+    | "indexing"
+    | "published";
+  chunks_current: boolean;
+  index_current: boolean;
+  latest_index_input_at: string | null;
+  latest_indexed_at: string | null;
+  latest_index_rebuild_job: IndexRebuildJob | null;
+};
+
 export type DocumentVersion = {
   id: string;
   document_id: string;
@@ -612,6 +627,7 @@ export type DocumentVersionDiff = {
 
 export type DocumentDetail = DocumentSummary & {
   currentVersion: DocumentVersion | null;
+  retrieval_freshness?: DocumentRetrievalFreshness;
   role?: string | null;
 };
 
@@ -1720,6 +1736,10 @@ export function createChunkRebuildJob(id: string) {
 
 export function publishDocument(id: string) {
   return apiFetch<DocumentDetail>(`/api/documents/${id}/publish`, { method: "POST" });
+}
+
+export function refreshDocumentIndex(id: string) {
+  return apiFetch<DocumentDetail>(`/api/documents/${id}/index-refresh`, { method: "POST" });
 }
 
 export function unpublishDocument(id: string) {
